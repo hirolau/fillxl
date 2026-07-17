@@ -97,6 +97,54 @@ fill(
 
 ---
 
+## Example
+
+This example fills a stock-price history table into a template with a named chart, title, currency, and target price.
+
+**Before filling — the empty template:**
+
+![Before fill](docs/screenshots/before_fill.png)
+
+**After filling — data, chart, and values populated:**
+
+![After fill](docs/screenshots/after_fill.png)
+
+```python
+import numpy as np
+import pandas as pd
+from pathlib import Path
+from fillxl import fill
+from fillxl._types import Engine
+
+
+def get_fake_stock_data(_ticker: str) -> pd.DataFrame:
+    dates = pd.date_range("2020-01-01", "2025-12-31", freq="B")  # business days only
+    rng = np.random.default_rng(42)
+    changes = rng.normal(0.05, 2.0, size=len(dates))
+    prices = np.maximum(5.0, 50.0 + np.cumsum(changes)).round(2)
+    return pd.DataFrame({"Date": dates, "Stock Price": prices})
+
+
+def fill_readme_example(outdir: Path, engine: Engine = "auto") -> Path:
+
+    # Has columns "Date" and "Stock Price"
+    stock_data = get_fake_stock_data("ACME")
+
+    return fill(
+        template=ASSETS / "test_template_readme_example.xlsx",
+        output=outdir / "readme_example_filled.xlsx",
+        tables={"StockPriceHistory": stock_data},
+        values={
+            "title": "ACME Corp Stock Analysis",
+            "currency": "USD",
+            "target_price": 45,
+        },
+        engine=engine,
+    )
+```
+
+---
+
 ## Main Features
 
 - Populate named cells and Excel tables

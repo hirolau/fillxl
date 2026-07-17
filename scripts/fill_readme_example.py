@@ -33,7 +33,10 @@ def get_fake_stock_data(_ticker: str) -> pd.DataFrame:
     return pd.DataFrame({"Date": dates, "Stock Price": prices})
 
 def fill_readme_example(outdir: Path, engine: Engine = "auto") -> Path:
+
+    # Has columns "Date" and "Stock Price"
     stock_data = get_fake_stock_data("ACME")
+
     return fill(
         template=ASSETS / "test_template_readme_example.xlsx",
         output=outdir / "readme_example_filled.xlsx",
@@ -53,7 +56,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--engine",
-        default="auto",
+        default="win32com",
         choices=["auto", "openpyxl", "win32com"],
         help="Backend engine (default: auto)",
     )

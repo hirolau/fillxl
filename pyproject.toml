@@ -1,0 +1,156 @@
+[project]
+name = "fillxl"
+version = "0.2.0-beta.1"
+description = "Fill Excel templates with data from Python."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+	"attrs>=23.0",
+	"openpyxl>=3.1.5",
+]
+license = { file = "LICENSE" }
+authors = [{ name = "hirolau", email = "hirolau@users.noreply.github.com" }]
+keywords = ["excel", "templates", "automation", "fillxl"]
+classifiers = [
+	"Development Status :: 4 - Beta",
+	"Intended Audience :: Developers",
+	"License :: OSI Approved :: MIT License",
+	"Natural Language :: English",
+	"Programming Language :: Python :: 3",
+	"Programming Language :: Python :: 3.11",
+	"Programming Language :: Python :: 3.12",
+	"Programming Language :: Python :: 3.13",
+	"Programming Language :: Python :: 3.14",
+	"Topic :: Office/Business :: Financial :: Spreadsheet",
+]
+
+[project.urls]
+Homepage = "https://github.com/hirolau/fillxl"
+Source = "https://github.com/hirolau/fillxl"
+Issues = "https://github.com/hirolau/fillxl/issues"
+
+[project.optional-dependencies]
+pandas = ["pandas>=2.0"]
+polars = ["polars>=0.20"]
+duckdb = ["duckdb>=0.9"]
+win32com = ["pywin32>=306"]
+all = [
+	"pandas>=2.0",
+	"polars>=0.20",
+	"duckdb>=0.9",
+	"pywin32>=306; sys_platform == 'win32'",
+]
+dev = [
+	"nox>=2023.12",
+	"pytest>=7",
+	"pytest-cov>=4",
+	"pytest-spec>=6.1.0",
+	"pytest-gremlins>=1.9.0",
+	"xlwings>=0.30",
+	"mypy>=1.10",
+	"pyrefly>=1.0",
+	"coverage>=7",
+	"openpyxl-stubs>=0.1",
+	"pandas-stubs>=2",
+	"ruff>=0.1",
+	"check-wheel-contents>=0.6",
+	"twine>=6",
+]
+test = [
+    "duckdb>=1.5.4",
+    "hypothesis>=6.156.3",
+    "pandas>=3.0.3",
+    "polars>=1.42.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fillxl"]
+exclude = ["**/*.cover"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src"]
+
+[tool.hatch.publish]
+# Trusted publishing: configure a PyPI trusted publisher for this repo,
+# then run `hatch publish` in CI.  The token is resolved automatically
+# via OIDC — no secrets needed.
+repository = "https://upload.pypi.org/legacy/"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "fillxl[dev]",
+    "mypy>=2.1.0",
+    "pyrefly>=1.1.1",
+    "ty>=0.0.59",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.coverage.run]
+source = ["src/fillxl"]
+relative_files = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "ANN", "B", "SIM", "ARG", "PTH", "PD", "RUF"]
+ignore = ["SLF001", "C901", "PLR0912", "PLR0915", "PLR2004"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "ARG002", "S101", "PLC0415", "PLR2004",
+    "DTZ001", "D205", "SLF001", "PT018", "D104",
+    "C901", "PLR0912", "PLR0915", "PLR0913",
+]
+"src/**/*.py" = ["SLF001", "C901", "PLR0912", "PLR0915", "PLR2004"]
+"src/fillxl/_backends/_win32com.py" = ["BLE001", "S110", "S112", "TRY301", "PLC0415"]
+"src/fillxl/_backends/_openpyxl.py" = ["PLC0415"]
+"src/fillxl/_charts.py" = ["BLE001", "S314"]
+"src/fillxl/_normalize.py" = ["DTZ001", "PLC0415", "PLW0603"]
+"src/fillxl/_tables.py" = ["PLC0415"]
+"src/fillxl/_backend.py" = ["PLC0415"]
+"src/fillxl/_adapters.py" = ["PLC0415"]
+"src/fillxl/_utils.py" = ["PLC0415"]
+"src/fillxl/_core.py" = ["PLR0913"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+strict = true
+show_error_codes = true
+warn_unused_ignores = true
+explicit_package_bases = true
+mypy_path = "src"
+
+[tool.ty.rules]
+#unresolved-import = "ignore"
+#invalid-argument-type = "ignore"
+#invalid-assignment = "ignore"
+#possibly-missing-submodule = "ignore"
+#unused-ignore-comment = "ignore"
+
+[[tool.mypy.overrides]]
+module = ["openpyxl.*", "xlwings.*", "duckdb", "polars", "win32com.*", "pythoncom", "pywintypes"]
+ignore_missing_imports = true
+
+[tool.pyrefly]
+project-includes = ["src/fillxl"]
+project-excludes = ["**/__pycache__", "**/.nox", "**/.venv", "**/.git"]
+preset = "strict"
+ignore-missing-imports = ["openpyxl.*", "xlwings.*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["tests"]
+markers = [
+	"xlwings: tests that require xlwings / Excel COM (skipped on CI without Excel)",
+	"win32com: tests that require pywin32 / Excel COM (skipped on CI without Excel)",
+	"slow: tests that are intentionally slow (large data, stress tests)",
+	"story: narrative chapter tests (ordered progression)",
+]

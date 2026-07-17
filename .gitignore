@@ -26,6 +26,12 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# Generated demo output
+filled_templates/
+
+# Development artifacts
+scripts/__pycache__/
+
 # PyInstaller
 #   Usually these files are written by a python script from a template
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -42,11 +48,11 @@ htmlcov/
 .nox/
 .coverage
 .coverage.*
+*.cover
+*.py.cover
 .cache
 nosetests.xml
 coverage.xml
-*.cover
-*.py.cover
 .hypothesis/
 .pytest_cache/
 cover/

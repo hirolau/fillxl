@@ -361,26 +361,16 @@ class Win32ComBackend:
             new_data_body.Value = values_matrix
         logger.info("[win32com] write data took %.3fs", time.perf_counter() - t_write)
 
-        # For formula columns that didn't get auto-filled, write the formula
+        # Re-apply calculated column formulas.  Writing ``None`` above clears
+        # the auto-filled formulas, so we must restore them here.  Preserve
+        # newlines/indentation so user formatting is not destroyed.
         t_formula = time.perf_counter()
         for col_idx, col_name in enumerate(table_columns):
             if col_name in formula_columns:
                 formula = formula_map.get(col_name)
                 if formula:
                     col_data_range = new_data_body.Columns(col_idx + 1)
-                    # Clean up the formula string for COM:
-                    #   1. Strip newlines — openpyxl embeds them for readability
-                    #      in long formulas, but Excel COM rejects them.
-                    #   2. Strip _xlfn./_xlpm. prefixes — openpyxl XML
-                    #      serialization artifacts that Excel COM doesn't
-                    #      understand.
-                    formula_str = (
-                        str(formula)
-                        .replace("\n", "")
-                        .replace("\r", "")
-                        .replace("_xlfn.", "")
-                        .replace("_xlpm.", "")
-                    )
+                    formula_str = _prepare_formula_for_com(str(formula))
                     try:
                         col_data_range.Formula2 = formula_str
                     except AttributeError:
@@ -580,6 +570,39 @@ class Win32ComBackend:
 
 
 # ── Standalone helpers ──────────────────────────────────────────────────────
+
+
+def _prepare_formula_for_com(formula: str) -> str:
+    """Normalize a calculated-column formula for Excel COM assignment.
+
+    Preserves newlines and indentation so carefully formatted multi-line
+    formulas (e.g. ``LET`` / ``LAMBDA`` blocks) keep their layout.
+
+    Excel ``Formula2`` accepts LF (``\\n``) line breaks but rejects bare CR
+    (``\\r``) / CRLF, so those are normalized to LF.  openpyxl XML prefixes
+    ``_xlfn.`` / ``_xlpm.`` are stripped because COM does not understand them.
+
+    Args:
+        formula: Formula string, typically with a leading ``=``.
+
+    Returns:
+        Formula string ready for ``Range.Formula2`` / ``Range.Formula``.
+
+    Examples:
+        >>> _prepare_formula_for_com("=LET(\\n    x, 1,\\n    x+1\\n)")
+        '=LET(\\n    x, 1,\\n    x+1\\n)'
+        >>> _prepare_formula_for_com("=_xlfn.LET(_xlpm.x,1,_xlpm.x+1)")
+        '=LET(x,1,x+1)'
+        >>> _prepare_formula_for_com("=A1\\r\\n+B1")
+        '=A1\\n+B1'
+
+    """
+    return (
+        formula.replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("_xlfn.", "")
+        .replace("_xlpm.", "")
+    )
 
 
 def _read_calculated_column_formulas(

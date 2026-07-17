@@ -287,10 +287,6 @@ Users forgive limitations. They dislike surprises. These are documented so you k
 
 ---
 
-## Contributing
-
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
 ## Development
 
 ```bash

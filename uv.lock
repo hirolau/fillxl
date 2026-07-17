@@ -570,7 +570,7 @@ test = [
     { name = "polars" },
 ]
 win32com = [
-    { name = "pywin32" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
 ]
 
 [package.dev-dependencies]
@@ -607,7 +607,7 @@ requires-dist = [
     { name = "pytest-gremlins", marker = "extra == 'dev'", specifier = ">=1.9.0" },
     { name = "pytest-spec", marker = "extra == 'dev'", specifier = ">=6.1.0" },
     { name = "pywin32", marker = "sys_platform == 'win32' and extra == 'all'", specifier = ">=306" },
-    { name = "pywin32", marker = "extra == 'win32com'", specifier = ">=306" },
+    { name = "pywin32", marker = "sys_platform == 'win32' and extra == 'win32com'", specifier = ">=306" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=6" },
     { name = "xlwings", marker = "extra == 'dev'", specifier = ">=0.30" },

@@ -56,7 +56,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--engine",
-        default="win32com",
+        default="openpyxl",
         choices=["auto", "openpyxl", "win32com"],
         help="Backend engine (default: auto)",
     )

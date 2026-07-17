@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so that `all_but_formulas` strategy correctly exempts calculated columns.
   Previously the backend passed an empty `formula_columns` list, causing a
   spurious `ValueError` for tables with calculated columns.
+- **win32com**: Calculated column formulas now keep their original newlines and
+  indentation.  Previously LF/CR were stripped before writing via COM, which
+  flattened carefully formatted multi-line `LET` / `LAMBDA` formulas.
+- CI / packaging: `pywin32` in the `win32com` extra is now marked
+  `sys_platform == 'win32'`, so `uv sync --all-extras` succeeds on Linux.
+- Migrated deprecated `tool.uv.dev-dependencies` to `dependency-groups.dev`.
 
 ### Removed
 

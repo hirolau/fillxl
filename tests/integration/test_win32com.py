@@ -411,20 +411,23 @@ class TestWin32ComFormulaFixes:
 
     # ── Tests ────────────────────────────────────────────────────────────
 
-    def test_formula_column_newlines_stripped_via_win32com(self, output_path: Path) -> None:
-        """A calculated formula is written without error (the backend strips
-        newlines, ``_xlfn.`` / ``_xlpm.`` prefixes, and uses ``Formula2``).
+    def test_formula_column_formatting_preserved_via_win32com(
+        self,
+        output_path: Path,
+    ) -> None:
+        """Multi-line calculated formulas keep newlines and indentation.
 
-        The actual newline stripping is tested at the unit level in
-        ``test_chart_helpers.py`` / ``test_validation.py``.
+        Users often format long ``LET`` / ``LAMBDA`` formulas with line
+        breaks for readability.  The win32com backend must not flatten
+        them when re-applying formulas after a table fill.
         """
         from fillxl._backends._win32com import Win32ComBackend
 
-        template = output_path.parent / "formula_ok.xlsx"
-        self._build_workbook(
-            template,
-            formula_attr='Col1&" "&Col2',
+        multi_line = (
+            'LET(\n        left, Col1,\n        right, Col2,\n        left&" "&right\n    )'
         )
+        template = output_path.parent / "formula_formatted.xlsx"
+        self._build_workbook(template, formula_attr=multi_line)
 
         data = [
             {"Col1": "A", "Col2": 10, "ColNotFilled": "x", "TestFormattedPct": 0.0},
@@ -434,11 +437,24 @@ class TestWin32ComFormulaFixes:
         backend = Win32ComBackend()
         try:
             backend.load(template)
-            # Must not raise
             backend.fill_table("TableTest", data, FillXLConfig())
             backend.save(output_path)
         finally:
             backend.close()
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            ws = wb["TestTable"]
+            formula = ws.cell(row=2, column=4).value
+            assert isinstance(formula, str)
+            assert formula.startswith("=")
+            assert "\n" in formula, f"newlines lost: {formula!r}"
+            # Excel may rewrite names (e.g. Col1→COL1, add _xlpm.), but the
+            # original multi-line indentation must survive.
+            assert "\n        " in formula, f"indentation lost: {formula!r}"
+            assert formula.count("\n") >= 3
+        finally:
+            wb.close()
 
     def test_formula_with_xlfn_prefix_does_not_crash(self, output_path: Path) -> None:
         """A formula containing ``_xlfn.`` / ``_xlpm.`` prefixes must not crash.
@@ -648,11 +664,12 @@ class TestReadCalculatedColumnFormulas:
         cols, _ = _read_calculated_column_formulas(p, "TestTable")
         assert "Price" not in cols
 
-    def test_formula_with_newlines_stripped(self, tmp_path: Path) -> None:
-        r"""A formula with embedded ``\\n`` has newlines in the raw
-        ``attr_text`` but the returned formula map value does not.
-        (The newline stripping is done during formula *writing* in
-        ``fill_table``, but this test verifies the read path is clean.).
+    def test_formula_with_newlines_preserved_on_read(self, tmp_path: Path) -> None:
+        r"""A formula with embedded newlines is returned with those newlines.
+
+        Formatting is preserved end-to-end: the reader keeps indentation,
+        and ``_prepare_formula_for_com`` only normalizes CR/CRLF and strips
+        ``_xlfn.`` / ``_xlpm.`` prefixes.
         """
         from fillxl._backends._win32com import _read_calculated_column_formulas
 
@@ -661,8 +678,6 @@ class TestReadCalculatedColumnFormulas:
 
         cols, formulas = _read_calculated_column_formulas(p, "TestTable")
         assert "ColFormula" in cols
-        # The raw attr_text contains \n but the returned formula string
-        # preserves it (the caller — fill_table — strips it later).
         assert "\n" in formulas.get("ColFormula", "")
 
     def test_xlfn_prefix_preserved_in_raw_formula(self, tmp_path: Path) -> None:
@@ -678,6 +693,35 @@ class TestReadCalculatedColumnFormulas:
         cols, formulas = _read_calculated_column_formulas(p, "TestTable")
         assert "ColFormula" in cols
         assert formulas.get("ColFormula") == "=_xlfn.LET(x,1,x+1)"
+
+    def test_prepare_formula_for_com_preserves_newlines_and_indent(
+        self,
+    ) -> None:
+        """``_prepare_formula_for_com`` keeps LF indentation and strips
+        openpyxl XML prefixes only.
+        """
+        from fillxl._backends._win32com import _prepare_formula_for_com
+
+        raw = (
+            "=_xlfn.LET(\n"
+            "        _xlpm.dates, StockPriceHistory[Date],\n"
+            "        _xlpm.x, 1,\n"
+            "        _xlpm.x+1\n"
+            "    )"
+        )
+        prepared = _prepare_formula_for_com(raw)
+        assert prepared.startswith("=LET(\n")
+        assert "\n        dates, StockPriceHistory[Date]," in prepared
+        assert "_xlfn." not in prepared
+        assert "_xlpm." not in prepared
+        assert prepared.count("\n") == raw.count("\n")
+
+    def test_prepare_formula_for_com_normalizes_crlf(self) -> None:
+        """CRLF / bare CR are normalized to LF (Excel COM rejects CR)."""
+        from fillxl._backends._win32com import _prepare_formula_for_com
+
+        assert _prepare_formula_for_com("=A1\r\n+B1") == "=A1\n+B1"
+        assert _prepare_formula_for_com("=A1\r+B1") == "=A1\n+B1"
 
 
 @pytest.mark.win32com

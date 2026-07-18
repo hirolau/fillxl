@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-backend datatype tests for openpyxl backend (CI-safe).
 - GitHub Actions CI workflow (lint, typecheck, test matrix on 3.11–3.14).
 - GitHub Actions release workflow (publishes to PyPI on version tags).
-- `CHANGELOG.md`, `CONTRIBUTING.md`, issue templates, PR template.
+- `CHANGELOG.md`, issue templates, PR template.
 - Test suite split into logical modules (backends, validation, charts, CF, …).
 - All test methods renamed to read as descriptive sentences.
 - Cross-backend dtype testing (openpyxl + win32com, 68 tests).
@@ -22,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - win32com performance optimisation (26× speedup for large tables).
 - Coverage: overall 85% (excl. win32com: ~95%).
 - `ruff` clean, `mypy` strict — 0 errors.
-- `CODE_OF_CONDUCT.md` and `SECURITY.md` for community guidelines.
 - Author email address in `pyproject.toml`.
 
 ### Changed

@@ -1,0 +1,3 @@
+from typing import Any
+
+def SeriesFactory(*args: Any, **kwargs: Any) -> Any: ...

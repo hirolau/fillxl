@@ -42,7 +42,7 @@ def _read_rows(template: Path, table_name: str) -> list[list[object]]:
                 ncols = len(table.tableColumns)
                 rows: list[list[object]] = []
                 for r in range(start_row + 1, end_row + 1):
-                    row = [ws.cell(row=r, column=c + 1).value for c in range(ncols)]
+                    row: list[object] = [ws.cell(row=r, column=c + 1).value for c in range(ncols)]
                     rows.append(row)
                 return rows
         pytest.fail(f"Table {table_name!r} not found in workbook")

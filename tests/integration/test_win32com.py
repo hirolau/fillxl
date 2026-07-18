@@ -12,7 +12,7 @@ from pathlib import Path
 
 import openpyxl
 import pytest
-from openpyxl.worksheet.table import (  # ty:ignore[unresolved-import]
+from openpyxl.worksheet.table import (
     Table,
     TableColumn,
     TableFormula,
@@ -27,7 +27,7 @@ class TestWin32ComLifecycle:
 
     def test_win32com_backend_loads_workbook_into_excel(self, output_path: Path) -> None:
         """Loading a workbook should open it in Excel."""
-        from conftest import TEMPLATE  # ty:ignore[unresolved-import]
+        from conftest import TEMPLATE
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -40,7 +40,7 @@ class TestWin32ComLifecycle:
 
     def test_win32com_backend_saves_workbook_to_output_file(self, output_path: Path) -> None:
         """Saving a workbook should create the output file."""
-        from conftest import TEMPLATE  # ty:ignore[unresolved-import]
+        from conftest import TEMPLATE
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -56,7 +56,7 @@ class TestWin32ComLifecycle:
 
     def test_win32com_backend_close_releases_excel_process(self) -> None:
         """Closing the backend should release the Excel process."""
-        from conftest import TEMPLATE  # ty:ignore[unresolved-import]
+        from conftest import TEMPLATE
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -73,7 +73,7 @@ class TestWin32ComNamedCells:
 
     def test_named_cells_are_filled_via_excel_com(self, output_path: Path) -> None:
         """Fill a named cell and verify via openpyxl read-back."""
-        from conftest import TEMPLATE  # ty:ignore[unresolved-import]
+        from conftest import TEMPLATE
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -94,7 +94,7 @@ class TestWin32ComNamedCells:
 
     def test_keyerror_raised_for_nonexistent_named_cell(self) -> None:
         """Filling a nonexistent named cell should raise KeyError."""
-        from conftest import TEMPLATE  # ty:ignore[unresolved-import]
+        from conftest import TEMPLATE
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -110,7 +110,7 @@ class TestWin32ComNamedCells:
         """Filling multiple named cells should update all of them."""
         from datetime import datetime
 
-        from conftest import _build_multi_named_cells_workbook  # ty:ignore[unresolved-import]
+        from conftest import _build_multi_named_cells_workbook
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -151,7 +151,7 @@ class TestWin32ComSheetOps:
 
     def test_underscore_sheets_hidden_via_excel_com(self, output_path: Path) -> None:
         """Hide sheets starting with '_'."""
-        from conftest import _build_hidden_sheets_workbook  # ty:ignore[unresolved-import]
+        from conftest import _build_hidden_sheets_workbook
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -175,7 +175,7 @@ class TestWin32ComSheetOps:
 
     def test_sheets_deleted_via_excel_com(self, output_path: Path) -> None:
         """Delete specified sheets."""
-        from conftest import _build_delete_sheets_workbook  # ty:ignore[unresolved-import]
+        from conftest import _build_delete_sheets_workbook
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -199,7 +199,7 @@ class TestWin32ComSheetOps:
 
     def test_active_sheet_set_via_excel_com(self, output_path: Path) -> None:
         """Set the active worksheet."""
-        from conftest import _build_hidden_sheets_workbook  # ty:ignore[unresolved-import]
+        from conftest import _build_hidden_sheets_workbook
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -240,7 +240,7 @@ class TestWin32ComTableFill:
 
     def test_tables_grow_when_data_is_larger_than_excel_table(self, output_path: Path) -> None:
         """Table should grow when data has more rows than the original."""
-        from conftest import TEMPLATE  # ty:ignore[unresolved-import]
+        from conftest import TEMPLATE
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -272,7 +272,7 @@ class TestWin32ComTableFill:
         output_path: Path,
     ) -> None:
         """Table should shrink when data has fewer rows than the original."""
-        from conftest import TEMPLATE  # ty:ignore[unresolved-import]
+        from conftest import TEMPLATE
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -300,7 +300,7 @@ class TestWin32ComTableFill:
 
     def test_table_styles_copied_to_new_rows_when_enabled(self, output_path: Path) -> None:
         """Table fill should copy styles to new rows when enabled."""
-        from conftest import TEMPLATE  # ty:ignore[unresolved-import]
+        from conftest import TEMPLATE
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -326,7 +326,7 @@ class TestWin32ComTableFill:
 
     def test_calculated_column_formulas_propagate_to_new_rows(self, output_path: Path) -> None:
         """Calculated column formulas should propagate to new rows."""
-        from conftest import _build_calculated_column_workbook  # ty:ignore[unresolved-import]
+        from conftest import _build_calculated_column_workbook
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -500,15 +500,15 @@ class TestWin32ComFormulaFixes:
         ws.cell(row=2, column=1, value=datetime(2024, 1, 1))
         ws.cell(row=2, column=2, value=0)
 
-        table = openpyxl.worksheet.table.Table(  # ty:ignore[possibly-missing-submodule]
+        table = openpyxl.worksheet.table.Table(
             displayName="PriceTable",
             ref="A1:B2",
             tableColumns=[
-                openpyxl.worksheet.table.TableColumn(id=1, name="Date"),  # ty:ignore[possibly-missing-submodule]
-                openpyxl.worksheet.table.TableColumn(  # ty:ignore[possibly-missing-submodule]
+                openpyxl.worksheet.table.TableColumn(id=1, name="Date"),
+                openpyxl.worksheet.table.TableColumn(
                     id=2,
                     name="StockPrice",
-                    calculatedColumnFormula=openpyxl.worksheet.table.TableFormula(attr_text="100"),  # ty:ignore[possibly-missing-submodule]
+                    calculatedColumnFormula=openpyxl.worksheet.table.TableFormula(attr_text="100"),
                 ),
             ],
         )
@@ -544,7 +544,7 @@ class TestWin32ComFormulaFixes:
         """A naive datetime written via win32com must read back with the
         same year/month/day (no UTC+1 timezone shift).
         """
-        from conftest import _build_cross_backend_dtype_template  # ty:ignore[unresolved-import]
+        from conftest import _build_cross_backend_dtype_template
 
         from fillxl._backends._win32com import Win32ComBackend
 
@@ -599,18 +599,22 @@ class TestReadCalculatedColumnFormulas:
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Sheet1"
-        col_defs: list[openpyxl.worksheet.table.TableColumn] = []  # ty:ignore[possibly-missing-submodule]
+        col_defs: list[openpyxl.worksheet.table.TableColumn] = []
         for idx, (name, formula) in enumerate(col_formulas.items(), 1):
             ws.cell(row=1, column=idx, value=name)
             ws.cell(row=2, column=idx, value=0)
-            kwargs = {"id": idx, "name": name}
             if formula is not None:
-                kwargs["calculatedColumnFormula"] = TableFormula(attr_text=formula)
-            col_defs.append(openpyxl.worksheet.table.TableColumn(**kwargs))  # ty:ignore[possibly-missing-submodule]
+                col_defs.append(
+                    openpyxl.worksheet.table.TableColumn(
+                        id=idx, name=name, calculatedColumnFormula=TableFormula(attr_text=formula)
+                    )
+                )
+            else:
+                col_defs.append(openpyxl.worksheet.table.TableColumn(id=idx, name=name))
 
-        table = openpyxl.worksheet.table.Table(  # ty:ignore[possibly-missing-submodule]
+        table = openpyxl.worksheet.table.Table(
             displayName="TestTable",
-            ref=f"A1:{openpyxl.utils.get_column_letter(len(col_formulas))}2",  # ty:ignore[possibly-missing-submodule]
+            ref=f"A1:{openpyxl.utils.get_column_letter(len(col_formulas))}2",
             tableColumns=col_defs,
         )
         ws.add_table(table)
@@ -799,7 +803,7 @@ class TestWin32ComFormatPreservation:
         """``copy_table_styles`` must copy from the data body columns only,
         not the full worksheet row, to avoid a rightward column shift.
         """
-        from conftest import TEMPLATE  # ty:ignore[unresolved-import]
+        from conftest import TEMPLATE
 
         from fillxl._backends._win32com import Win32ComBackend
 

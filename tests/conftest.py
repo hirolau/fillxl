@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
 
 import openpyxl
 import pytest
 import xlwings as xw
-from openpyxl.chart import (  # ty:ignore[unresolved-import]
+from openpyxl.chart import (
     AreaChart,
     BarChart,
     LineChart,
@@ -15,7 +16,7 @@ from openpyxl.chart import (  # ty:ignore[unresolved-import]
     Reference,
     ScatterChart,
 )
-from openpyxl.worksheet.table import (  # ty:ignore[unresolved-import]
+from openpyxl.worksheet.table import (
     Table,
     TableColumn,
     TableFormula,
@@ -53,7 +54,7 @@ def output_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def xl_app() -> xw.App:  # ty:ignore[invalid-return-type]
+def xl_app() -> Generator[xw.App, None, None]:
     """Launch a hidden Excel instance for COM-based verification, quit after test."""
     app = xw.App(visible=False)
     yield app
@@ -352,7 +353,7 @@ def _build_chart_sheet_workbook(path: Path) -> None:
     ws["A1"] = "Value"
     ws["A2"] = 42
 
-    wb.create_chartsheet(title="ChartSheet")  # ty:ignore[invalid-argument-type]
+    wb.create_chartsheet(title="ChartSheet")
 
     from openpyxl.workbook.defined_name import DefinedName
 
@@ -497,19 +498,19 @@ def _build_dtype_template(path: Path) -> None:
     ws2.cell(row=2, column=8, value=time(12, 0))
     ws2.cell(row=2, column=9, value=Decimal(0))
 
-    table = openpyxl.worksheet.table.Table(  # ty:ignore[possibly-missing-submodule]
+    table = openpyxl.worksheet.table.Table(
         displayName="DtypeTable",
         ref="A1:I2",
         tableColumns=[
-            openpyxl.worksheet.table.TableColumn(id=1, name="StrCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=2, name="IntCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=3, name="FloatCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=4, name="BoolCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=5, name="NoneCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=6, name="DatetimeCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=7, name="DateCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=8, name="TimeCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=9, name="DecimalCol"),  # ty:ignore[possibly-missing-submodule]
+            openpyxl.worksheet.table.TableColumn(id=1, name="StrCol"),
+            openpyxl.worksheet.table.TableColumn(id=2, name="IntCol"),
+            openpyxl.worksheet.table.TableColumn(id=3, name="FloatCol"),
+            openpyxl.worksheet.table.TableColumn(id=4, name="BoolCol"),
+            openpyxl.worksheet.table.TableColumn(id=5, name="NoneCol"),
+            openpyxl.worksheet.table.TableColumn(id=6, name="DatetimeCol"),
+            openpyxl.worksheet.table.TableColumn(id=7, name="DateCol"),
+            openpyxl.worksheet.table.TableColumn(id=8, name="TimeCol"),
+            openpyxl.worksheet.table.TableColumn(id=9, name="DecimalCol"),
         ],
     )
     ws2.add_table(table)
@@ -646,26 +647,26 @@ def _build_cross_backend_dtype_template(path: Path) -> None:
     ws2.cell(row=2, column=15, value=0)  # LargeIntCol
     ws2.cell(row=2, column=16, value=0.0)  # LargeFloatCol
 
-    table = openpyxl.worksheet.table.Table(  # ty:ignore[possibly-missing-submodule]
+    table = openpyxl.worksheet.table.Table(
         displayName="CrossDtypeTable",
         ref="A1:P2",
         tableColumns=[
-            openpyxl.worksheet.table.TableColumn(id=1, name="StrCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=2, name="IntCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=3, name="FloatCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=4, name="BoolCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=5, name="NoneCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=6, name="DatetimeCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=7, name="DateCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=8, name="TimeCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=9, name="DecimalCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=10, name="FloatNanCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=11, name="NaCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=12, name="NaTCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=13, name="TimestampCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=14, name="TzDatetimeCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=15, name="LargeIntCol"),  # ty:ignore[possibly-missing-submodule]
-            openpyxl.worksheet.table.TableColumn(id=16, name="LargeFloatCol"),  # ty:ignore[possibly-missing-submodule]
+            openpyxl.worksheet.table.TableColumn(id=1, name="StrCol"),
+            openpyxl.worksheet.table.TableColumn(id=2, name="IntCol"),
+            openpyxl.worksheet.table.TableColumn(id=3, name="FloatCol"),
+            openpyxl.worksheet.table.TableColumn(id=4, name="BoolCol"),
+            openpyxl.worksheet.table.TableColumn(id=5, name="NoneCol"),
+            openpyxl.worksheet.table.TableColumn(id=6, name="DatetimeCol"),
+            openpyxl.worksheet.table.TableColumn(id=7, name="DateCol"),
+            openpyxl.worksheet.table.TableColumn(id=8, name="TimeCol"),
+            openpyxl.worksheet.table.TableColumn(id=9, name="DecimalCol"),
+            openpyxl.worksheet.table.TableColumn(id=10, name="FloatNanCol"),
+            openpyxl.worksheet.table.TableColumn(id=11, name="NaCol"),
+            openpyxl.worksheet.table.TableColumn(id=12, name="NaTCol"),
+            openpyxl.worksheet.table.TableColumn(id=13, name="TimestampCol"),
+            openpyxl.worksheet.table.TableColumn(id=14, name="TzDatetimeCol"),
+            openpyxl.worksheet.table.TableColumn(id=15, name="LargeIntCol"),
+            openpyxl.worksheet.table.TableColumn(id=16, name="LargeFloatCol"),
         ],
     )
     ws2.add_table(table)

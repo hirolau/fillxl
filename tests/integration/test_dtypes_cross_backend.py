@@ -747,13 +747,13 @@ class TestCrossBackendTimedeltaTable:
     ) -> None:
         """A timedelta in a table column is preserved natively by openpyxl."""
         import openpyxl
-        from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+        from openpyxl.worksheet.table import Table, TableColumn
 
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Data"
         ws["A1"] = "Duration"
-        ws["A2"] = None  # ty:ignore[invalid-assignment]
+        ws["A2"] = None
         table = Table(
             displayName="Times",
             ref="A1:A2",
@@ -1135,7 +1135,7 @@ class TestCrossBackendTableWin32Com:
         """None values in a table column are empty when filled via win32com."""
         import openpyxl
 
-        data = [{"NoneCol": None}, {"NoneCol": "not none"}]
+        data: list[dict[str, str | None]] = [{"NoneCol": None}, {"NoneCol": "not none"}]
         fill(
             template=cross_backend_dtype_template,
             output=output_path,
@@ -1499,8 +1499,8 @@ class TestCrossBackendComparison:
                 assert abs(com_val.day - orig_date.day) <= 1  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
             elif isinstance(com_val, (int, float)):
                 serial_date = _serial_to_datetime(com_val)
-                assert abs(serial_date.day - orig_date.day) <= 1, (  # ty:ignore[unresolved-attribute]
-                    f"COM date mismatch: expected day ~{orig_date.day}, "  # ty:ignore[unresolved-attribute]
+                assert abs(serial_date.day - orig_date.day) <= 1, (  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
+                    f"COM date mismatch: expected day ~{orig_date.day}, "  # type: ignore[attr-defined]  # ty:ignore[unresolved-attribute]
                     f"got {serial_date.day} (serial={com_val})"
                 )
         elif cell_name == "cd_bool_cell":
@@ -1510,7 +1510,7 @@ class TestCrossBackendComparison:
             assert op_bool == com_bool
         elif cell_name == "cd_large_int_cell":
             # COM may convert large ints to float
-            assert float(op_val) == float(com_val)  # type: ignore[arg-type]
+            assert float(op_val) == float(com_val)
         else:
             assert op_val == com_val, (
                 f"Mismatch for {cell_name}: openpyxl={op_val!r} vs win32com={com_val!r}"
@@ -1641,7 +1641,7 @@ class TestCrossBackendComparison:
                     elif isinstance(com_val, (int, float)):
                         # Serial date read by openpyxl — compare with wide tolerance
                         # (Account for Excel leap-year bug + OLE tz conversion)
-                        day_diff = abs(int(com_val) - (orig_dt - _SERIAL_EPOCH).days)  # ty:ignore[unsupported-operator]
+                        day_diff = abs(int(com_val) - (orig_dt - _SERIAL_EPOCH).days)  # type: ignore[operator]  # ty:ignore[unsupported-operator]
                         assert day_diff <= 2, (
                             f"Row {i}: COM serial {com_val} for {orig_dt} "
                             f"differs by {day_diff} days"

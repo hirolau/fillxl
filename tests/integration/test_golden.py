@@ -27,6 +27,8 @@ import pytest
 from fillxl import FillXLConfig, fill
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from fillxl._types import Engine
 
 ASSETS = Path(__file__).parent / "assets"
@@ -40,7 +42,7 @@ GOLDEN = ASSETS / "golden"
 # fill_kwargs     — extra kwargs passed to fillxl.fill()
 
 
-def _chart_tables_data() -> dict:
+def _chart_tables_data() -> dict[str, list[dict[str, object]]]:
     """Return the chart table data used in fill_template_2."""
     from datetime import datetime
 
@@ -115,7 +117,7 @@ def _chart_tables_data() -> dict:
     }
 
 
-_TEMPLATE_DEFS: list[tuple[str, str, str, Engine, dict]] = [
+_TEMPLATE_DEFS: list[tuple[str, str, str, Engine, dict[str, Any]]] = [
     (
         "tpl1_basic",
         "test_template_1.xlsx",
@@ -208,7 +210,7 @@ _TEMPLATE_DEFS: list[tuple[str, str, str, Engine, dict]] = [
 
 # ── Win32com variants ────────────────────────────────────────────────────────
 
-_WIN32COM_DEFS: list[tuple[str, str, str, Engine, dict]] = [
+_WIN32COM_DEFS: list[tuple[str, str, str, Engine, dict[str, Any]]] = [
     (
         "tpl1_basic",
         "test_template_1.xlsx",
@@ -305,8 +307,8 @@ _WIN32COM_DEFS: list[tuple[str, str, str, Engine, dict]] = [
 
 
 def _compare_cells(
-    ws_actual: openpyxl.worksheet.worksheet.Worksheet,  # ty:ignore[possibly-missing-submodule]
-    ws_expected: openpyxl.worksheet.worksheet.Worksheet,  # ty:ignore[possibly-missing-submodule]
+    ws_actual: openpyxl.worksheet.worksheet.Worksheet,
+    ws_expected: openpyxl.worksheet.worksheet.Worksheet,
     *,
     tolerance_dates: bool = False,
 ) -> list[str]:
@@ -411,12 +413,12 @@ def _compare_cells(
             # Date tolerance (win32com golden copies)
             if tolerance_dates and hasattr(v_act, "year") and hasattr(v_exp, "year"):
                 # Both are datetime-like — allow ±1 day shift
-                if v_act.year == v_exp.year and v_act.month == v_exp.month:
-                    day_diff = abs(v_act.day - v_exp.day)
+                if v_act.year == v_exp.year and v_act.month == v_exp.month:  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+                    day_diff = abs(v_act.day - v_exp.day)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
                     if day_diff <= 1:
                         continue  # within tolerance
                 # Check full date ±1 day
-                if abs(v_act - v_exp) <= dt_module.timedelta(days=1):
+                if abs(v_act - v_exp) <= dt_module.timedelta(days=1):  # type: ignore[operator]  # ty:ignore[unsupported-operator]
                     continue
 
             # Bool tolerance (COM may return 1/0)
@@ -461,9 +463,9 @@ def _compare_tables(
     def _get_tables(wb: openpyxl.Workbook) -> dict[str, tuple[str, str, list[str]]]:
         result: dict[str, tuple[str, str, list[str]]] = {}
         for ws in wb.worksheets:
-            for table in ws._tables.values():  # type: ignore[attr-defined]
+            for table in ws._tables.values():
                 cols = [c.name for c in table.tableColumns]
-                result[table.displayName] = (ws.title, table.ref, cols)  # ty:ignore[invalid-assignment]
+                result[table.displayName] = (ws.title, table.ref, cols)
         return result
 
     tables_act = _get_tables(wb_actual)
@@ -592,7 +594,7 @@ class TestGoldenCopyRegression:
         template_file: str,
         golden_file: str,
         engine: Engine,
-        fill_kwargs: dict,
+        fill_kwargs: dict[str, Any],
         tmp_path: Path,
     ) -> None:
         """A template filled via the openpyxl backend matches its golden copy."""
@@ -620,7 +622,7 @@ class TestGoldenCopyRegression:
         template_file: str,
         golden_file: str,
         engine: Engine,
-        fill_kwargs: dict,
+        fill_kwargs: dict[str, Any],
         tmp_path: Path,
     ) -> None:
         """A template filled via the win32com backend matches its golden copy.

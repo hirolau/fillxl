@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import openpyxl
-from openpyxl.worksheet.table import (  # ty:ignore[unresolved-import]
+from openpyxl.worksheet.table import (
     Table,
     TableColumn,
     TableFormula,
@@ -147,14 +147,14 @@ class TestConditionalFormatting:
         ws["A1"] = "Value"
         ws["A2"] = 5
 
-        from openpyxl.formatting.rule import CellIsRule  # ty:ignore[unresolved-import]
+        from openpyxl.formatting.rule import CellIsRule
 
         ws.conditional_formatting.add(
             "A2:A3",
             CellIsRule(
                 operator="greaterThan",
                 formula=["10"],
-                fill=openpyxl.styles.PatternFill(  # ty:ignore[possibly-missing-submodule]
+                fill=openpyxl.styles.PatternFill(
                     start_color="FF0000",
                     end_color="FF0000",
                     fill_type="solid",
@@ -200,11 +200,11 @@ class TestConditionalFormatting:
         ws["A3"] = 2
         ws["A4"] = 3
 
-        from openpyxl.formatting.rule import CellIsRule  # ty:ignore[unresolved-import]
+        from openpyxl.formatting.rule import CellIsRule
 
         ws.conditional_formatting.add(
             "A2:A4",
-            CellIsRule(operator="greaterThan", formula=["5"], fill=openpyxl.styles.PatternFill()),  # ty:ignore[possibly-missing-submodule]
+            CellIsRule(operator="greaterThan", formula=["5"], fill=openpyxl.styles.PatternFill()),
         )
 
         table = Table(
@@ -243,11 +243,11 @@ class TestConditionalFormatting:
         ws["A1"] = "Value"
         ws["A2"] = 1
 
-        from openpyxl.formatting.rule import CellIsRule  # ty:ignore[unresolved-import]
+        from openpyxl.formatting.rule import CellIsRule
 
         ws.conditional_formatting.add(
             "A2:A2",
-            CellIsRule(operator="greaterThan", formula=["0"], fill=openpyxl.styles.PatternFill()),  # ty:ignore[possibly-missing-submodule]
+            CellIsRule(operator="greaterThan", formula=["0"], fill=openpyxl.styles.PatternFill()),
         )
 
         table = Table(
@@ -322,7 +322,7 @@ class TestFormulasOutsideTables:
         # Leave a gap of empty rows between table end and formula
         ws["A10"] = "=SUM(A2:A3)"
 
-        from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+        from openpyxl.worksheet.table import Table, TableColumn
 
         # Table has just 2 data rows (A2:A3), so the table ref is A1:A3
         table = Table(

@@ -281,7 +281,7 @@ class TestUpdateChartDataRanges:
             ws.cell(row=ri + 2, column=1, value=f"Cat{ri + 1}")
             ws.cell(row=ri + 2, column=2, value=(ri + 1) * 10)
 
-        from openpyxl.chart import BarChart, Reference  # ty:ignore[unresolved-import]
+        from openpyxl.chart import BarChart, Reference
 
         chart = BarChart()
         data_ref = Reference(ws, min_col=2, min_row=1, max_row=5)
@@ -291,7 +291,7 @@ class TestUpdateChartDataRanges:
         chart_ws = wb.create_sheet("Charts")
         chart_ws.add_chart(chart, "A1")
 
-        from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+        from openpyxl.worksheet.table import Table, TableColumn
 
         table = Table(
             displayName="ChartData",

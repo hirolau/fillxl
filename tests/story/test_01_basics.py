@@ -91,7 +91,7 @@ class TestBasicFillBehaviour:
         ws["C1"] = "Old Title"
 
         from openpyxl.workbook.defined_name import DefinedName
-        from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+        from openpyxl.worksheet.table import Table, TableColumn
 
         wb.defined_names.add(DefinedName("ReportTitle", attr_text="Report!$C$1"))
         ws.add_table(
@@ -319,7 +319,7 @@ class TestFillLifecycle:
         ws["C1"] = "Old Title"
 
         from openpyxl.workbook.defined_name import DefinedName
-        from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+        from openpyxl.worksheet.table import Table, TableColumn
 
         wb.defined_names.add(DefinedName("title", attr_text="Data!$C$1"))
         ws.add_table(
@@ -375,7 +375,7 @@ class TestFillLifecycle:
         ws["B2"] = 0
 
         from openpyxl.workbook.defined_name import DefinedName
-        from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+        from openpyxl.worksheet.table import Table, TableColumn
 
         wb.defined_names.add(DefinedName("title", attr_text="Data!$C$1"))
         ws.add_table(

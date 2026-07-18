@@ -1,0 +1,56 @@
+from collections.abc import Generator, Iterator
+from typing import Any
+
+class DefinedName:
+    tagname: str
+    name: str
+    comment: str | None
+    attr_text: Any
+    value: Any
+    localSheetId: int | None
+    hidden: bool | None
+    def __init__(
+        self,
+        name: str = ...,
+        comment: str | None = ...,
+        customMenu: str | None = ...,
+        description: str | None = ...,
+        help: str | None = ...,
+        statusBar: str | None = ...,
+        localSheetId: int | None = ...,
+        hidden: bool | None = ...,
+        function: bool | None = ...,
+        vbProcedure: bool | None = ...,
+        xlm: bool | None = ...,
+        functionGroupId: int | None = ...,
+        shortcutKey: str | None = ...,
+        publishToServer: bool | None = ...,
+        workbookParameter: bool | None = ...,
+        attr_text: Any | None = ...,
+    ) -> None: ...
+    @property
+    def type(self) -> Any: ...
+    @property
+    def destinations(self) -> Generator[tuple[str, str], None, None]: ...
+    @property
+    def is_reserved(self) -> Any: ...
+    @property
+    def is_external(self) -> Any: ...
+    def __iter__(self) -> Iterator[Any]: ...
+
+class DefinedNameDict(dict[str, DefinedName]):
+    def add(self, value: DefinedName) -> None: ...
+
+class DefinedNameList:
+    tagname: str
+    definedName: Any
+    def __init__(self, definedName: Any = ...) -> None: ...
+    def append(self, defn: DefinedName) -> None: ...
+    def add(self, value: DefinedName) -> None: ...
+    def __len__(self) -> int: ...
+    def __contains__(self, name: object) -> bool: ...
+    def __getitem__(self, name: str) -> DefinedName: ...
+    def get(self, name: str, scope: Any | None = ...) -> DefinedName | None: ...
+    def __delitem__(self, name: str) -> None: ...
+    def delete(self, name: str, scope: Any | None = ...) -> None: ...
+    def localnames(self, scope: Any) -> list[str]: ...

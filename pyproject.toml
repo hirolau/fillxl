@@ -51,7 +51,6 @@ dev = [
 	"mypy>=1.10",
 	"pyrefly>=1.0",
 	"coverage>=7",
-	"openpyxl-stubs>=0.1",
 	"pandas-stubs>=2",
 	"ruff>=0.1",
 	"check-wheel-contents>=0.6",
@@ -83,8 +82,12 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "duckdb>=1.5.4",
     "fillxl[dev]",
+    "hypothesis>=6.156.3",
     "mypy>=2.1.0",
+    "pandas>=3.0.3",
+    "polars>=1.42.1",
     "pyrefly>=1.1.1",
     "ty>=0.0.59",
 ]
@@ -126,7 +129,12 @@ strict = true
 show_error_codes = true
 warn_unused_ignores = true
 explicit_package_bases = true
-mypy_path = "src"
+# typings/ first so local openpyxl stubs override incomplete openpyxl-stubs.
+mypy_path = "typings,src"
+
+[tool.ty.environment]
+# Prefer local openpyxl stub overrides in typings/.
+extra-paths = ["typings", "src", "tests"]
 
 [tool.ty.rules]
 #unresolved-import = "ignore"
@@ -136,14 +144,26 @@ mypy_path = "src"
 #unused-ignore-comment = "ignore"
 
 [[tool.mypy.overrides]]
-module = ["openpyxl.*", "xlwings.*", "duckdb", "polars", "win32com.*", "pythoncom", "pywintypes"]
+module = ["xlwings.*", "duckdb", "polars", "win32com.*", "pythoncom", "pywintypes"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "tests.*"
+# Tests intentionally pass invalid engines / poke private attrs.
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = "tests.integration.test_win32com"
+# The conftest import works because pytest adds tests/ to sys.path at runtime.
+ignore_errors = true
+
 [tool.pyrefly]
-project-includes = ["src/fillxl"]
-project-excludes = ["**/__pycache__", "**/.nox", "**/.venv", "**/.git"]
+project-includes = ["src/fillxl", "tests"]
+project-excludes = ["**/__pycache__", "**/.nox", "**/.venv", "**/.git", "**/typings"]
 preset = "strict"
-ignore-missing-imports = ["openpyxl.*", "xlwings.*"]
+search-path = ["typings", "src", "tests"]
+# Prefer local typings/ for openpyxl; still use site-packages for other deps.
+ignore-missing-imports = ["xlwings.*", "win32com.*", "pythoncom", "pywintypes", "duckdb", "polars", "tests.conftest"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

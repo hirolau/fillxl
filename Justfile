@@ -26,9 +26,20 @@ lint:
     uv run ruff check --fix src/ tests/
     uv run ruff format src/ tests/
 
-# Type-check with mypy (strict mode)
-typecheck:
-    uv run mypy src/fillxl/
+# Type-check with ty
+typecheck-ty:
+    uv run ty check src/fillxl/ tests/
+
+# Type-check with mypy
+typecheck-mypy:
+    uv run mypy src/fillxl/ tests/
+
+# Type-check with pyrefly
+typecheck-pyrefly:
+    uv run pyrefly check
+
+# Run all type-checkers
+typecheck: typecheck-ty typecheck-mypy typecheck-pyrefly
 
 # Run doctests for pure-logic modules
 doctest:

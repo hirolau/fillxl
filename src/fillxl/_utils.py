@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from openpyxl.workbook.workbook import Workbook
-    from openpyxl.worksheet.table import Table  # ty:ignore[unresolved-import]
+    from openpyxl.worksheet.table import Table
     from openpyxl.worksheet.worksheet import Worksheet
 
 logger = logging.getLogger(__name__)

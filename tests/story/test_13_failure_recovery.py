@@ -14,13 +14,14 @@ failure occurs.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import openpyxl
 import pytest
-from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+from openpyxl.worksheet.table import Table, TableColumn
 
 from fillxl import FillXLConfig, fill
+from fillxl._types import Engine
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -226,7 +227,7 @@ class TestFailureOnInvalidEngine:
             fill(
                 template=output_path.with_name("tmpl.xlsx"),
                 output=output_path,
-                engine="bogus",  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+                engine=cast(Engine, "bogus"),
             )
 
         assert not output_path.exists()

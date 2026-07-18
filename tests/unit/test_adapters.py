@@ -129,8 +129,8 @@ class TestTabularAdapter:
         # Create an adapter that bypasses successful type detection
         # by starting with _columns=None
         adapter = object.__new__(TabularAdapter)
-        adapter._columns = None  # type: ignore[attr-defined]
-        adapter._rows = None  # type: ignore[attr-defined]
+        adapter._columns = None
+        adapter._rows = None
         with pytest.raises(RuntimeError, match="Columns not initialized"):
             _ = adapter.columns
 
@@ -139,7 +139,7 @@ class TestTabularAdapter:
         from fillxl._adapters import TabularAdapter
 
         adapter = object.__new__(TabularAdapter)
-        adapter._columns = None  # type: ignore[attr-defined]
-        adapter._rows = None  # type: ignore[attr-defined]
+        adapter._columns = None
+        adapter._rows = None
         with pytest.raises(RuntimeError, match="Rows not initialized"):
             _ = adapter.rows

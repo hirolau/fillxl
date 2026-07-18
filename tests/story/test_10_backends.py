@@ -17,11 +17,13 @@ based on the ``engine`` config option.  Each backend implements the
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import openpyxl
 import pytest
 
 from fillxl._backend import Backend, get_backend
+from fillxl._types import Engine
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 10.1 The Backend factory
@@ -63,12 +65,13 @@ class TestBackendFactory:
     ) -> None:
         """An unknown engine name raises immediately."""
         with pytest.raises(ValueError, match="Unknown engine"):
-            get_backend("xlwings")  # ty:ignore[invalid-argument-type]
+            # Intentionally passing invalid engine name to test error handling
+            get_backend(cast(Any, "xlwings"))
 
     @pytest.mark.parametrize("engine", ["auto", "openpyxl", "win32com"])
     def test_known_engine_name_returns_a_valid_backend(self, engine: str) -> None:
         """Every known engine name returns a backend implementing the protocol."""
-        backend = get_backend(engine)  # ty:ignore[invalid-argument-type]
+        backend = get_backend(cast(Engine, engine))
         assert isinstance(backend, Backend)
 
 
@@ -122,7 +125,8 @@ class TestBackendReuse:
         path1 = output_path.with_name("cycle1.xlsx")
         _make_simple_table(path1, "T1")
         backend.load(path1)
-        populate_table(backend._workbook, "T1", [{"Name": "first", "Value": 1}])  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        assert backend._workbook is not None
+        populate_table(backend._workbook, "T1", [{"Name": "first", "Value": 1}])
         backend.save(path1)
         backend.close()
 
@@ -138,7 +142,8 @@ class TestBackendReuse:
         path2 = output_path.with_name("cycle2.xlsx")
         _make_simple_table(path2, "T2")
         backend.load(path2)
-        populate_table(backend._workbook, "T2", [{"Name": "second", "Value": 2}])  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+        assert backend._workbook is not None
+        populate_table(backend._workbook, "T2", [{"Name": "second", "Value": 2}])
         backend.save(path2)
         backend.close()
 
@@ -164,8 +169,8 @@ class TestWin32ComBackend:
         from fillxl._backends._win32com import Win32ComBackend
 
         backend = Win32ComBackend()
-        assert backend._app is None  # type: ignore[attr-defined]
-        assert backend._workbook is None  # type: ignore[attr-defined]
+        assert backend._app is None
+        assert backend._workbook is None
 
     def test_win32com_backend_raises_on_non_windows_platform(
         self,
@@ -191,7 +196,7 @@ def _make_simple_table(path: Path, table_name: str) -> None:
     ws = wb.active
     ws.title = "Sheet1"
 
-    from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+    from openpyxl.worksheet.table import Table, TableColumn
 
     ws["A1"] = "Name"
     ws["B1"] = "Value"

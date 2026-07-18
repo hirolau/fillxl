@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import openpyxl
 import pytest
-from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+from openpyxl.worksheet.table import Table, TableColumn
 
 if TYPE_CHECKING:
     from pathlib import Path

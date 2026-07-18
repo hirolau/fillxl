@@ -19,13 +19,14 @@ preservation, formula strings, merged cells, and scalar data types across backen
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import openpyxl
 import pytest
 
 from fillxl import fill
 from fillxl._cells import populate_named_cells
+from fillxl._types import Engine
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -387,7 +388,7 @@ class TestScalarDataTypes:
         wb.save(tmpl)
         wb.close()
 
-        fill(template=tmpl, output=output_path, values={"val": value}, engine=engine)  # ty:ignore[invalid-argument-type]
+        fill(template=tmpl, output=output_path, values={"val": value}, engine=cast(Engine, engine))
 
         wb2 = openpyxl.load_workbook(output_path)
         try:
@@ -424,7 +425,7 @@ class TestScalarDataTypes:
             template=tmpl,
             output=output_path,
             values={"date_cell": datetime(2025, 6, 15)},
-            engine=engine,  # ty:ignore[invalid-argument-type]
+            engine=cast(Engine, engine),
         )
 
         wb2 = openpyxl.load_workbook(output_path)
@@ -474,7 +475,7 @@ class TestScalarDataTypes:
             template=tmpl,
             output=output_path,
             values={"dur_cell": td},
-            engine=engine,  # ty:ignore[invalid-argument-type]
+            engine=cast(Engine, engine),
         )
 
         wb2 = openpyxl.load_workbook(output_path)
@@ -522,7 +523,7 @@ class TestScalarDataTypes:
             template=tmpl,
             output=output_path,
             values={"custom": Greeting()},
-            engine=engine,  # ty:ignore[invalid-argument-type]
+            engine=cast(Engine, engine),
         )
 
         wb2 = openpyxl.load_workbook(output_path)

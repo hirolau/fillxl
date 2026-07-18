@@ -43,7 +43,7 @@ def _make_table_template(
     ws = wb.active
     ws.title = "Data"
 
-    from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+    from openpyxl.worksheet.table import Table, TableColumn
 
     for ci, col_name in enumerate(columns, 1):
         ws.cell(row=1, column=ci, value=col_name)
@@ -51,7 +51,7 @@ def _make_table_template(
         for ci in range(len(columns)):
             ws.cell(row=ri + 2, column=ci + 1, value=f"r{ri}c{ci}")
 
-    last_col_letter = openpyxl.utils.get_column_letter(len(columns))  # ty:ignore[possibly-missing-submodule]
+    last_col_letter = openpyxl.utils.get_column_letter(len(columns))
     ref = f"A1:{last_col_letter}{rows + 1}"
     table = Table(
         displayName=table_name,
@@ -360,7 +360,7 @@ class TestLargeData:
         output_path: Path,
     ) -> None:
         """Filling a table with 1000 rows completes without error."""
-        from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+        from openpyxl.worksheet.table import Table, TableColumn
 
         wb = openpyxl.Workbook()
         ws = wb.active

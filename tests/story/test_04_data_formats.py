@@ -35,7 +35,7 @@ def _make_simple_table(path: Path, table_name: str = "Data") -> None:
     ws = wb.active
     ws.title = "Sheet1"
 
-    from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+    from openpyxl.worksheet.table import Table, TableColumn
 
     ws["A1"] = "Name"
     ws["B1"] = "Score"

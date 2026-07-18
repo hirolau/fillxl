@@ -195,7 +195,7 @@ class OpenpyxlBackend:
             ws = self._workbook[name]
             if isinstance(ws, Worksheet):
                 idx = self._workbook.index(ws)
-                self._workbook.active = idx  # type: ignore[assignment]  # ty:ignore[invalid-assignment]
+                self._workbook.active = idx
             logger.debug("Set active worksheet to '%s'", name)
         else:
             logger.warning("Sheet '%s' not found, keeping default active sheet", name)
@@ -286,9 +286,9 @@ def _fix_chart_axes(workbook: openpyxl.Workbook) -> None:
         workbook: The openpyxl Workbook to fix.
 
     """
-    from openpyxl.chart import BarChart  # type: ignore[attr-defined]
+    from openpyxl.chart import BarChart
     from openpyxl.chart.axis import NumericAxis, TextAxis
-    from openpyxl.chart.data_source import NumFmt  # ty:ignore[unresolved-import]
+    from openpyxl.chart.data_source import NumFmt
 
     for sheet_name in workbook.sheetnames:
         ws = workbook[sheet_name]
@@ -310,17 +310,17 @@ def _fix_chart_axes(workbook: openpyxl.Workbook) -> None:
 
                 if isinstance(ax, TextAxis):
                     # Category axis
-                    ax.axPos = "l" if is_horizontal_bar else "b"  # type: ignore[attr-defined]  # pyrefly: ignore
-                    if ax.numFmt is None:  # type: ignore[attr-defined]  # pyrefly: ignore
-                        ax.numFmt = NumFmt(formatCode="General", sourceLinked=True)  # type: ignore[attr-defined]  # pyrefly: ignore
-                    if ax.auto is None:  # type: ignore[attr-defined]  # pyrefly: ignore
-                        ax.auto = True  # type: ignore[attr-defined]  # pyrefly: ignore
-                    if ax.lblAlgn is None:  # type: ignore[attr-defined]  # pyrefly: ignore
-                        ax.lblAlgn = "ctr"  # type: ignore[attr-defined]  # pyrefly: ignore
-                    if ax.noMultiLvlLbl is None:  # type: ignore[attr-defined]  # pyrefly: ignore
-                        ax.noMultiLvlLbl = False  # type: ignore[attr-defined]  # pyrefly: ignore
+                    ax.axPos = "l" if is_horizontal_bar else "b"
+                    if ax.numFmt is None:
+                        ax.numFmt = NumFmt(formatCode="General", sourceLinked=True)
+                    if ax.auto is None:
+                        ax.auto = True
+                    if ax.lblAlgn is None:
+                        ax.lblAlgn = "ctr"
+                    if ax.noMultiLvlLbl is None:
+                        ax.noMultiLvlLbl = False
                 elif isinstance(ax, NumericAxis):
                     # Value axis
-                    ax.axPos = "b" if is_horizontal_bar else "l"  # type: ignore[attr-defined]  # pyrefly: ignore
-                    if ax.crossBetween is None:  # type: ignore[attr-defined]  # pyrefly: ignore
-                        ax.crossBetween = "midCat"  # type: ignore[attr-defined]  # pyrefly: ignore
+                    ax.axPos = "b" if is_horizontal_bar else "l"
+                    if ax.crossBetween is None:
+                        ax.crossBetween = "midCat"

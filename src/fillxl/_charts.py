@@ -49,7 +49,7 @@ def all_chart_series(workbook: Workbook) -> Generator[Any, None, None]:
 
     """
     for sheet in workbook.sheetnames:
-        for chart in workbook[sheet]._charts:  # type: ignore[attr-defined, unused-ignore]
+        for chart in workbook[sheet]._charts:
             yield from chart.ser
 
 

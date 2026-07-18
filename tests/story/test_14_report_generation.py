@@ -14,8 +14,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import openpyxl
-from openpyxl.chart import BarChart, Reference  # ty:ignore[unresolved-import]
-from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+from openpyxl.chart import BarChart, Reference
+from openpyxl.worksheet.table import Table, TableColumn
 
 from fillxl import fill
 

@@ -41,13 +41,13 @@ def _make_table_template(path: Path, columns: list[str], table_name: str = "Data
     ws = wb.active
     ws.title = "Sheet1"
 
-    from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+    from openpyxl.worksheet.table import Table, TableColumn
 
     for ci, col_name in enumerate(columns, 1):
         ws.cell(row=1, column=ci, value=col_name)
         ws.cell(row=2, column=ci, value=f"dummy_{col_name}")
 
-    last_col = openpyxl.utils.get_column_letter(len(columns))  # ty:ignore[possibly-missing-submodule]
+    last_col = openpyxl.utils.get_column_letter(len(columns))
     table = Table(
         displayName=table_name,
         ref=f"A1:{last_col}2",

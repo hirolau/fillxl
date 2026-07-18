@@ -15,7 +15,7 @@ from ._utils import col_to_excel, find_worksheet_and_table
 
 if TYPE_CHECKING:
     from openpyxl.workbook.workbook import Workbook
-    from openpyxl.worksheet.table import Table  # ty:ignore[unresolved-import]
+    from openpyxl.worksheet.table import Table
     from openpyxl.worksheet.worksheet import Worksheet
 
 logger = logging.getLogger(__name__)
@@ -138,8 +138,8 @@ def populate_table(
 
     # Populate each table column
     for col_ix, column in enumerate(table.tableColumns):
-        first_row_cell = table_first_cell.offset(column=col_ix, row=1)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
-        first_row_style = first_row_cell._style  # type: ignore[attr-defined, unused-ignore]
+        first_row_cell = table_first_cell.offset(column=col_ix, row=1)
+        first_row_style = first_row_cell._style
 
         # Check if this column exists in the data
         if column.name in data_column_map:
@@ -147,7 +147,7 @@ def populate_table(
 
             # Write each row value
             for row_ix, row_values in enumerate(rows):
-                cell_to_fill = cast("Cell", table_first_cell.offset(column=col_ix, row=row_ix + 1))  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+                cell_to_fill = table_first_cell.offset(column=col_ix, row=row_ix + 1)
                 row_value = row_values[data_col_idx]
 
                 # Handle pandas Timestamp conversion (if pandas is available)
@@ -170,16 +170,16 @@ def populate_table(
 
                 # Copy style from first row
                 if copy_style_in_tables:
-                    cell_to_fill._style = first_row_style  # type: ignore[attr-defined, unused-ignore]
+                    cell_to_fill._style = first_row_style
 
         # Handle calculated columns (formulas)
         elif column.calculatedColumnFormula:
-            formula = column.calculatedColumnFormula.attr_text
+            formula = column.calculatedColumnFormula.attr_text or ""
             for row_ix in range(len(rows)):
-                cell_to_fill = cast("Cell", table_first_cell.offset(column=col_ix, row=row_ix + 1))  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
+                cell_to_fill = table_first_cell.offset(column=col_ix, row=row_ix + 1)
                 cell_to_fill.value = "=" + formula
                 if copy_style_in_tables:
-                    cell_to_fill._style = first_row_style  # type: ignore[attr-defined, unused-ignore]
+                    cell_to_fill._style = first_row_style
 
     # Extend conditional formatting to cover all new rows
     # Guard: skip when there are no data rows (first_data_row > table_end_row)

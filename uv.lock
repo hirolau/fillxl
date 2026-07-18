@@ -543,7 +543,6 @@ dev = [
     { name = "coverage" },
     { name = "mypy" },
     { name = "nox" },
-    { name = "openpyxl-stubs" },
     { name = "pandas-stubs" },
     { name = "pyrefly" },
     { name = "pytest" },
@@ -575,8 +574,12 @@ win32com = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "duckdb" },
     { name = "fillxl", extra = ["dev"] },
+    { name = "hypothesis" },
     { name = "mypy" },
+    { name = "pandas" },
+    { name = "polars" },
     { name = "pyrefly" },
     { name = "ty" },
 ]
@@ -593,7 +596,6 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "nox", marker = "extra == 'dev'", specifier = ">=2023.12" },
     { name = "openpyxl", specifier = ">=3.1.5" },
-    { name = "openpyxl-stubs", marker = "extra == 'dev'", specifier = ">=0.1" },
     { name = "pandas", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.0" },
     { name = "pandas", marker = "extra == 'test'", specifier = ">=3.0.3" },
@@ -616,8 +618,12 @@ provides-extras = ["pandas", "polars", "duckdb", "win32com", "all", "dev", "test
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "duckdb", specifier = ">=1.5.4" },
     { name = "fillxl", extras = ["dev"] },
+    { name = "hypothesis", specifier = ">=6.156.3" },
     { name = "mypy", specifier = ">=2.1.0" },
+    { name = "pandas", specifier = ">=3.0.3" },
+    { name = "polars", specifier = ">=1.42.1" },
     { name = "pyrefly", specifier = ">=1.1.1" },
     { name = "ty", specifier = ">=0.0.59" },
 ]
@@ -1180,20 +1186,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464, upload-time = "2024-06-28T14:03:44.161Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl", hash = "sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", size = 250910, upload-time = "2024-06-28T14:03:41.161Z" },
-]
-
-[[package]]
-name = "openpyxl-stubs"
-version = "0.1.25"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "mypy" },
-    { name = "openpyxl" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/82/c4/8dfd61c01a2fb0ac8bd37cadf0f19b87a8133eb6f690fc057a9536b4def0/openpyxl-stubs-0.1.25.tar.gz", hash = "sha256:108b112df072f7645ca356eacdd5730b1bd986c67ae33366a4a13c6879c369e7", size = 18803, upload-time = "2023-01-12T21:45:31.39Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b9/04/5847e2e75c39f80e65c388f8e292719b46c00cda2c987f2d5c53ed617d11/openpyxl_stubs-0.1.25-py3-none-any.whl", hash = "sha256:db29f7804993b4a46b155fc4be45314c14538cb475b00591d8096e5af486abf1", size = 26598, upload-time = "2023-01-12T21:45:29.819Z" },
 ]
 
 [[package]]

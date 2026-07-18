@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import openpyxl
-from openpyxl.chart import (  # ty:ignore[unresolved-import]
+from openpyxl.chart import (
     AreaChart,
     BarChart,
     LineChart,
@@ -27,7 +27,7 @@ from openpyxl.chart import (  # ty:ignore[unresolved-import]
     Reference,
     ScatterChart,
 )
-from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+from openpyxl.worksheet.table import Table, TableColumn
 
 from fillxl import fill
 
@@ -51,7 +51,7 @@ def _make_chart_template(path: Path, chart_type: str = "bar", data_rows: int = 4
         ws_data.cell(row=ri + 2, column=1, value=f"Cat{ri + 1}")
         ws_data.cell(row=ri + 2, column=2, value=(ri + 1) * 10)
 
-    last_col = openpyxl.utils.get_column_letter(len(headers))  # ty:ignore[possibly-missing-submodule]
+    last_col = openpyxl.utils.get_column_letter(len(headers))
     table = Table(
         displayName="ChartData",
         ref=f"A1:{last_col}{data_rows + 1}",
@@ -286,7 +286,7 @@ def _make_charts_following_template(
         for si in range(num_series):
             ws_data.cell(row=ri + 2, column=si + 2, value=(ri + 1) * (si + 1) * 10)
 
-    last_col = openpyxl.utils.get_column_letter(len(headers))  # ty:ignore[possibly-missing-submodule]
+    last_col = openpyxl.utils.get_column_letter(len(headers))
     table = Table(
         displayName="TrackedData",
         ref=f"A1:{last_col}{data_rows + 1}",

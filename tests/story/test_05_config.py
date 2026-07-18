@@ -10,12 +10,13 @@ Configuration is passed as the ``config`` keyword argument to :func:`fillxl.fill
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import openpyxl
 import pytest
 
 from fillxl import FillXLConfig, fill
+from fillxl._backend import get_backend
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,7 +33,7 @@ def _make_simple_template(path: Path) -> None:
     ws.title = "Data"
 
     from openpyxl.workbook.defined_name import DefinedName
-    from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+    from openpyxl.worksheet.table import Table, TableColumn
 
     ws["A1"] = "Item"
     ws["B1"] = "Qty"
@@ -111,10 +112,9 @@ class TestEngineSelection:
 
     def test_an_invalid_engine_name_raises_valueerror(self) -> None:
         """'xlwings' or any unknown engine name is rejected by get_backend()."""
-        from fillxl._backend import get_backend
-
         with pytest.raises(ValueError, match="Unknown engine"):
-            get_backend("xlwings")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            # Intentionally passing invalid engine name to test error handling
+            get_backend(cast(Any, "xlwings"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -203,7 +203,7 @@ class TestColumnValidationStrategyOption:
     def test_an_invalid_strategy_name_raises_valueerror(self) -> None:
         """'bogus' or any unknown strategy is rejected."""
         with pytest.raises(ValueError, match="column_validation_strategy"):
-            FillXLConfig(column_validation_strategy="bogus")  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            FillXLConfig(column_validation_strategy="bogus")  # ty:ignore[invalid-argument-type]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

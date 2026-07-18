@@ -37,19 +37,19 @@ def _make_dtype_template(path: Path) -> None:
     ws.title = "Types"
 
     from openpyxl.workbook.defined_name import DefinedName
-    from openpyxl.worksheet.table import Table, TableColumn  # ty:ignore[unresolved-import]
+    from openpyxl.worksheet.table import Table, TableColumn
 
     # Named cells for scalar dtype tests
     ws["A1"] = ""  # str_cell
     ws["B1"] = 0  # int_cell
     ws["C1"] = 0.0  # float_cell
     ws["D1"] = False  # bool_cell
-    ws["E1"] = None  # none_cell  # ty:ignore[invalid-assignment]
-    ws["F1"] = None  # datetime_cell  # ty:ignore[invalid-assignment]
-    ws["G1"] = None  # date_cell  # ty:ignore[invalid-assignment]
-    ws["H1"] = None  # time_cell  # ty:ignore[invalid-assignment]
+    ws["E1"] = None  # none_cell
+    ws["F1"] = None  # datetime_cell
+    ws["G1"] = None  # date_cell
+    ws["H1"] = None  # time_cell
     ws["I1"] = 0  # decimal_cell
-    ws["J1"] = None  # nan_cell  # ty:ignore[invalid-assignment]
+    ws["J1"] = None  # nan_cell
 
     for col_letter in "ABCDEFGHIJ":
         wb.defined_names.add(
@@ -213,11 +213,11 @@ class TestDatesAndTimes:
             val = wb["Types"]["F1"].value
             assert val is not None
             assert hasattr(val, "year")
-            assert val.year == 2025  # type: ignore[attr-defined]
-            assert val.month == 12  # type: ignore[attr-defined]
-            assert val.day == 25  # type: ignore[attr-defined]
-            assert val.hour == 14  # type: ignore[attr-defined]
-            assert val.minute == 30  # type: ignore[attr-defined]
+            assert val.year == 2025
+            assert val.month == 12
+            assert val.day == 25
+            assert val.hour == 14
+            assert val.minute == 30
         finally:
             wb.close()
 
@@ -241,9 +241,9 @@ class TestDatesAndTimes:
             val = wb["Types"]["G1"].value
             assert val is not None
             assert hasattr(val, "year")
-            assert val.year == 2025  # type: ignore[attr-defined]
-            assert val.month == 6  # type: ignore[attr-defined]
-            assert val.day == 15  # type: ignore[attr-defined]
+            assert val.year == 2025
+            assert val.month == 6
+            assert val.day == 15
         finally:
             wb.close()
 
@@ -267,9 +267,9 @@ class TestDatesAndTimes:
             val = wb["Types"]["H1"].value
             assert val is not None
             assert hasattr(val, "hour")
-            assert val.hour == 9  # type: ignore[attr-defined]
-            assert val.minute == 15  # type: ignore[attr-defined]
-            assert val.second == 30  # type: ignore[attr-defined]
+            assert val.hour == 9
+            assert val.minute == 15
+            assert val.second == 30
         finally:
             wb.close()
 
@@ -296,8 +296,8 @@ class TestDatesAndTimes:
             # tzinfo should be stripped
             assert getattr(val, "tzinfo", None) is None
             # Wall-clock time preserved
-            assert val.hour == 14  # type: ignore[attr-defined]
-            assert val.minute == 30  # type: ignore[attr-defined]
+            assert val.hour == 14
+            assert val.minute == 30
         finally:
             wb.close()
 

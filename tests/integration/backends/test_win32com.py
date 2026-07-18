@@ -33,7 +33,7 @@ class TestWin32ComBackendNoWorkbook:
 
         backend = Win32ComBackend()
         with pytest.raises(RuntimeError, match="No workbook loaded"):
-            method_call(backend)  # ty:ignore[call-non-callable]
+            method_call(backend)  # type: ignore[operator]  # ty:ignore[call-non-callable]
 
     def test_win32com_backend_close_without_load_does_not_raise(self) -> None:
         """Calling close() without loading should not raise."""
@@ -59,8 +59,8 @@ class TestWin32ComBackendFactory:
         from fillxl._backends._win32com import Win32ComBackend
 
         backend = Win32ComBackend()
-        assert backend._app is None  # type: ignore[attr-defined]
-        assert backend._workbook is None  # type: ignore[attr-defined]
+        assert backend._app is None
+        assert backend._workbook is None
 
 
 class TestWin32ComPlatformGuard:

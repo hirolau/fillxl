@@ -105,10 +105,6 @@ This example fills a stock-price history table into a template with a named char
 
 ![Before fill](docs/screenshots/before_fill.png)
 
-**After filling — data, chart, and values populated:**
-
-![After fill](docs/screenshots/after_fill.png)
-
 ```python
 import numpy as np
 import pandas as pd
@@ -142,6 +138,10 @@ def fill_readme_example(outdir: Path, engine: Engine = "auto") -> Path:
         engine=engine,
     )
 ```
+
+**After filling — data, chart, and values populated:**
+
+![After fill](docs/screenshots/after_fill.png)
 
 ---
 

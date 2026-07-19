@@ -92,6 +92,10 @@ dev = [
     "ty>=0.0.59",
 ]
 
+docs = [
+    "mkdocs-material>=9.5",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

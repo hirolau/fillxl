@@ -28,6 +28,7 @@ MANIFEST
 
 # Generated demo output
 filled_templates/
+site/
 
 # Development artifacts
 scripts/__pycache__/

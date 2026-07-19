@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-07-19
+
+### Added
+
+- Validation rejecting non-`.xlsx` files in the openpyxl backend with a clear
+  error message, preventing silent corruption of `.xlsm`, `.xlsb`, and other
+  macro-enabled or binary formats.
+- Local openpyxl type stubs in `typings/` for improved type-checking accuracy
+  across mypy, pyrefly, and ty.
+
+### Fixed
+
+- Removed an unused `cast` import to keep the codebase clean.
+- **win32com**: Preserved original newlines and indentation in calculated column
+  formulas when writing via COM, fixing flattened multi-line `LET`/`LAMBDA`
+  formulas.
+
+### Changed
+
+- README tagline now mentions pandas, polars, and duckdb; example code shows
+  `pd.read_csv()` usage for a more realistic quick-start.
+- README example section reorganized with before/after screenshots and code
+  placed between them for better flow.
+- Added PyPI badge to README.
+
 ## [0.2.0-beta.1] — 2026-07-17
 
 ### Added
@@ -76,6 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hide/delete sheets, set active sheet, pivot table refresh.
 - Style copying for new table rows.
 
-[unreleased]: https://github.com/hirolau/fillxl/compare/v0.2.0-beta.1...HEAD
+[unreleased]: https://github.com/hirolau/fillxl/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/hirolau/fillxl/compare/v0.2.0-beta.1...v0.2.0
 [0.2.0-beta.1]: https://github.com/hirolau/fillxl/releases/tag/v0.2.0-beta.1
 [0.1.0]: https://github.com/hirolau/fillxl/releases/tag/v0.1.0

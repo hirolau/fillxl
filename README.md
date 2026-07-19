@@ -4,6 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 [![CI](https://github.com/hirolau/fillxl/actions/workflows/ci.yml/badge.svg)](https://github.com/hirolau/fillxl/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue)](https://hirolau.github.io/fillxl/)
 
 **Fill Excel templates with data from Python.**
 
@@ -71,9 +72,11 @@ fill(..., engine="win32com")   # Windows + Excel installed (maximum fidelity)
 
 ![Before fill](docs/screenshots/before_fill.png)
 
-**After filling:**
+**After filling — data, chart, and values populated:**
 
 ![After fill](docs/screenshots/after_fill.png)
+
+:book: [See the code that produced this](https://hirolau.github.io/fillxl/#visual-example)
 
 ---
 
@@ -146,6 +149,10 @@ Benchmark: **5,000 rows × 20 columns** (list[dict] data).
 ---
 
 ## Development
+
+The project will initially stay at 0.X.X to allow early adopters to try out the package. Once it has been out for while version will be bumped to 1 to signal stability.
+
+No new features are planned, and new features will purly be driven by the community.
 
 ```bash
 git clone https://github.com/hirolau/fillxl.git

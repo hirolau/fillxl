@@ -55,12 +55,15 @@ fill(
         "currency": "USD",
         "target_price": 45,
     },
+    engine="win32com"
 )
 ```
 
 **After filling:**
 
 ![After fill](screenshots/after_fill.png)
+
+**Note that the *Target* and *Longest Streak* columns are formulas, and they are automatically updated to extend with the table.**
 
 ## Features
 

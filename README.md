@@ -256,29 +256,32 @@ tests run the same data through both backends and compare results.
 
 ## Feature Compatibility
 
-| Feature                        | `openpyxl` | `win32com`                    |
-|--------------------------------|------------|-------------------------------|
-| Named cells                    | ✅         | ✅                            |
-| Tables & resize                | ✅         | ✅                            |
-| Chart range updates            | ✅         | ✅ / Experimental             |
-| Conditional formatting         | ✅         | ✅                            |
-| Calculated columns             | ✅         | ✅                            |
-| Pivot table refresh            | ✅         | ✅                            |
-| Sheet management (hide/delete) | ✅         | ✅                            |
-| Style copying                  | ✅         | ✅                            |
-| Formula evaluation             | ❌ *       | ✅ (via Excel)                |
-| Dynamic arrays                 | ❌         | ✅                            |
-| Modern chart types (waterfall) | ⚠️ Dropped | ✅                            |
-| CI tested                      | ✅         | ⚠️ Requires Windows + Excel   |
-| Cross-platform                 | ✅         | ❌ Windows only               |
+| Feature                        | `openpyxl`   | `win32com`                     |
+|--------------------------------|--------------|--------------------------------|
+| Named cells                    | ✅           | ✅                            |
+| Tables & resize                | ✅           | ✅                            |
+| Chart range updates            | ✅           | ✅                            |
+| Conditional formatting         | ✅           | ✅                            |
+| Calculated columns             | ✅           | ✅                            |
+| Pivot table refresh            | ✅           | ✅                            |
+| Sheet management (hide/delete) | ✅           | ✅                            |
+| Style copying                  | ✅           | ✅                            |
+| Formula evaluation             | ⚠️ On launch | ✅ (via Excel)                |
+| Dynamic arrays                 | ❌           | ✅                            |
+| Modern chart types (waterfall) | ⚠️ Dropped   | ✅                            |
+| `.xlsm` (macro-enabled)        | ❌           | ✅                            |
+| `.xlsb` (binary workbook)      | ❌           | ✅                            |
+| CI tested                      | ✅           | ⚠️ Requires Windows + Excel   |
+| Cross-platform                 | ✅           | ❌ Windows only               |
 
-\* Formulas are preserved but not recalculated — Excel recalculates on open.
+\* Formulas are preserved but not recalculated — Excel recalculates on open. This can create problems if manchines tries to read the data before it has been opened in Excel and saved.
 
 ---
 
 ## Known Limitations
 
 - **openpyxl** cannot evaluate formulas (Excel recalculates on open), drops certain modern chart types (waterfall, treemap, sunburst, etc.) with a warning, and does not support dynamic arrays.
+- **openpyxl** cannot open binary (`.xlsb`) or macro-enabled (`.xlsm`) workbooks — use `engine="win32com"` instead.
 - **win32com** requires Windows with Excel installed. It is tested less thoroughly than `openpyxl`.
 - **Timezone-aware datetimes** are converted to naive (wall-clock preserved) with a warning — Excel has no native timezone support.
 - **Chart range updating** is experimental in the `win32com` backend.

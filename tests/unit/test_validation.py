@@ -74,6 +74,17 @@ def test_validate_columns_all_but_formulas_strict_raises_for_extra_column() -> N
         )
 
 
+def test_validate_columns_all_but_formulas_strict_raises_for_missing_column() -> None:
+    """Missing a non-formula column in strict mode raises."""
+    with pytest.raises(ValueError, match="Missing columns"):
+        validate_columns(
+            ["A", "B", "FormulaCol"],
+            ["A"],
+            "all_but_formulas_strict",
+            formula_columns=["FormulaCol"],
+        )
+
+
 def test_validate_columns_none_returns_data_columns_unchanged() -> None:
     """'none' returns data columns unchanged regardless of mismatch."""
     result = validate_columns(["A", "B"], ["X", "Y", "Z"], "none")

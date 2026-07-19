@@ -20,6 +20,7 @@ Chapters
 12 — Template preservation
 13 — Failure recovery
 14 — Real report generation
+15 — Custom Excel formats (.xlsm, .xlsb)
 """
 
 import pytest

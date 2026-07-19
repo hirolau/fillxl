@@ -56,6 +56,16 @@ class OpenpyxlBackend:
 
         """
         logger.debug("Loading workbook from %s", path)
+
+        ext = path.suffix.lower()
+        if ext != ".xlsx":
+            msg = (
+                f"File type '{ext}' is not supported by the openpyxl backend. "
+                f"Only .xlsx files are supported. "
+                f"Use engine='win32com' to fill other formats (.xlsm, .xlsb, .xls, etc.) instead."
+            )
+            raise ValueError(msg)
+
         # Detect chartEx charts (waterfall, treemap, etc.) that openpyxl
         # cannot preserve — they will be silently dropped on save.
         self._unsupported_chart_sheets = detect_unsupported_chart_sheets(path)

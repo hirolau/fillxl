@@ -6,31 +6,34 @@ Designed around named cells and Excel tables — no more fragile cell references
 
 ## Installation
 
-<div class="grid cards" markdown>
+```bash
+pip install fillxl
+```
 
--   :material-download: **pip**
+Optional extras:
 
-    ---
-
-    ```bash
-    pip install fillxl
-    ```
-
--   :material-package-variant-plus: **Optional extras**
-
-    ---
-
-    ```bash
-    pip install fillxl[pandas]   # pandas support
-    pip install fillxl[all]      # pandas + polars + duckdb
-    ```
-
-</div>
+```bash
+pip install fillxl[pandas]   # pandas support
+pip install fillxl[all]      # pandas + polars + duckdb
+```
 
 ## Quick Start
 
 1. In Excel, create **named cells** (Name Manager) for single values and **Excel Tables** (`Ctrl + T`) for tabular data.
-2. Fill the template:
+2. Fill the template — tables are automatically resized, charts updated, and formatting preserved.
+
+### Choosing a backend
+
+```python
+fill(..., engine="openpyxl")   # default, cross-platform
+fill(..., engine="win32com")   # Windows + Excel (maximum fidelity)
+```
+
+## Visual Example
+
+**Before filling:**
+
+![Before fill](screenshots/before_fill.png)
 
 ```python
 from fillxl import fill
@@ -53,30 +56,17 @@ fill(
 )
 ```
 
-Tables are automatically resized, charts updated, and all formatting preserved.
+**After filling:**
 
-### Choosing a backend
-
-```python
-fill(..., engine="openpyxl")   # default, cross-platform
-fill(..., engine="win32com")   # Windows + Excel (maximum fidelity)
-```
-
-## Visual Example
-
-=== "Before"
-    ![Before fill](screenshots/before_fill.png)
-
-=== "After"
-    ![After fill](screenshots/after_fill.png)
+![After fill](screenshots/after_fill.png)
 
 ## Features
 
-- :material-form-textbox: Populate named cells and Excel tables
-- :material-table-arrow-down: Automatic table resizing + chart range updates
-- :material-chart-bar: Conditional formatting and pivot table refresh
-- :material-layers: Two backends: `openpyxl` (default) and `win32com` (Windows + Excel)
-- :material-database: Supports list, dict, pandas, polars, and duckdb data
+- Populate named cells and Excel tables
+- Automatic table resizing + chart range updates
+- Conditional formatting and pivot table refresh
+- Two backends: `openpyxl` (default) and `win32com` (Windows + Excel)
+- Supports list, dict, pandas, polars, and duckdb data
 
 ## Supported Data Sources
 

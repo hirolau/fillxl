@@ -38,20 +38,22 @@ fill(..., engine="win32com")   # Windows + Excel (maximum fidelity)
 ```python
 from fillxl import fill
 import pandas as pd
+import numpy as np
+
+# Generate some fake stock data
+dates = pd.date_range("2020-01-01", "2025-12-31", freq="B")
+rng = np.random.default_rng(42)
+prices = (50 + np.cumsum(rng.normal(0.05, 2.0, len(dates)))).clip(5).round(2)
+stock_data = pd.DataFrame({"Date": dates, "Stock Price": prices})
 
 fill(
-    template="report_template.xlsx",
-    output="q4_report.xlsx",
-    tables={
-        "Products": [
-            {"Name": "Widget", "Price": 4.99, "Sold": 150},
-            {"Name": "Gadget", "Price": 9.99, "Sold": 85},
-        ],
-        "Sales": pd.read_csv("sales_data.csv"),
-    },
+    template="stock_template.xlsx",
+    output="stock_filled.xlsx",
+    tables={"StockPriceHistory": stock_data},
     values={
-        "ReportTitle": "Q4 2024 Sales",
-        "PreparedBy": "Alice",
+        "title": "ACME Corp Stock Analysis",
+        "currency": "USD",
+        "target_price": 45,
     },
 )
 ```

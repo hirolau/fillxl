@@ -9,8 +9,11 @@
 
 Designed around named cells and Excel tables — no more fragile cell references like A1 or B3. Charts, formulas, formatting, and conditional formatting are preserved and updated automatically.
 
+Fill tables using list, pandas, polars or duckdb!
+
 ```python
 from fillxl import fill
+import pandas as pd
 
 fill(
     template="report_template.xlsx",
@@ -19,7 +22,8 @@ fill(
         "Products": [
             {"Name": "Widget", "Price": 4.99, "Sold": 150},
             {"Name": "Gadget", "Price": 9.99, "Sold": 85},
-        ]
+        ],
+        "Sales": pd.read_csv('sales_data.csv'),
     },
     values={
         "ReportTitle": "Q4 2024 Sales",

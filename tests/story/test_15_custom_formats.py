@@ -47,9 +47,7 @@ class TestOpenpyxlRejectsUnsupportedFormats:
         "ext",
         [".xls", ".xltx", ".xltm", ".csv", ".txt", ".zip", ".ods", ".pdf"],
     )
-    def test_openpyxl_rejects_any_non_xlsx_extension(
-        self, tmp_path: Path, ext: str
-    ) -> None:
+    def test_openpyxl_rejects_any_non_xlsx_extension(self, tmp_path: Path, ext: str) -> None:
         """Even made-up files with non-.xlsx extensions raise ValueError."""
         template = tmp_path / f"dummy{ext}"
         template.write_text("not a real excel file")
@@ -94,9 +92,7 @@ class TestWin32comHandlesCustomFormats:
             pytest.param(ASSETS / "test_template_1_slsm.xlsm", id=".xlsm"),
         ],
     )
-    def test_win32com_fills_xlsb_and_xlsm(
-        self, tmp_path: Path, template: Path
-    ) -> None:
+    def test_win32com_fills_xlsb_and_xlsm(self, tmp_path: Path, template: Path) -> None:
         """win32com succeeds where openpyxl fails."""
         output = tmp_path / "filled.xlsx"
         result = fill(

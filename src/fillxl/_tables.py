@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from openpyxl.cell.cell import Cell
 from openpyxl.utils import column_index_from_string

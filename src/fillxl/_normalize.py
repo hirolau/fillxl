@@ -176,13 +176,9 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
 
     """
     # ── 1. pd.NA / pd.NaT → None (before any other type checks) ───────────
-    try:
-        import pandas as pd
-
-        if value is pd.NA or value is pd.NaT:
-            return None
-    except ImportError:
-        pass
+    pd = sys.modules.get("pandas")
+    if pd is not None and (value is pd.NA or value is pd.NaT):
+        return None
 
     # ── 2. Empty string → None ────────────────────────────────────────────
     # openpyxl reads an empty text cell back as None, so writing "" would
@@ -293,3 +289,72 @@ def _numpy_scalar_to_python(value: Any) -> Any:  # noqa: ANN401
         return float(item)
 
     return item
+
+
+# ==============================================================================
+# Backend-facing helpers
+#
+# ``prepare_cell_value`` and ``prepare_com_value`` are the two entry points the
+# backends use.  Keeping them here guarantees that both backends see exactly
+# the same value for the same input — including the win32com quirk that COM
+# applies the local timezone offset to naive datetimes.
+# ==============================================================================
+
+
+def _to_python_datetime(value: Any) -> Any:  # noqa: ANN401
+    """Convert ``pd.Timestamp`` to ``datetime`` (COM cannot marshal it)."""
+    pd = sys.modules.get("pandas")
+    if pd is not None and isinstance(value, pd.Timestamp):
+        return value.to_pydatetime()
+    return value
+
+
+def prepare_cell_value(value: Any) -> Any:  # noqa: ANN401
+    """Prepare *value* for writing through the openpyxl backend.
+
+    Args:
+        value: Raw value from user data.
+
+    Returns:
+        A value that openpyxl can store without loss.
+
+    Examples:
+        >>> import datetime as dt
+        >>> prepare_cell_value(dt.date(2025, 1, 2))
+        datetime.datetime(2025, 1, 2, 0, 0)
+
+    """
+    return normalize_value(_to_python_datetime(value))
+
+
+def prepare_com_value(value: Any) -> Any:  # noqa: ANN401
+    """Prepare *value* for writing through the win32com backend.
+
+    Applies the same normalisation as :func:`prepare_cell_value`, then takes
+    care of the COM-specific behaviour: datetimes are marked as UTC.  COM
+    converts naive datetimes using the local timezone, which shifts the serial
+    number Excel stores; marking the value as UTC makes that serial match the
+    wall-clock time the openpyxl backend writes.
+
+    Args:
+        value: Raw value from user data.
+
+    Returns:
+        A value suitable for assigning to a COM ``Range``.
+
+    Examples:
+        >>> import datetime as dt
+        >>> prepare_com_value(3.14)
+        3.14
+        >>> prepare_com_value("00123")
+        '00123'
+        >>> prepare_com_value(dt.datetime(2025, 6, 15, 14, 30)).isoformat()
+        '2025-06-15T14:30:00+00:00'
+
+    """
+    value = normalize_value(_to_python_datetime(value))
+
+    if isinstance(value, dt.datetime):
+        return value.replace(tzinfo=dt.UTC)
+
+    return value

@@ -10,7 +10,7 @@ from openpyxl.utils import column_index_from_string
 
 from ._adapters import TabularAdapter
 from ._charts import TableChangeSpecs
-from ._normalize import normalize_value
+from ._normalize import prepare_cell_value
 from ._utils import col_to_excel, find_worksheet_and_table
 
 if TYPE_CHECKING:
@@ -148,25 +148,7 @@ def populate_table(
             # Write each row value
             for row_ix, row_values in enumerate(rows):
                 cell_to_fill = table_first_cell.offset(column=col_ix, row=row_ix + 1)
-                row_value = row_values[data_col_idx]
-
-                # Handle pandas Timestamp conversion (if pandas is available)
-                try:
-                    import pandas as pd
-
-                    if isinstance(row_value, pd.Timestamp):
-                        row_value = row_value.to_pydatetime()
-                except ImportError:
-                    pass
-
-                # Strip timezone info + convert custom objects to str
-                # (normalize_value also handles pd.NA/NaT → None,
-                #  date→datetime, time→datetime, timedelta→float,
-                #  Decimal→float and tz stripping.)
-                row_value = normalize_value(row_value)
-
-                # Handle datetime objects to ensure Excel compatibility
-                cell_to_fill.value = row_value
+                cell_to_fill.value = prepare_cell_value(row_values[data_col_idx])
 
                 # Copy style from first row
                 if copy_style_in_tables:

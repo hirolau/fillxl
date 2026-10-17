@@ -11,14 +11,13 @@ Only works on **Windows** with Microsoft Excel installed.
 from __future__ import annotations
 
 import contextlib
-import datetime as dt
 import logging
 import sys
 import time
 from typing import TYPE_CHECKING, Any
 
 from fillxl._charts import TableChangeSpecs
-from fillxl._normalize import normalize_value
+from fillxl._normalize import prepare_com_value
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -129,19 +128,7 @@ class Win32ComBackend:
         """
         self._ensure_workbook()
 
-        # Convert pandas Timestamp to plain Python datetime
-        # (COM cannot marshal pd.Timestamp; normalize_value handles
-        # the rest: pd.NA/NaT, date→datetime, time→datetime,
-        # timedelta→float, Decimal→float, tz stripping, …).
-        try:
-            import pandas as pd
-
-            if isinstance(value, pd.Timestamp):
-                value = value.to_pydatetime()
-        except ImportError:
-            pass
-
-        value = normalize_value(value)
+        value = prepare_com_value(value)
 
         try:
             name_obj = self._workbook.Names(name)
@@ -330,27 +317,7 @@ class Win32ComBackend:
             row_values: list[Any] = []
             for _col_idx, col_name in enumerate(table_columns):
                 if col_name in data_col_index and col_name not in formula_columns:
-                    val = row[data_col_index[col_name]]
-                    # Convert pandas Timestamp to plain Python datetime
-                    # (COM cannot marshal pd.Timestamp; normalize_value handles
-                    # the rest: pd.NA/NaT, date→datetime, time→datetime,
-                    # timedelta→float, Decimal→float, tz stripping, …)
-                    try:
-                        import pandas as pd
-
-                        if isinstance(val, pd.Timestamp):
-                            val = val.to_pydatetime()
-                    except ImportError:
-                        pass
-                    # Central normalisation — guarantees identical results
-                    # with the openpyxl backend.
-                    val = normalize_value(val)
-                    # COM applies the local timezone offset when writing
-                    # naive datetime objects.  Convert to UTC first so the
-                    # serial number stored in Excel matches the original
-                    # wall-clock time when read back.
-                    if isinstance(val, dt.datetime):
-                        val = val.replace(tzinfo=dt.UTC)
+                    val = prepare_com_value(row[data_col_index[col_name]])
                     row_values.append(val)
                 else:
                     row_values.append(None)

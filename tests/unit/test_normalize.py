@@ -9,11 +9,18 @@ from __future__ import annotations
 
 import datetime as dt
 import warnings
+from decimal import Decimal
 
 import numpy as np
+import pandas as pd
 import pytest
 
-from fillxl._normalize import normalize_value, reset_tz_warning_state
+from fillxl._normalize import (
+    normalize_value,
+    prepare_cell_value,
+    prepare_com_value,
+    reset_tz_warning_state,
+)
 
 
 class TestNumpyScalars:
@@ -102,8 +109,40 @@ class TestNumpyScalars:
         assert normalize_value(np.uint8(200)) == 200
 
 
+class TestPandasSentinels:
+    """pandas' missing-value sentinels become empty cells."""
+
+    def test_pd_na_becomes_none(self) -> None:
+        assert normalize_value(pd.NA) is None
+
+    def test_pd_nat_becomes_none(self) -> None:
+        assert normalize_value(pd.NaT) is None
+
+    def test_a_pandas_timestamp_is_prepared_for_com_as_a_datetime(self) -> None:
+        """COM cannot marshal pd.Timestamp, so it is converted."""
+        prepared = prepare_com_value(pd.Timestamp("2025-06-15 14:30"))
+        assert prepared == dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.UTC)
+
+
 class TestValueNormalisation:
     """Date, time, duration and decimal handling."""
+
+    def test_a_date_becomes_a_midnight_datetime(self) -> None:
+        """Excel has no date type; everything is a serial number."""
+        assert normalize_value(dt.date(2025, 12, 25)) == dt.datetime(2025, 12, 25, 0, 0)
+
+    def test_a_time_becomes_a_datetime_on_the_2000_01_01_anchor(self) -> None:
+        """COM cannot marshal time, so both backends write the same datetime."""
+        assert normalize_value(dt.time(9, 15, 30)) == dt.datetime(2000, 1, 1, 9, 15, 30)
+
+    def test_a_timedelta_becomes_a_fraction_of_a_day(self) -> None:
+        assert normalize_value(dt.timedelta(hours=6)) == 0.25
+
+    def test_a_decimal_becomes_a_float(self) -> None:
+        assert normalize_value(Decimal("12.34")) == 12.34
+
+    def test_infinity_becomes_none(self) -> None:
+        assert normalize_value(float("inf")) is None
 
     def test_an_empty_string_becomes_none(self) -> None:
         """openpyxl reads an empty text cell back as None, so both engines
@@ -114,6 +153,44 @@ class TestValueNormalisation:
     def test_whitespace_is_still_text(self) -> None:
         """Only a truly empty string is normalised away."""
         assert normalize_value(" ") == " "
+
+    def test_an_unknown_object_falls_back_to_its_string_form(self) -> None:
+        class Greeting:
+            def __str__(self) -> str:
+                return "Hello!"
+
+        assert normalize_value(Greeting()) == "Hello!"
+
+
+class TestComValuePreparation:
+    """COM reinterprets values the way typed input is interpreted.
+
+    The preparation step neutralises that so both backends store the same
+    thing.
+    """
+
+    def test_datetimes_are_marked_as_utc(self) -> None:
+        """COM would otherwise shift the serial number by the local offset."""
+        prepared = prepare_com_value(dt.datetime(2025, 6, 15, 14, 30))
+        assert prepared == dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.UTC)
+
+    def test_numbers_none_and_booleans_are_left_alone(self) -> None:
+        assert prepare_com_value(42) == 42
+        assert prepare_com_value(3.5) == 3.5
+        assert prepare_com_value(True) is True
+        assert prepare_com_value(None) is None
+
+    def test_the_openpyxl_preparation_leaves_text_and_datetimes_alone(self) -> None:
+        """openpyxl stores text as text; no prefix or tz marking is needed."""
+        assert prepare_cell_value("00123") == "00123"
+        assert prepare_cell_value("=1+1") == "=1+1"
+        assert prepare_cell_value(dt.datetime(2025, 6, 15, 14, 30)) == dt.datetime(
+            2025,
+            6,
+            15,
+            14,
+            30,
+        )
 
 
 class TestTimezoneHandling:

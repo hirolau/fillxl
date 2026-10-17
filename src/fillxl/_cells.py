@@ -5,21 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fillxl._normalize import normalize_value
+from fillxl._normalize import prepare_cell_value
 
 if TYPE_CHECKING:
     from openpyxl.workbook.workbook import Workbook
 
 logger = logging.getLogger(__name__)
-
-
-def _normalise_value(value: Any) -> Any:  # noqa: ANN401
-    """Normalise a scalar value for Excel compatibility.
-
-    Delegates to :func:`~fillxl._normalize.normalize_value` (which strips
-    timezone info from datetimes and converts custom objects to ``str``).
-    """
-    return normalize_value(value)
 
 
 def populate_named_cells(
@@ -48,7 +39,7 @@ def populate_named_cells(
             raise KeyError(msg)
 
         # Normalise value for Excel compatibility
-        normalised_value = _normalise_value(value)
+        normalised_value = prepare_cell_value(value)
 
         # Get the cell destinations for this defined name
         destinations = list(workbook.defined_names[name].destinations)

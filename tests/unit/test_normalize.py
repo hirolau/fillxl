@@ -99,3 +99,17 @@ class TestNumpyScalars:
 
     def test_an_unsigned_byte_becomes_an_int(self) -> None:
         assert normalize_value(np.uint8(200)) == 200
+
+
+class TestValueNormalisation:
+    """Date, time, duration and decimal handling."""
+
+    def test_an_empty_string_becomes_none(self) -> None:
+        """openpyxl reads an empty text cell back as None, so both engines
+        write a blank cell instead.
+        """
+        assert normalize_value("") is None
+
+    def test_whitespace_is_still_text(self) -> None:
+        """Only a truly empty string is normalised away."""
+        assert normalize_value(" ") == " "

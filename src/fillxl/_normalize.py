@@ -7,26 +7,29 @@ for the same input data.
 Normalisation rules (applied in order):
     1. ``pd.NA`` / ``pd.NaT`` → ``None`` (pandas sentinels — cannot be
        represented in Excel).
-    2. NumPy scalars (``np.int64``, ``np.float32``, ``np.bool_``,
+    2. Empty strings → ``None``.  openpyxl cannot round-trip an empty text
+       cell (it reads back as ``None``), so both backends write an empty
+       cell instead of storing text that only one engine can represent.
+    3. NumPy scalars (``np.int64``, ``np.float32``, ``np.bool_``,
        ``np.datetime64``, …) → the equivalent native Python value.
        Excel stores anything it does not recognise as text, which is how
        numpy scalars used to end up with the "number stored as text"
        marker.
-    3. ``float('nan')``, ``float('inf'), float('-inf')`` → ``None``
+    4. ``float('nan')``, ``float('inf'), float('-inf')`` → ``None``
        (Excel cannot represent IEEE-754 special values).
-    4. ``datetime.date`` → ``datetime.datetime`` (Excel has no native
+    5. ``datetime.date`` → ``datetime.datetime`` (Excel has no native
        ``date`` type — everything is a serial number).
-    5. ``datetime.time`` → ``datetime.datetime`` on ``2000-01-01``
+    6. ``datetime.time`` → ``datetime.datetime`` on ``2000-01-01``
        (COM cannot marshal raw ``time`` objects, so they are promoted to
        ``datetime`` for cross-backend consistency).  ``2000-01-01`` is a
        universally COM-compatible anchor date.
-    6. ``datetime.timedelta`` → ``float`` (fraction of a 24-hour day).
+    7. ``datetime.timedelta`` → ``float`` (fraction of a 24-hour day).
        Excel has no native ``timedelta`` type.
-    7. ``Decimal`` → ``float``.  Excel has no native ``Decimal`` type.
-    8. Timezone-aware ``datetime`` → naive ``datetime`` (tzinfo stripped,
+    8. ``Decimal`` → ``float``.  Excel has no native ``Decimal`` type.
+    9. Timezone-aware ``datetime`` → naive ``datetime`` (tzinfo stripped,
        wall-clock preserved).  ``pd.Timestamp`` (subclass of ``datetime``)
        is handled identically.
-    9. Unrecognised objects → ``str(obj)`` via ``__str__``.
+   10. Unrecognised objects → ``str(obj)`` via ``__str__``.
 """
 
 from __future__ import annotations
@@ -121,14 +124,15 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     Rules (applied in order):
 
     1. ``pd.NA`` / ``pd.NaT`` → ``None`` (pandas sentinels).
-    2. NumPy scalars → native Python values.
-    3. IEEE-754 special floats (NaN, Inf, -Inf) → ``None``.
-    4. ``date`` → ``datetime`` (Excel has no native ``date`` type).
-    5. ``time`` → ``datetime`` on the Excel epoch (``1899-12-30``).
-    6. ``timedelta`` → ``float`` (fraction of a 24-hour day).
-    7. ``Decimal`` → ``float``.
-    8. Timezone-aware ``datetime`` → naive ``datetime``.
-    9. Unrecognised objects → ``str(obj)``.
+    2. Empty strings → ``None`` (openpyxl cannot round-trip them).
+    3. NumPy scalars → native Python values.
+    4. IEEE-754 special floats (NaN, Inf, -Inf) → ``None``.
+    5. ``date`` → ``datetime`` (Excel has no native ``date`` type).
+    6. ``time`` → ``datetime`` on the Excel epoch (``1899-12-30``).
+    7. ``timedelta`` → ``float`` (fraction of a 24-hour day).
+    8. ``Decimal`` → ``float``.
+    9. Timezone-aware ``datetime`` → naive ``datetime``.
+    10. Unrecognised objects → ``str(obj)``.
 
     Args:
         value: Any Python value to write to an Excel cell.
@@ -146,6 +150,8 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
         >>> normalize_value(True)
         True
         >>> normalize_value(None) is None
+        True
+        >>> normalize_value("") is None
         True
         >>> import math
         >>> normalize_value(float('nan')) is None
@@ -178,22 +184,28 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     except ImportError:
         pass
 
-    # ── 2. NumPy scalars → native Python ──────────────────────────────────
+    # ── 2. Empty string → None ────────────────────────────────────────────
+    # openpyxl reads an empty text cell back as None, so writing "" would
+    # make the two backends disagree.  Both write a blank cell instead.
+    if isinstance(value, str) and not value:
+        return None
+
+    # ── 3. NumPy scalars → native Python ──────────────────────────────────
     # np.int64, np.float32, np.bool_, np.datetime64 … do not subclass the
     # corresponding Python types, so without this they would be written as
     # text (Excel then flags the cell with "number stored as text").
     if _is_numpy_scalar(value):
         value = _numpy_scalar_to_python(value)
 
-    # ── 3. IEEE-754 special floats → None ─────────────────────────────────
+    # ── 4. IEEE-754 special floats → None ─────────────────────────────────
     if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
         return None
 
-    # ── 4. date → datetime ────────────────────────────────────────────────
+    # ── 5. date → datetime ────────────────────────────────────────────────
     if isinstance(value, dt.date) and not isinstance(value, dt.datetime):
         value = dt.datetime(value.year, value.month, value.day)
 
-    # ── 5. time → datetime on anchor date (2000-01-01) ────────────────────
+    # ── 6. time → datetime on anchor date (2000-01-01) ────────────────────
     #     COM cannot marshal raw time objects, so they are promoted to
     #     datetime for cross-backend consistency.  2000-01-01 is used as
     #     the anchor date because it is universally COM-compatible (some
@@ -210,25 +222,25 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
             value.microsecond,
         )
 
-    # ── 6. timedelta → float (fraction of a day) ──────────────────────────
+    # ── 7. timedelta → float (fraction of a day) ──────────────────────────
     if isinstance(value, dt.timedelta):
         value = value.total_seconds() / 86400.0
 
-    # ── 7. Decimal → float ────────────────────────────────────────────────
+    # ── 8. Decimal → float ────────────────────────────────────────────────
     if isinstance(value, Decimal):
         value = float(value)
 
-    # ── 8. Strip timezone from datetime (must come after date→datetime) ───
+    # ── 9. Strip timezone from datetime (must come after date→datetime) ───
     value = normalize_datetime(value)
 
-    # ── 9. Recognised Excel-compatible primitives pass through unchanged ──
+    # ── 10. Recognised Excel-compatible primitives pass through unchanged ─
     if value is None or isinstance(
         value,
         (str, int, float, bool, dt.datetime),
     ):
         return value
 
-    # ── 10. Unrecognised → string ────────────────────────────────────────
+    # ── 11. Unrecognised → string ────────────────────────────────────────
     return str(value)
 
 

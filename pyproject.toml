@@ -32,13 +32,14 @@ Issues = "https://github.com/hirolau/fillxl/issues"
 [project.optional-dependencies]
 pandas = ["pandas>=2.0"]
 polars = ["polars>=0.20"]
-duckdb = ["duckdb>=0.9"]
+# duckdb publishes no cp315 wheels yet, so the extra is unavailable there.
+duckdb = ["duckdb>=0.9; python_version < '3.15'"]
 # Windows-only: pywin32 has no Linux/macOS wheels.
 win32com = ["pywin32>=306; sys_platform == 'win32'"]
 all = [
 	"pandas>=2.0",
 	"polars>=0.20",
-	"duckdb>=0.9",
+	"duckdb>=0.9; python_version < '3.15'",
 	"pywin32>=306; sys_platform == 'win32'",
 ]
 dev = [
@@ -58,7 +59,7 @@ dev = [
 	"freezegun>=1.5.5",
 ]
 test = [
-    "duckdb>=1.5.4",
+    "duckdb>=1.5.4; python_version < '3.15'",
     "freezegun>=1.5.5",
     "hypothesis>=6.156.3",
     "pandas>=3.0.3",
@@ -84,7 +85,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "duckdb>=1.5.4",
+    "duckdb>=1.5.4; python_version < '3.15'",
     "fillxl[dev]",
     "hypothesis>=6.156.3",
     "mypy>=2.1.0",

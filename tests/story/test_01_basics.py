@@ -19,11 +19,15 @@ output handling, and the fill lifecycle.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import openpyxl
 import pytest
 
 from fillxl import FillXLConfig, fill
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1.1 Core fill() behaviour
@@ -361,9 +365,16 @@ class TestFillLifecycle:
     def test_fill_is_idempotent(
         self,
         output_path: Path,
+        frozen_clock: datetime,
     ) -> None:
-        """Filling the same template twice produces identical output."""
+        """Filling the same template twice produces identical output.
+
+        ``frozen_clock`` pins both the wall clock and the timestamps openpyxl
+        writes into the zip entries, so the byte-for-byte comparison below
+        cannot flake on a two-second zip timestamp boundary.
+        """
         import hashlib
+        import zipfile
 
         # Build a template
         wb = openpyxl.Workbook()
@@ -408,3 +419,16 @@ class TestFillLifecycle:
         assert sha256(out1) == sha256(out2), (
             "Two fills with same inputs should produce identical output files"
         )
+
+        # Every zip entry must be stamped from the frozen clock rather than the
+        # real one; that is what makes the comparison above wall-clock
+        # independent.  (The stamp is the frozen instant rendered in the
+        # machine's local time, hence the date-only check.)
+        frozen_date = (frozen_clock.year, frozen_clock.month, frozen_clock.day)
+        for path in (out1, out2):
+            with zipfile.ZipFile(path) as archive:
+                stamps = {info.date_time for info in archive.infolist()}
+            assert {stamp[:3] for stamp in stamps} == {frozen_date}, (
+                f"zip timestamps in {path.name} came from the real clock: {stamps}"
+            )
+            assert len(stamps) == 1, f"mixed zip timestamps in {path.name}: {stamps}"

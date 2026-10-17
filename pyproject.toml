@@ -55,9 +55,11 @@ dev = [
 	"ruff>=0.1",
 	"check-wheel-contents>=0.6",
 	"twine>=6",
+	"freezegun>=1.5.5",
 ]
 test = [
     "duckdb>=1.5.4",
+    "freezegun>=1.5.5",
     "hypothesis>=6.156.3",
     "pandas>=3.0.3",
     "polars>=1.42.1",

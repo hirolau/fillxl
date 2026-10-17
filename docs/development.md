@@ -46,6 +46,9 @@ uv run mkdocs build        # Build static site to site/
 
 ## Supported Data Backends
 
+The nox version matrix tests the minimum supported release, the version in
+`uv.lock`, and explicit major versions of the optional data libraries:
+
 | Backend | Minimum | Also tested | Latest |
 |---------|---------|-------------|--------|
 | pandas | 2.0 | 3.x | 3.x |

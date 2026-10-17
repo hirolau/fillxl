@@ -64,7 +64,7 @@ test = [
     "freezegun>=1.5.5",
     "hypothesis>=6.156.3",
     "pandas>=3.0.3",
-    "polars>=1.42.1",
+    "polars>=2.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -91,7 +91,7 @@ dev = [
     "hypothesis>=6.156.3",
     "mypy>=2.1.0",
     "pandas>=3.0.3",
-    "polars>=1.42.1",
+    "polars>=2.0",
     "pyrefly>=1.1.1",
     "ty>=0.0.59",
 ]

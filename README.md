@@ -162,4 +162,6 @@ uv run pytest
 ```
 
 **Supported:** Python 3.11–3.15, Windows/Linux (macOS best-effort).  
+**Data backends:** pandas 2–3, polars 0.20–2, duckdb 1.x (duckdb has no
+Python 3.15 wheels yet, so its extra is limited to Python ≤3.14).  
 **License:** [MIT](LICENSE)

@@ -203,7 +203,7 @@ class TestColumnValidationStrategyOption:
     def test_an_invalid_strategy_name_raises_valueerror(self) -> None:
         """'bogus' or any unknown strategy is rejected."""
         with pytest.raises(ValueError, match="column_validation_strategy"):
-            FillXLConfig(column_validation_strategy="bogus")  # ty:ignore[invalid-argument-type]
+            FillXLConfig(column_validation_strategy=cast(Any, "bogus"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

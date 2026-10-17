@@ -270,7 +270,7 @@ class Win32ComBackend:
                 if overflow_values is not None:
                     if isinstance(overflow_values, tuple):
                         for row_idx, row_tuple in enumerate(overflow_values):
-                            for col_idx, val in enumerate(row_tuple):  # ty:ignore[invalid-argument-type]
+                            for col_idx, val in enumerate(row_tuple):
                                 if val is not None:
                                     check_row = overflow_start + row_idx
                                     check_col = start_col + col_idx

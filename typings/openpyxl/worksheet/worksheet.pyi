@@ -6,6 +6,7 @@ from typing import Any, Iterable, Literal
 from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl.chart._chart_base import ChartBase
 from openpyxl.workbook.child import _WorkbookChild
+from openpyxl.workbook.defined_name import DefinedNameDict
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.table import Table, TableList
 
@@ -35,6 +36,7 @@ class Worksheet(_WorkbookChild):
     views: Any
     data_validations: Any
     conditional_formatting: Any
+    defined_names: DefinedNameDict
     legacy_drawing: Any
     auto_filter: Any
     merged_cells: Any

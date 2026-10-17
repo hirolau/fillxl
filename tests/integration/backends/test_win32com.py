@@ -19,9 +19,18 @@ class TestWin32ComBackendNoWorkbook:
     @pytest.mark.parametrize(
         "method_call",
         [
-            pytest.param(lambda b: b.fill_named_cell("test", "value"), id="fill_named_cell"),
-            pytest.param(lambda b: b.fill_table("test", [], FillXLConfig()), id="fill_table"),
-            pytest.param(lambda b: b.save(Path("output.xlsx")), id="save"),
+            pytest.param(
+                lambda b: b.fill_named_cell("test", "value"),  # pyrefly: ignore[implicit-any-lambda]
+                id="fill_named_cell",
+            ),
+            pytest.param(
+                lambda b: b.fill_table("test", [], FillXLConfig()),  # pyrefly: ignore[implicit-any-lambda]
+                id="fill_table",
+            ),
+            pytest.param(
+                lambda b: b.save(Path("output.xlsx")),  # pyrefly: ignore[implicit-any-lambda]
+                id="save",
+            ),
         ],
     )
     def test_win32com_backend_raises_runtime_error_without_workbook(

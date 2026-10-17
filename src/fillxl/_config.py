@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import get_args
+
 from attrs import define, field
 from attrs.validators import instance_of
 
 from fillxl._validation import ColumnValidationStrategy
+
+_KNOWN_STRATEGIES: frozenset[str] = frozenset(get_args(ColumnValidationStrategy))
 
 
 def _validate_column_strategy(
@@ -29,19 +33,13 @@ def _validate_column_strategy(
         >>> _validate_column_strategy(None, None, "bogus")
         Traceback (most recent call last):
             ...
-        ValueError: column_validation_strategy must be one of ...
+        ValueError: column_validation_strategy must be one of ...got 'bogus'
 
     """
-    known = {
-        "all_but_formulas",
-        "all_but_formulas_strict",
-        "none",
-        "strict",
-        "drop",
-        "warn",
-    }
-    if value not in known:
-        msg = f"column_validation_strategy must be one of {sorted(known)}, got {value!r}"
+    if value not in _KNOWN_STRATEGIES:
+        msg = (
+            f"column_validation_strategy must be one of {sorted(_KNOWN_STRATEGIES)}, got {value!r}"
+        )
         raise ValueError(msg)
 
 
@@ -64,7 +62,7 @@ class FillXLConfig:
 
     """
 
-    column_validation_strategy: ColumnValidationStrategy = field(  # pyrefly: ignore[bad-assignment]
+    column_validation_strategy: ColumnValidationStrategy = field(
         default="all_but_formulas",
         validator=_validate_column_strategy,
     )

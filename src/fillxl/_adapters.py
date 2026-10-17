@@ -68,20 +68,20 @@ class TabularAdapter:
 
         # Try list[dict]
         if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-            self._columns = list(data[0].keys())  # ty:ignore[invalid-assignment]
-            self._rows = ([row.get(col) for col in self._columns] for row in data)  # ty:ignore[not-iterable]
-            logger.debug("Detected list[dict] with %d columns", len(self._columns))  # ty:ignore[invalid-argument-type]
+            self._columns = list(data[0].keys())
+            self._rows = ([row.get(col) for col in self._columns] for row in data)
+            logger.debug("Detected list[dict] with %d columns", len(self._columns))
             return
 
         # Try dict[str, list]
         if isinstance(data, dict) and len(data) > 0:
             first_value = next(iter(data.values()))
             if isinstance(first_value, list):
-                self._columns = list(data.keys())  # ty:ignore[invalid-assignment]
+                self._columns = list(data.keys())
                 # Transpose: dict of columns -> list of rows
                 num_rows = len(first_value)
-                self._rows = ([data[col][i] for col in self._columns] for i in range(num_rows))  # ty:ignore[not-iterable]
-                logger.debug("Detected dict[str, list] with %d columns", len(self._columns))  # ty:ignore[invalid-argument-type]
+                self._rows = ([data[col][i] for col in self._columns] for i in range(num_rows))
+                logger.debug("Detected dict[str, list] with %d columns", len(self._columns))
                 return
 
         # If we get here, it's not tabular data

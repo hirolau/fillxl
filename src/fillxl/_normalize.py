@@ -128,7 +128,7 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     3. NumPy scalars → native Python values.
     4. IEEE-754 special floats (NaN, Inf, -Inf) → ``None``.
     5. ``date`` → ``datetime`` (Excel has no native ``date`` type).
-    6. ``time`` → ``datetime`` on the Excel epoch (``1899-12-30``).
+    6. ``time`` → ``datetime`` on ``2000-01-01``.
     7. ``timedelta`` → ``float`` (fraction of a 24-hour day).
     8. ``Decimal`` → ``float``.
     9. Timezone-aware ``datetime`` → naive ``datetime``.

@@ -20,7 +20,7 @@ nox.options.reuse_existing_virtualenvs = True
 # Avoid hardlink failures when cache and .nox are on different drives
 os.environ.setdefault("UV_LINK_MODE", "copy")
 
-PYTHONS = ["3.11", "3.12", "3.13", "3.14"]
+PYTHONS = ["3.11", "3.12", "3.13", "3.14", "3.15"]
 _ENV = {"UV_LINK_MODE": "copy"}
 
 

@@ -35,11 +35,11 @@ uv run mkdocs build        # Build static site to site/
 
 ## Supported Environments
 
-| | 3.11 | 3.12 | 3.13 | 3.14 |
-|---|:---:|:---:|:---:|:---:|
-| Windows | :material-check: | :material-check: | :material-check: | :material-check: |
-| Linux | :material-check: | :material-check: | :material-check: | :material-check: |
-| macOS | :material-check: | :material-check: | :material-check: | :material-check: |
+| | 3.11 | 3.12 | 3.13 | 3.14 | 3.15 |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Windows | :material-check: | :material-check: | :material-check: | :material-check: | :material-check: |
+| Linux | :material-check: | :material-check: | :material-check: | :material-check: | :material-check: |
+| macOS | :material-check: | :material-check: | :material-check: | :material-check: | :material-check: |
 
 !!! note "macOS"
     macOS is best-effort — CI does not currently test on macOS runners.

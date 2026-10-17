@@ -161,5 +161,5 @@ uv sync --all-extras
 uv run pytest
 ```
 
-**Supported:** Python 3.11–3.14, Windows/Linux (macOS best-effort).  
+**Supported:** Python 3.11–3.15, Windows/Linux (macOS best-effort).  
 **License:** [MIT](LICENSE)

@@ -38,13 +38,16 @@ import datetime as dt
 import math
 import sys
 import warnings
+from contextvars import ContextVar
 from decimal import Decimal
 from typing import Any, TypeVar
 
 T = TypeVar("T")
 
 # ── Per-fill-session state ──────────────────────────────────────────────────
-_tz_warning_issued: bool = False
+# A ContextVar (rather than a module global) so that two concurrent fills in
+# different threads each get their own "first occurrence" warning.
+_tz_warning_issued: ContextVar[bool] = ContextVar("fillxl_tz_warning_issued", default=False)
 
 
 def reset_tz_warning_state() -> None:
@@ -55,12 +58,11 @@ def reset_tz_warning_state() -> None:
 
     Examples:
         >>> reset_tz_warning_state()
-        >>> _tz_warning_issued
+        >>> _tz_warning_issued.get()
         False
 
     """
-    global _tz_warning_issued
-    _tz_warning_issued = False
+    _tz_warning_issued.set(False)
 
 
 def normalize_datetime(value: T) -> T:
@@ -94,17 +96,15 @@ def normalize_datetime(value: T) -> T:
         True
 
     """
-    global _tz_warning_issued
-
     if isinstance(value, dt.datetime) and value.tzinfo is not None:
-        if not _tz_warning_issued:
+        if not _tz_warning_issued.get():
             warnings.warn(
                 "Timezone-aware datetimes were provided. Excel does not "
                 "support timezones — the tzinfo will be stripped.",
                 UserWarning,
                 stacklevel=2,
             )
-            _tz_warning_issued = True
+            _tz_warning_issued.set(True)
         return value.replace(tzinfo=None)
 
     return value

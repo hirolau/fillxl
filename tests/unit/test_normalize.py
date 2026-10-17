@@ -8,11 +8,12 @@ COM-specific adaptations that keep the two engines equivalent.
 from __future__ import annotations
 
 import datetime as dt
+import warnings
 
 import numpy as np
 import pytest
 
-from fillxl._normalize import normalize_value
+from fillxl._normalize import normalize_value, reset_tz_warning_state
 
 
 class TestNumpyScalars:
@@ -113,3 +114,30 @@ class TestValueNormalisation:
     def test_whitespace_is_still_text(self) -> None:
         """Only a truly empty string is normalised away."""
         assert normalize_value(" ") == " "
+
+
+class TestTimezoneHandling:
+    """tz-aware datetimes lose their offset, keeping the wall-clock time."""
+
+    def test_an_aware_datetime_loses_its_timezone(self) -> None:
+        reset_tz_warning_state()
+        aware = dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+        with pytest.warns(UserWarning, match="Timezone-aware datetimes"):
+            result = normalize_value(aware)
+        assert result == dt.datetime(2025, 6, 15, 14, 30)
+        assert result.tzinfo is None
+
+    def test_the_warning_is_issued_once_per_fill_session(self) -> None:
+        """Each fill session warns once; a new session starts over."""
+        reset_tz_warning_state()
+        aware = dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.UTC)
+        with pytest.warns(UserWarning):
+            normalize_value(aware)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            normalize_value(aware)  # already warned in this session
+
+        reset_tz_warning_state()
+        with pytest.warns(UserWarning):
+            normalize_value(aware)  # a new session warns again

@@ -13,11 +13,16 @@ import pytest
 from openpyxl.chart import BarChart, Reference
 from openpyxl.worksheet.table import Table, TableColumn
 
-from fillxl import fill
+from fillxl import Engine, fill
 from tests.conftest import CHARTS_TEMPLATE_2
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+ENGINES = [
+    pytest.param("openpyxl", id="openpyxl"),
+    pytest.param("win32com", id="win32com", marks=pytest.mark.win32com),
+]
 
 
 def _build_two_sheet_chart_template(path: Path) -> None:
@@ -72,25 +77,36 @@ def _series_end_rows(path: Path) -> dict[str, set[str]]:
         wb.close()
 
 
+@pytest.mark.parametrize("engine", ENGINES)
 def test_a_chart_on_sheet_Data2_is_untouched_when_Data_is_filled(  # noqa: N802
     output_path: Path,
+    engine: Engine,
 ) -> None:
     """Sheet "Data" must not match sheet "Data2" by string prefix."""
+    if engine == "win32com":
+        pytest.importorskip("win32com.client")
     template = output_path.with_name("two_sheet_charts.xlsx")
     _build_two_sheet_chart_template(template)
 
-    fill(
-        template=template,
-        output=output_path,
-        tables={
-            "TableData": [
-                {"Category": "a", "Value": 1},
-                {"Category": "b", "Value": 2},
-                {"Category": "c", "Value": 3},
-                {"Category": "d", "Value": 4},
-            ],
-        },
-    )
+    try:
+        fill(
+            template=template,
+            output=output_path,
+            tables={
+                "TableData": [
+                    {"Category": "a", "Value": 1},
+                    {"Category": "b", "Value": 2},
+                    {"Category": "c", "Value": 3},
+                    {"Category": "d", "Value": 4},
+                ],
+            },
+            engine=engine,
+        )
+    except Exception as exc:
+        message = str(exc).lower()
+        if engine == "win32com" and ("win32com" in message or "excel" in message):
+            pytest.skip(f"win32com backend not available: {exc}")
+        raise
 
     refs = _series_end_rows(output_path)
     assert refs["Data Chart"], refs

@@ -10,15 +10,15 @@ from __future__ import annotations
 
 import re
 import zipfile
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import openpyxl
 import pytest
 
 from fillxl import Engine, FillXLConfig, fill
 
-ASSETS = Path(__file__).resolve().parent.parent / "assets"
-PIVOT_TEMPLATE = ASSETS / "test_template_3_pivot.xlsx"
+if TYPE_CHECKING:
+    from pathlib import Path
 
 SALES_ROWS: list[dict[str, object]] = [
     {"Region": region, "Product": product, "Sales Rep": rep, "Quarter": quarter, "Amount": amount}
@@ -32,7 +32,10 @@ SALES_ROWS: list[dict[str, object]] = [
     ]
 ]
 
-ENGINES = [pytest.param("openpyxl", id="openpyxl"), pytest.param("win32com", id="win32com")]
+ENGINES = [
+    pytest.param("openpyxl", id="openpyxl"),
+    pytest.param("win32com", id="win32com", marks=pytest.mark.win32com),
+]
 
 
 def _refresh_on_load_flags(path: Path) -> list[bool]:
@@ -50,11 +53,11 @@ def _refresh_on_load_flags(path: Path) -> list[bool]:
         ]
 
 
-def _fill_pivot(output: Path, engine: Engine, config: FillXLConfig) -> Path:
+def _fill_pivot(output: Path, template: Path, engine: Engine, config: FillXLConfig) -> Path:
     """Fill the pivot template's source table with *engine*."""
     try:
         fill(
-            template=PIVOT_TEMPLATE,
+            template=template,
             output=output,
             tables={"SalesData": SALES_ROWS},
             engine=engine,
@@ -71,11 +74,13 @@ def _fill_pivot(output: Path, engine: Engine, config: FillXLConfig) -> Path:
 @pytest.mark.parametrize("engine", ENGINES)
 def test_both_engines_mark_pivot_caches_for_refresh_on_load(
     tmp_path: Path,
+    pivot_template: Path,
     engine: Engine,
 ) -> None:
     """Every pivot cache is flagged so Excel recalculates it when opened."""
     output = _fill_pivot(
         tmp_path / f"pivot_{engine}.xlsx",
+        pivot_template,
         engine,
         FillXLConfig(refresh_pivot_tables=True),
     )
@@ -87,11 +92,13 @@ def test_both_engines_mark_pivot_caches_for_refresh_on_load(
 @pytest.mark.parametrize("engine", ENGINES)
 def test_disabling_the_flag_leaves_the_caches_untouched(
     tmp_path: Path,
+    pivot_template: Path,
     engine: Engine,
 ) -> None:
     """refresh_pivot_tables=False must not add refreshOnLoad to the caches."""
     output = _fill_pivot(
         tmp_path / f"pivot_off_{engine}.xlsx",
+        pivot_template,
         engine,
         FillXLConfig(refresh_pivot_tables=False),
     )
@@ -103,11 +110,13 @@ def test_disabling_the_flag_leaves_the_caches_untouched(
 @pytest.mark.parametrize("engine", ENGINES)
 def test_the_pivot_still_reports_the_filled_data(
     tmp_path: Path,
+    pivot_template: Path,
     engine: Engine,
 ) -> None:
     """The fill lands in the pivot's source table, so the cache is not stale."""
     output = _fill_pivot(
         tmp_path / f"pivot_data_{engine}.xlsx",
+        pivot_template,
         engine,
         FillXLConfig(refresh_pivot_tables=True),
     )

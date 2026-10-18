@@ -257,3 +257,92 @@ class TestWin32ComTotalsRows:
                 tables={"Totals": [{"Name": "b", "Value": 2}]},
                 engine="win32com",
             )
+
+
+class TestWin32ComOverflowGuard:
+    """COM reads the cells below the table before resizing it."""
+
+    def test_a_table_that_would_overwrite_content_is_rejected(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Expanding over existing cells raises instead of destroying the data."""
+        from openpyxl.worksheet.table import Table, TableColumn
+
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = tmp_path / "overflow_template.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws["A1"] = "Name"
+        ws["B1"] = "Value"
+        ws["A2"] = "a"
+        ws["B2"] = 1
+        # Guard cell directly below the table, in the way of the expansion.
+        ws["A5"] = "DO NOT OVERWRITE"
+        ws.add_table(
+            Table(
+                displayName="Blocked",
+                ref="A1:B2",
+                tableColumns=[TableColumn(id=1, name="Name"), TableColumn(id=2, name="Value")],
+            ),
+        )
+        wb.save(template)
+        wb.close()
+
+        output = tmp_path / "blocked.xlsx"
+        with pytest.raises(ValueError, match=r"cannot expand.*cell A5 "):
+            fill(
+                template=template,
+                output=output,
+                tables={"Blocked": [{"Name": f"row{i}", "Value": i} for i in range(1, 10)]},
+                engine="win32com",
+            )
+
+        assert not output.exists(), "no partial output should be written"
+
+    def test_a_table_with_room_below_it_is_resized(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The same template without the blocking cell expands normally."""
+        from openpyxl.worksheet.table import Table, TableColumn
+
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = tmp_path / "roomy_template.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws["A1"] = "Name"
+        ws["B1"] = "Value"
+        ws["A2"] = "a"
+        ws["B2"] = 1
+        ws.add_table(
+            Table(
+                displayName="Roomy",
+                ref="A1:B2",
+                tableColumns=[TableColumn(id=1, name="Name"), TableColumn(id=2, name="Value")],
+            ),
+        )
+        wb.save(template)
+        wb.close()
+
+        output = tmp_path / "roomy.xlsx"
+        fill(
+            template=template,
+            output=output,
+            tables={"Roomy": [{"Name": f"row{i}", "Value": i} for i in range(1, 10)]},
+            engine="win32com",
+        )
+
+        wb = openpyxl.load_workbook(output)
+        try:
+            table = next(iter(wb["Data"].tables.values()))
+            assert table.ref == "A1:B10", table.ref
+            assert wb["Data"]["A10"].value == "row9"
+        finally:
+            wb.close()

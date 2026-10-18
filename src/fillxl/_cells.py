@@ -101,6 +101,7 @@ def populate_named_cells(
         if not isinstance(worksheet, Worksheet):
             logger.warning("Worksheet '%s' is not a regular worksheet, skipping", worksheet_name)
             continue
+
         cell = worksheet[cell_address]
         cell.value = normalised_value
 

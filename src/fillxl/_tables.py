@@ -115,16 +115,18 @@ def populate_table(
     worksheet_title: str = str(worksheet.title)
 
     # Check for overflow: if the table is growing, ensure no existing content
-    # is overwritten
+    # is overwritten.  ``_cells`` is inspected directly because
+    # ``worksheet.cell(...)`` would create the cell (and inflate ``max_row``)
+    # just to look at it.
     if new_table_last_row > table_old_last_row:
         for check_row in range(table_old_last_row + 1, new_table_last_row + 1):
             for check_col in range(table_start_column, table_end_column + 1):
-                existing = worksheet.cell(row=check_row, column=check_col).value
-                if existing is not None:
+                existing_cell = worksheet._cells.get((check_row, check_col))
+                if existing_cell is not None and existing_cell.value is not None:
                     cell_ref = f"{get_column_letter(check_col)}{check_row}"
                     msg = (
                         f"Table '{table_name}' cannot expand to {new_table_last_row} rows: "
-                        f"cell {cell_ref} already contains data ({existing!r}). "
+                        f"cell {cell_ref} already contains data ({existing_cell.value!r}). "
                         f"Move or remove the content below the table first."
                     )
                     raise ValueError(
@@ -149,8 +151,8 @@ def populate_table(
     first_unused_row = first_data_row + num_data_rows
     for clear_row in range(first_unused_row, table_old_last_row + 1):
         for clear_col in range(table_start_column, table_end_column + 1):
-            stale_cell = worksheet.cell(row=clear_row, column=clear_col)
-            if is_single_cell(stale_cell):
+            stale_cell = worksheet._cells.get((clear_row, clear_col))
+            if stale_cell is not None and is_single_cell(stale_cell):
                 stale_cell.value = None
 
     # Create a mapping of data column names to column indices
@@ -162,13 +164,13 @@ def populate_table(
         first_row_style = first_row_cell._style
 
         if column.name in data_column_map:
-            data_col_idx = data_column_map[column.name]
+            data_col_idx = data_column_map[str(column.name)]
 
             # Write each row value
             for row_ix, row_values in enumerate(rows):
                 cell_to_fill = table_first_cell.offset(column=col_ix, row=row_ix + 1)
 
-                # Copy the style from the first data row *before* assigning the
+                # Copy style from the first data row *before* assigning the
                 # value: a date format is what tells Excel (and openpyxl on
                 # read-back) that a datetime column holds dates rather than
                 # serial numbers.
@@ -197,8 +199,8 @@ def populate_table(
             # the template left in the rows this fill covers.
             column_index = table_start_column + col_ix
             for clear_row in range(first_data_row, new_table_last_row + 1):
-                stale_cell = worksheet.cell(row=clear_row, column=column_index)
-                if is_single_cell(stale_cell):
+                stale_cell = worksheet._cells.get((clear_row, column_index))
+                if stale_cell is not None and is_single_cell(stale_cell):
                     stale_cell.value = None
 
     # Extend conditional formatting to cover all new rows

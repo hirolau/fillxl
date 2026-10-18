@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, get_args, runtime_checkable
 from fillxl._types import Engine
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from fillxl._charts import TableChangeSpecs
@@ -86,7 +87,7 @@ class Backend(Protocol):
         """
         ...
 
-    def delete_sheets(self, names: list[str]) -> None:
+    def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the worksheets named in *names*.
 
         Args:

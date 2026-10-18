@@ -32,6 +32,16 @@ class TestConfigValidation:
 class TestFrozenConfigAttributes:
     """FillXLConfig is frozen, so its attributes must be immutable too."""
 
+    def test_delete_sheets_is_stored_as_a_tuple(self) -> None:
+        """A caller's list cannot be mutated after construction."""
+        cfg = FillXLConfig(delete_sheets=["Raw", "Scratch"])
+        assert cfg.delete_sheets == ("Raw", "Scratch")
+        assert isinstance(cfg.delete_sheets, tuple)
+
+    def test_delete_sheets_accepts_a_tuple_and_none(self) -> None:
+        assert FillXLConfig(delete_sheets=("Raw",)).delete_sheets == ("Raw",)
+        assert FillXLConfig().delete_sheets is None
+
     def test_formula_escaping_is_off_by_default(self) -> None:
         """Strings starting with "=" become formulas unless you opt in."""
         assert FillXLConfig().escape_formulas is False

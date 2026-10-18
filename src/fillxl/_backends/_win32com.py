@@ -20,6 +20,7 @@ from fillxl._charts import TableChangeSpecs
 from fillxl._normalize import prepare_com_value
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from fillxl._config import FillXLConfig
@@ -475,7 +476,7 @@ class Win32ComBackend:
             except Exception:
                 logger.exception("Failed to hide sheet")
 
-    def delete_sheets(self, names: list[str]) -> None:
+    def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the worksheets named in *names*.
 
         Args:

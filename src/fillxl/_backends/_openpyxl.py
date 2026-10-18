@@ -20,6 +20,7 @@ from fillxl._tables import populate_table
 from fillxl._validation import ColumnValidationStrategy, validate_columns
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from fillxl._config import FillXLConfig
@@ -175,7 +176,7 @@ class OpenpyxlBackend:
                 workbook[sheet_name].sheet_state = "hidden"
                 logger.debug("Hidden worksheet '%s'", sheet_name)
 
-    def delete_sheets(self, names: list[str]) -> None:
+    def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the worksheets named in *names*.
 
         Args:

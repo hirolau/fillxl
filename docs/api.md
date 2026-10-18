@@ -90,3 +90,25 @@ config = FillXLConfig(
 Table columns without a matching data column are cleared (or keep their
 calculated-column formula), so sample values from the template do not leak
 into the output.
+
+---
+
+## Values and Excel's type coercion
+
+Excel re-parses strings that look like typed input: `"00123"` becomes the
+number `123` and `"1/2"` becomes a date. Both backends store such strings as
+**text**, so the two engines agree and no cell gets Excel's "number stored as
+text" marker. Error-like strings (`"#N/A"`, `"#DIV/0!"`, …) are stored as
+text as well, not as Excel errors.
+
+Strings that start with `=` do become formulas — that is Excel's behaviour and
+both engines share it. Set `escape_formulas=True` to keep them as literal
+text instead.
+
+Empty strings (`""`) become empty cells in both engines, because openpyxl
+cannot represent an empty text cell distinctly (it reads back as `None`).
+
+Datetimes lose their timezone (Excel has no timezone support), and both
+engines store the same wall-clock time. `date`, `time`, `timedelta`, `Decimal`,
+pandas/NumPy scalars and NumPy date/time scalars are all normalised, so nothing
+is silently written as text.

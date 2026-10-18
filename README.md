@@ -112,10 +112,30 @@ See the full documentation for `FillXLConfig` options.
 ## Supported Data Sources
 
 - `list[dict]`
-- `dict[str, list]`
+- `dict[str, sequence]` (lists, tuples, NumPy arrays, pandas/polars Series)
 - `pandas.DataFrame`
 - `polars.DataFrame`
 - `duckdb.DuckDBPyRelation`
+
+---
+
+## Values
+
+Non-empty strings are always stored as text — `"00123"` stays `"00123"`
+rather than becoming the number `123`, in both engines. Strings starting with
+`=` become formulas, exactly as Excel treats them; set
+`FillXLConfig(escape_formulas=True)` to keep untrusted data literal.
+
+| Python value | Written to Excel as |
+|--------------|---------------------|
+| `str` | text (error-like strings such as `"#N/A"` included) |
+| `""` | empty cell (openpyxl cannot round-trip an empty text cell) |
+| `int`, `float`, `Decimal`, NumPy scalars | number |
+| `bool` | boolean |
+| `date`, `time`, `datetime` | date/time serial (timezone stripped) |
+| `timedelta` | fraction of a day |
+| `None`, `NaN`, `pd.NA`, `pd.NaT` | empty cell |
+| `"=SUM(A1:A2)"` | formula (literal text with `escape_formulas=True`) |
 
 ---
 
@@ -125,6 +145,10 @@ See the full documentation for `FillXLConfig` options.
 |------------|----------------|----------------|------------------------------|
 | `openpyxl` | Yes            | No             | Most use cases, Linux/macOS  |
 | `win32com` | Windows only   | Yes            | `.xlsm`/`.xlsb`, modern charts |
+
+Both engines write the same values for the same input; the test suite enforces
+this with a cross-backend equivalence suite. See [Backends](backends.md) for the
+engine-specific details.
 
 ---
 
@@ -144,7 +168,9 @@ Benchmark: **5,000 rows × 20 columns** (list[dict] data).
 
 - `openpyxl` does not support dynamic arrays, `.xlsm`, or `.xlsb` files and drops some modern chart types.
 - `win32com` requires Windows + Excel.
-- Timezone-aware datetimes are converted to naive.
+- Timezone-aware datetimes are converted to naive (wall-clock preserved).
+- Tables with a totals row are rejected with a clear error — remove the totals row from the template first.
+- Strings starting with `=` are written as formulas; pass `FillXLConfig(escape_formulas=True)` for untrusted data.
 
 ---
 

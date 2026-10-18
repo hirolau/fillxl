@@ -10,7 +10,7 @@ from openpyxl.utils import column_index_from_string
 
 from ._adapters import TabularAdapter
 from ._charts import TableChangeSpecs
-from ._normalize import prepare_cell_value
+from ._normalize import is_text_cell_value, prepare_cell_value
 from ._utils import col_to_excel, find_worksheet_and_table
 
 if TYPE_CHECKING:
@@ -148,7 +148,14 @@ def populate_table(
             # Write each row value
             for row_ix, row_values in enumerate(rows):
                 cell_to_fill = table_first_cell.offset(column=col_ix, row=row_ix + 1)
-                cell_to_fill.value = prepare_cell_value(row_values[data_col_idx])
+
+                value = prepare_cell_value(row_values[data_col_idx])
+                cell_to_fill.value = value
+
+                # Force text for strings openpyxl would reinterpret: error
+                # values such as "#N/A".
+                if is_text_cell_value(value):
+                    cell_to_fill.data_type = "s"
 
                 # Copy style from first row
                 if copy_style_in_tables:

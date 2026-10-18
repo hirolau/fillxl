@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fillxl._normalize import prepare_cell_value
+from fillxl._normalize import is_text_cell_value, prepare_cell_value
 
 if TYPE_CHECKING:
     from openpyxl.workbook.workbook import Workbook
@@ -67,7 +67,14 @@ def populate_named_cells(
         if not isinstance(worksheet, type(workbook.active)):
             logger.warning("Worksheet '%s' is not a regular worksheet, skipping", worksheet_name)
             continue
-        worksheet[cell_address] = normalised_value
+        cell = worksheet[cell_address]
+        cell.value = normalised_value
+
+        # Force text for strings openpyxl would reinterpret: error values
+        # such as "#N/A".
+        if is_text_cell_value(normalised_value):
+            cell.data_type = "s"
+
         logger.debug(
             "Set named cell '%s' (%s!%s) = %s",
             name,

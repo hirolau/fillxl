@@ -324,6 +324,33 @@ def is_formula_string(value: Any) -> bool:  # noqa: ANN401
     return isinstance(value, str) and value.startswith("=")
 
 
+def is_text_cell_value(value: Any) -> bool:  # noqa: ANN401
+    """Whether *value* must be forced to the text cell type in openpyxl.
+
+    openpyxl treats a string starting with ``=`` as a formula and a string
+    such as ``"#N/A"`` as an error value.  Forcing the remaining strings to
+    text keeps the openpyxl output identical to win32com, which stores every
+    string as text.
+
+    Args:
+        value: The normalised value about to be written.
+
+    Examples:
+        >>> is_text_cell_value("hello")
+        True
+        >>> is_text_cell_value("#N/A")
+        True
+        >>> is_text_cell_value("=1+1")
+        False
+        >>> is_text_cell_value(42)
+        False
+
+    """
+    if not isinstance(value, str):
+        return False
+    return not is_formula_string(value)
+
+
 def prepare_cell_value(value: Any) -> Any:  # noqa: ANN401
     """Prepare *value* for writing through the openpyxl backend.
 

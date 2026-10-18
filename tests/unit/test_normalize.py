@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from fillxl._normalize import (
+    is_formula_string,
     normalize_value,
     prepare_cell_value,
     prepare_com_value,
@@ -169,6 +170,30 @@ class TestComValuePreparation:
     thing.
     """
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("00123", id="leading_zeros"),
+            pytest.param("1/2", id="fraction"),
+            pytest.param("12:30", id="time"),
+            pytest.param("2025-01-05", id="date"),
+            pytest.param("2025-01-05 10:00", id="date_and_time"),
+            pytest.param("15 Jun 2025", id="textual_date"),
+            pytest.param("$1,234.50", id="currency"),
+            pytest.param("12%", id="percent"),
+            pytest.param("TRUE", id="boolean_word"),
+            pytest.param("hello", id="plain_word"),
+            pytest.param("it's", id="embedded_apostrophe"),
+        ],
+    )
+    def test_text_is_marked_as_literal_with_an_apostrophe(self, text: str) -> None:
+        """Excel's apostrophe prefix keeps the string exactly as provided."""
+        assert prepare_com_value(text) == "'" + text
+
+    def test_a_formula_string_stays_a_formula_by_default(self) -> None:
+        """Both backends turn "=1+1" into a formula unless escaping is on."""
+        assert prepare_com_value("=1+1") == "=1+1"
+
     def test_datetimes_are_marked_as_utc(self) -> None:
         """COM would otherwise shift the serial number by the local offset."""
         prepared = prepare_com_value(dt.datetime(2025, 6, 15, 14, 30))
@@ -191,6 +216,19 @@ class TestComValuePreparation:
             14,
             30,
         )
+
+
+class TestFormulaDetection:
+    """Only strings that Excel would treat as formulas count as formulas."""
+
+    def test_a_leading_equals_sign_marks_a_formula(self) -> None:
+        assert is_formula_string("=SUM(A1:A2)")
+
+    def test_plain_strings_are_not_formulas(self) -> None:
+        assert not is_formula_string("00123")
+        assert not is_formula_string("a=b")
+        assert not is_formula_string(123)
+        assert not is_formula_string(None)
 
 
 class TestTimezoneHandling:

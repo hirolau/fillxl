@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `FillXLConfig.escape_formulas` (default `False`): write strings that start
+  with `=` as literal text instead of formulas. Formula-like strings from
+  untrusted data are a formula-injection vector, so this is now opt-in-able.
+- Sheet-scoped defined names are now resolved by the openpyxl backend, matching
+  win32com, which finds them through `Workbook.Names`.
 - Python 3.15 support: added to the classifiers, the CI test matrix, and the
   nox `PYTHONS` list (the `requires-python` floor stays at 3.11).
 - polars 2 support: the dev/test environment and `uv.lock` use polars 2, and
@@ -17,6 +22,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.x.
 - The `duckdb` extra is limited to Python ≤3.14: duckdb currently publishes no
   cp315 wheels. Its tests skip on 3.15 until upstream provides them.
+
+### Changed
+
+- **Both backends** now write every non-empty string as text, so Excel's
+  typed-input parser cannot reinterpret the data. win32com does this with
+  Excel's text marker (apostrophe prefix, no number-format changes), so
+  `"00123"` stays `"00123"` instead of becoming `123` and `"1/2"` no longer
+  becomes a date. openpyxl stores strings as text as well, including
+  error-like strings such as `"#N/A"` that it would otherwise turn into Excel
+  errors.
+- Empty strings (`""`) become empty cells in both engines. openpyxl cannot
+  round-trip an empty text cell (it reads back as `None`), so writing one
+  would make the two backends disagree.
+- **Both backends**: table cell styles are applied *before* the value, so
+  datetime columns get a date format in the openpyxl output as well. Datetime
+  table cells now read back as datetimes from both engines instead of a bare
+  serial number from openpyxl.
+- **win32com**: pivot caches are refreshed *and* marked `refreshOnLoad`, so
+  both engines leave a workbook that recalculates its pivots on open.
+- The tabular adapter accepts any sequence-like column values for
+  `dict[str, ...]` data, including NumPy arrays, tuples and pandas Series.
+  Columns are read positionally, so a Series with a non-default index (and
+  non-string mapping keys) works, and ragged columns raise instead of being
+  silently truncated.
+- `delete_sheets` is stored as a tuple, so a frozen `FillXLConfig` cannot be
+  mutated through a caller's list.
+
+### Fixed
+
+- NumPy scalars (`np.int64`, `np.int32`, `np.float32`, `np.bool_`, …) are
+  converted to native Python values instead of `str(value)`, which used to
+  produce the "number stored as text" marker in Excel. `np.datetime64` and
+  `np.timedelta64` — including nanosecond precision, where `.item()` returns
+  an integer — are converted to `datetime`/`timedelta` as well.
+- A failed `load()` no longer leaks a hidden `EXCEL.EXE`: the backend is now
+  loaded inside the `try`/`finally` so `close()` always runs.
+- `table.autoFilter.ref` is updated together with `table.ref`, avoiding the
+  mismatch that makes Excel offer to repair the workbook.
+- Empty data leaves a valid table with one cleared body row in both backends
+  (openpyxl used to write a header-only range, which Excel rejects).
+- Table columns missing from the data no longer keep the template's sample
+  values; the cells covered by the fill are cleared (calculated columns keep
+  their formulas).
+- Conditional formatting ranges are matched by geometry, not by string prefix:
+  a rule on `B130:B200` is no longer mistaken for one on `B13` (which produced
+  the invalid range `B130:B13`), and multi-area sqrefs such as `B13:B20
+  D13:D20` are resized per area instead of being split on `:`.
+- Chart data ranges are matched by exact sheet name in both backends, so a
+  chart on `Data2` is untouched while `Data` is filled.
+- **win32com**: the save format is inferred from the output suffix. Filling an
+  `.xlsm` template to `.xlsm` no longer strips its macros by saving `.xlsx`
+  (`.xlsb` and `.xls` are supported too; anything else raises `ValueError`).
+- **win32com**: datetimes written to named cells are no longer shifted by the
+  local timezone offset (they now get the same UTC marking as table cells).
+- Both backends reject tables that have a totals row with a clear error
+  instead of overwriting the totals and miscounting rows.
+- The timezone warning flag is a `ContextVar`, so two concurrent `fill()` calls
+  in different threads no longer share it.
+- `__version__` is read from package metadata instead of being hard-coded, so
+  it cannot drift from `pyproject.toml`.
+
+### Removed
+
+- `FillXLConfig.extend_tables` — it was never read by any backend, so it
+  silently did nothing. Tables are always resized to fit the data.
 
 ## [0.2.0] — 2026-07-19
 

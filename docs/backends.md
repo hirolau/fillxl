@@ -92,10 +92,18 @@ Pivot caches are refreshed by both engines: openpyxl marks them
 (`refreshOnLoad`) so Excel recalculates on open, and win32com recalculates them
 during the fill as well.
 
-Tables with a **totals row** are rejected with a clear error — the totals row
-would be overwritten by the data and the row arithmetic would be off by one.
-Remove the totals row from the template (or compute the totals yourself) before
-filling.
+Tables with a **totals row** are supported: the data body is replaced and the
+totals row is moved to remain directly below it, keeping its values, labels,
+functions and styling. The table reference includes the totals row while the
+auto-filter range stops at the last data row, matching what Excel writes.
+
+!!! note "Totals-row formulas"
+    Totals formulas that use structured references — for example
+    `SUBTOTAL(109,Table1[Value])`, which is what Excel writes for its built-in
+    totals functions — keep working because they follow the table. A formula
+    typed with an explicit range (for example `SUM(B2:B5)`) is preserved
+    verbatim and is **not** rewritten when the table grows or shrinks; use the
+    built-in totals function or a structured reference instead.
 
 !!! warning "CI/CD"
     win32com tests are excluded from CI (Linux runners can't run Excel COM).

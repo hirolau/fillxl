@@ -215,46 +215,151 @@ class TestWin32ComCleanup:
 
 
 class TestWin32ComTotalsRows:
-    """Tables with totals rows are rejected with a clear message."""
+    """Tables with totals rows keep the totals row below the data body."""
 
-    def test_a_table_with_a_totals_row_is_rejected(self, tmp_path: Path) -> None:
-        """Totals rows are not supported — the error says so instead of corrupting them."""
+    @staticmethod
+    def _build_template(path: Path, *, data_rows: int) -> None:
+        from openpyxl.worksheet.filters import AutoFilter
         from openpyxl.worksheet.table import Table, TableColumn
 
-        from fillxl import fill
-
-        _skip_without_excel()
-        template = tmp_path / "totals_template.xlsx"
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Data"
         ws["A1"] = "Name"
         ws["B1"] = "Value"
-        ws["A2"] = "a"
-        ws["B2"] = 1
-        ws["A3"] = "Total"
-        ws["B3"] = "=SUBTOTAL(109,B2:B2)"
-        table = Table(
-            displayName="Totals",
-            ref="A1:B3",
-            tableColumns=[
-                TableColumn(id=1, name="Name", totalsRowLabel="Total"),
-                TableColumn(id=2, name="Value", totalsRowFunction="sum"),
-            ],
-            totalsRowCount=1,
-            totalsRowShown=True,
+        for offset in range(data_rows):
+            ws.cell(row=2 + offset, column=1, value=f"old{offset}")
+            ws.cell(row=2 + offset, column=2, value=offset)
+        totals_row = data_rows + 2
+        ws.cell(row=totals_row, column=1, value="Total")
+        ws.cell(row=totals_row, column=2, value="=SUBTOTAL(109,Totals[Value])")
+        ws.add_table(
+            Table(
+                displayName="Totals",
+                ref=f"A1:B{totals_row}",
+                autoFilter=AutoFilter(ref=f"A1:B{totals_row - 1}"),
+                tableColumns=[
+                    TableColumn(id=1, name="Name", totalsRowLabel="Total"),
+                    TableColumn(id=2, name="Value", totalsRowFunction="sum"),
+                ],
+                totalsRowCount=1,
+                totalsRowShown=True,
+            ),
         )
-        ws.add_table(table)
+        wb.save(path)
+        wb.close()
+
+    def test_a_totals_row_stays_at_the_bottom(self, tmp_path: Path) -> None:
+        """Resizing keeps the totals row one row below the new data body."""
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = tmp_path / "totals_template.xlsx"
+        self._build_template(template, data_rows=1)
+
+        fill(
+            template=template,
+            output=tmp_path / "out.xlsx",
+            tables={"Totals": [{"Name": f"row{i}", "Value": i} for i in range(1, 4)]},
+            engine="win32com",
+        )
+
+        wb = openpyxl.load_workbook(tmp_path / "out.xlsx")
+        try:
+            ws = wb["Data"]
+            table = ws.tables["Totals"]
+
+            assert table.ref == "A1:B5"
+            assert table.totalsRowCount == 1
+            assert [ws.cell(row=r, column=1).value for r in range(2, 5)] == [
+                "row1",
+                "row2",
+                "row3",
+            ]
+            assert [ws.cell(row=r, column=2).value for r in range(2, 5)] == [1, 2, 3]
+            assert ws.cell(row=5, column=1).value == "Total"
+            assert "SUBTOTAL" in str(ws.cell(row=5, column=2).value)
+        finally:
+            wb.close()
+
+        # Excel recalculates the totals formula over the new body rows.
+        wb_values = openpyxl.load_workbook(tmp_path / "out.xlsx", data_only=True)
+        try:
+            assert wb_values["Data"].cell(row=5, column=2).value == 6
+        finally:
+            wb_values.close()
+
+    def test_a_totals_row_moves_up_when_the_data_shrinks(self, tmp_path: Path) -> None:
+        """Shrinking moves the totals row up without leaving stale rows."""
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = tmp_path / "totals_shrink_template.xlsx"
+        self._build_template(template, data_rows=3)
+
+        fill(
+            template=template,
+            output=tmp_path / "out.xlsx",
+            tables={"Totals": [{"Name": "only", "Value": 7}]},
+            engine="win32com",
+        )
+
+        wb = openpyxl.load_workbook(tmp_path / "out.xlsx")
+        try:
+            ws = wb["Data"]
+            table = ws.tables["Totals"]
+
+            assert table.ref == "A1:B3"
+            assert ws.cell(row=2, column=1).value == "only"
+            assert ws.cell(row=3, column=1).value == "Total"
+            assert "SUBTOTAL" in str(ws.cell(row=3, column=2).value)
+            assert ws.cell(row=4, column=1).value is None
+            assert ws.cell(row=5, column=1).value is None
+        finally:
+            wb.close()
+
+    def test_growing_by_one_row_keeps_the_totals_row(self, tmp_path: Path) -> None:
+        """Growing by a single row does not treat the totals row as overflow."""
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = tmp_path / "totals_grow_one_template.xlsx"
+        self._build_template(template, data_rows=1)
+
+        fill(
+            template=template,
+            output=tmp_path / "out.xlsx",
+            tables={"Totals": [{"Name": "a", "Value": 1}, {"Name": "b", "Value": 2}]},
+            engine="win32com",
+        )
+
+        wb = openpyxl.load_workbook(tmp_path / "out.xlsx")
+        try:
+            ws = wb["Data"]
+            assert ws.tables["Totals"].ref == "A1:B4"
+            assert [ws.cell(row=r, column=2).value for r in range(2, 4)] == [1, 2]
+            assert ws.cell(row=4, column=1).value == "Total"
+        finally:
+            wb.close()
+
+    def test_content_below_a_totals_table_is_rejected(self, tmp_path: Path) -> None:
+        """Content directly below the totals row still blocks table growth."""
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = tmp_path / "totals_overflow_template.xlsx"
+        self._build_template(template, data_rows=1)
+
+        wb = openpyxl.load_workbook(template)
+        wb["Data"]["A4"] = "DO NOT OVERWRITE"
         wb.save(template)
         wb.close()
 
-        # Excel only exposes ShowTotals for real list objects, so this case is
-        # exercised through the win32com backend as well as openpyxl.
-        with pytest.raises(ValueError, match="totals row"):
+        with pytest.raises(ValueError, match="cannot expand"):
             fill(
                 template=template,
                 output=tmp_path / "out.xlsx",
-                tables={"Totals": [{"Name": "b", "Value": 2}]},
+                tables={"Totals": [{"Name": f"row{i}", "Value": i} for i in range(1, 4)]},
                 engine="win32com",
             )
 

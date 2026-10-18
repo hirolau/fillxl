@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Both backends** now support tables with a **totals row**: the data body is
+  replaced and the totals row is moved to stay directly below it, preserving
+  its values, labels, functions and styling. Totals formulas that use
+  structured references (for example `SUBTOTAL(109,Table1[Value])`) follow the
+  table; formulas written as explicit ranges are left untouched.
 - **Both backends** now write every non-empty string as text, so Excel's
   typed-input parser cannot reinterpret the data. win32com does this with
   Excel's text marker (apostrophe prefix, no number-format changes), so
@@ -89,6 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently did nothing. Tables are always resized to fit the data.
 
 ## [0.2.0] — 2026-07-19
+
+Improved the test suite and added functionality enabled by the multiple-backend design.
 
 ### Added
 
@@ -169,6 +176,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dist/` build artifacts removed from the working tree.
 
 ## [0.1.0] — 2026-07-01
+
+Initial release, focused on turning an internal tool into a proper package with a test suite.
 
 ### Added
 

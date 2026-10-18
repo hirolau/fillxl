@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from copy import copy
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from openpyxl.cell.cell import Cell
 from openpyxl.utils import get_column_letter
@@ -73,8 +74,7 @@ def populate_table(
 
     Raises:
         KeyError: If table is not found
-        ValueError: If the table has a totals row, or the table cannot expand
-            into non-empty cells.
+        ValueError: If the table cannot expand into non-empty cells.
 
     """
     columns = adapter.columns
@@ -85,15 +85,8 @@ def populate_table(
     table: Table
     worksheet, table = find_worksheet_and_table(workbook, table_name)
 
-    if _has_totals_row(table):
-        msg = (
-            f"Table '{table_name}' has a totals row, which fillxl does not "
-            f"support: writing the data would overwrite the totals and "
-            f"miscount the rows. Remove the totals row from the template."
-        )
-        raise ValueError(
-            msg,
-        )
+    # A totals row is part of the table's reference but not of its data body.
+    totals_rows = _totals_row_count(table)
 
     # Parse the original table reference (e.g. 'B12:M13')
     original_table_ref: str = table.ref
@@ -101,13 +94,23 @@ def populate_table(
 
     table_start_row = original_cell_range.min_row
     table_old_last_row = original_cell_range.max_row
+    table_old_body_last_row = table_old_last_row - totals_rows
     table_start_column = original_cell_range.min_col
     table_end_column = original_cell_range.max_col
     first_data_row = table_start_row + 1
 
+    # Snapshot the totals row before any clearing: openpyxl writes cells in
+    # place, so the row has to be recreated at its new position below.
+    totals_row_cells = (
+        _read_row(worksheet, table_old_last_row, table_start_column, table_end_column)
+        if totals_rows
+        else None
+    )
+
     # An Excel table needs at least one body row, so empty data keeps a single
     # (cleared) row — the same thing the win32com backend does.
-    new_table_last_row = table_start_row + max(num_data_rows, 1)
+    new_table_body_last_row = table_start_row + max(num_data_rows, 1)
+    new_table_last_row = new_table_body_last_row + totals_rows
     new_table_ref = (
         f"{get_column_letter(table_start_column)}{table_start_row}:"
         f"{get_column_letter(table_end_column)}{new_table_last_row}"
@@ -134,10 +137,14 @@ def populate_table(
                     )
 
     # Update table reference — the autoFilter must stay in step with the table,
-    # otherwise Excel reports the workbook as repaired on open.
+    # otherwise Excel reports the workbook as repaired on open.  Excel excludes
+    # the totals row from the filter range.
     table.ref = new_table_ref
     if table.autoFilter is not None:
-        table.autoFilter.ref = new_table_ref
+        table.autoFilter.ref = (
+            f"{get_column_letter(table_start_column)}{table_start_row}:"
+            f"{get_column_letter(table_end_column)}{new_table_body_last_row}"
+        )
     logger.debug("Table '%s' resized: %s -> %s", table_name, original_table_ref, new_table_ref)
 
     # Get the first cell of the table
@@ -147,13 +154,17 @@ def populate_table(
         raise ValueError(msg)
 
     # Clear any leftover rows the new data does not cover (this also clears the
-    # single body row that empty data leaves behind).
+    # single body row that empty data leaves behind).  The totals row is not
+    # part of the body and is cleared only after its contents are captured.
     first_unused_row = first_data_row + num_data_rows
-    for clear_row in range(first_unused_row, table_old_last_row + 1):
+    for clear_row in range(first_unused_row, table_old_body_last_row + 1):
         for clear_col in range(table_start_column, table_end_column + 1):
             stale_cell = worksheet._cells.get((clear_row, clear_col))
             if stale_cell is not None and is_single_cell(stale_cell):
                 stale_cell.value = None
+
+    if totals_rows:
+        _clear_row(worksheet, table_old_last_row, table_start_column, table_end_column)
 
     # Create a mapping of data column names to column indices
     data_column_map = {str(col_name): idx for idx, col_name in enumerate(columns)}
@@ -198,20 +209,25 @@ def populate_table(
             # The column is missing from the data: clear whatever sample values
             # the template left in the rows this fill covers.
             column_index = table_start_column + col_ix
-            for clear_row in range(first_data_row, new_table_last_row + 1):
+            for clear_row in range(first_data_row, new_table_body_last_row + 1):
                 stale_cell = worksheet._cells.get((clear_row, column_index))
                 if stale_cell is not None and is_single_cell(stale_cell):
                     stale_cell.value = None
 
-    # Extend conditional formatting to cover all new rows
-    # Guard: skip when there are no data rows (first_data_row > new_table_last_row)
-    if extend_conditional_formatting and first_data_row <= new_table_last_row:
+    # Recreate the totals row at the bottom of the resized table.
+    if totals_row_cells is not None:
+        _write_row(worksheet, new_table_last_row, table_start_column, totals_row_cells)
+
+    # Extend conditional formatting to cover all new data rows (the totals row
+    # is deliberately excluded).
+    # Guard: skip when there are no data rows (first_data_row > new_table_body_last_row)
+    if extend_conditional_formatting and first_data_row <= new_table_body_last_row:
         _extend_conditional_formatting(
             worksheet=worksheet,
             table_start_column=table_start_column,
             table_end_column=table_end_column,
             first_data_row=first_data_row,
-            table_last_row=new_table_last_row,
+            table_last_row=new_table_body_last_row,
         )
 
     return TableChangeSpecs(
@@ -219,22 +235,90 @@ def populate_table(
         header_row=table_start_row,
         first_col=table_start_column,
         last_col=table_end_column,
-        old_last_row=table_old_last_row,
-        new_last_row=new_table_last_row,
+        old_last_row=table_old_body_last_row,
+        new_last_row=new_table_body_last_row,
     )
 
 
-def _has_totals_row(table: Table) -> bool:
-    """Whether *table* is configured with a totals row.
+def _totals_row_count(table: Table) -> int:
+    """Number of totals rows in *table* (zero or one).
+
+    ``totalsRowCount`` is authoritative.  Excel writes
+    ``totalsRowShown="0"`` on ordinary tables, so ``totalsRowShown`` alone
+    would report a totals row for every table.
 
     Examples:
         >>> from openpyxl.worksheet.table import Table, TableColumn
         >>> columns = [TableColumn(id=1, name="a"), TableColumn(id=2, name="b")]
-        >>> _has_totals_row(Table(displayName="T", ref="A1:B2", tableColumns=columns))
-        False
+        >>> _totals_row_count(Table(displayName="T", ref="A1:B2", tableColumns=columns))
+        0
+        >>> _totals_row_count(
+        ...     Table(
+        ...         displayName="T",
+        ...         ref="A1:B3",
+        ...         tableColumns=columns,
+        ...         totalsRowCount=1,
+        ...         totalsRowShown=True,
+        ...     )
+        ... )
+        1
 
     """
-    return bool(getattr(table, "totalsRowCount", 0)) or bool(table.totalsRowShown)
+    count = getattr(table, "totalsRowCount", None)
+    if count:
+        return int(count)
+    return 1 if getattr(table, "totalsRowShown", False) else 0
+
+
+class _CellSnapshot(NamedTuple):
+    """Value, style and type of a cell captured before the cell is cleared."""
+
+    value: Any
+    style: Any
+    data_type: str | None
+
+
+def _read_row(
+    worksheet: Worksheet,
+    row: int,
+    first_col: int,
+    last_col: int,
+) -> list[_CellSnapshot]:
+    """Capture the cells in *row* between *first_col* and *last_col*."""
+    snapshots: list[_CellSnapshot] = []
+    for col in range(first_col, last_col + 1):
+        cell = worksheet._cells.get((row, col))
+        if cell is None or not is_single_cell(cell):
+            snapshots.append(_CellSnapshot(None, None, None))
+            continue
+        snapshots.append(_CellSnapshot(cell.value, copy(cell._style), cell.data_type))
+    return snapshots
+
+
+def _clear_row(worksheet: Worksheet, row: int, first_col: int, last_col: int) -> None:
+    """Clear the values in *row* between *first_col* and *last_col*."""
+    for col in range(first_col, last_col + 1):
+        cell = worksheet._cells.get((row, col))
+        if cell is not None and is_single_cell(cell):
+            cell.value = None
+
+
+def _write_row(
+    worksheet: Worksheet,
+    row: int,
+    first_col: int,
+    snapshots: list[_CellSnapshot],
+) -> None:
+    """Write snapshots captured by :func:`_read_row` into *row*."""
+    for offset, snapshot in enumerate(snapshots):
+        cell = worksheet.cell(row=row, column=first_col + offset)
+        if not is_single_cell(cell):
+            continue
+        if snapshot.style is not None:
+            cell._style = copy(snapshot.style)
+        cell.value = snapshot.value
+        if snapshot.data_type is not None:
+            cell.data_type = snapshot.data_type
 
 
 def _extend_conditional_formatting(
@@ -257,7 +341,8 @@ def _extend_conditional_formatting(
         table_start_column: 1-based index of the table's first column
         table_end_column: 1-based index of the table's last column
         first_data_row: Row number of the first data row
-        table_last_row: Row number of the last row in the table
+        table_last_row: Row number of the last data row in the table
+            (the totals row, if present, is below it)
 
     """
     entries: list[Any] = list(worksheet.conditional_formatting)

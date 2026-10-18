@@ -30,8 +30,9 @@ class TableChangeSpecs(NamedTuple):
     All row and column numbers are absolute worksheet coordinates and
     ``header_row`` is the row that holds the column headers, so the first
     data row is always ``header_row + 1``.  ``old_last_row`` and
-    ``new_last_row`` are the last rows *of the table* (headers included),
-    which is what chart data ranges are compared against.  A table without
+    ``new_last_row`` are the last rows of the table's *data body*, which is
+    what chart data ranges are compared against.  A totals row, if the table
+    has one, sits below ``new_last_row`` and is not included.  A table without
     any data rows has ``last_row == header_row``.
 
     Attributes:
@@ -39,8 +40,8 @@ class TableChangeSpecs(NamedTuple):
         header_row: Row number of the table header.
         first_col: 1-based index of the table's first column.
         last_col: 1-based index of the table's last column.
-        old_last_row: Last row of the table before the fill.
-        new_last_row: Last row of the table after the fill.
+        old_last_row: Last data row of the table before the fill.
+        new_last_row: Last data row of the table after the fill.
 
     Examples:
         >>> spec = TableChangeSpecs("Sheet1", 12, 2, 13, 13, 20)
@@ -147,8 +148,8 @@ def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None
     data ranges updated to match the new table dimensions.
 
     Only references that point at the table's *data body* — that is, ranges
-    starting one row below the header, ending at the table's last row, and
-    within the table's columns — are updated.
+    starting one row below the header, ending at the table's last data row,
+    and within the table's columns — are updated.
 
     Args:
         spec: TableChangeSpecs describing the old and new table dimensions

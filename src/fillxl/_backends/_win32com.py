@@ -228,13 +228,10 @@ class Win32ComBackend:
             msg = f"Table '{name}' not found in workbook"
             raise KeyError(msg)
 
-        if _com_has_totals_row(list_obj):
-            msg = (
-                f"Table '{name}' has a totals row, which fillxl does not "
-                f"support: writing the data would overwrite the totals and "
-                f"miscount the rows. Remove the totals row from the template."
-            )
-            raise ValueError(msg)
+        # A totals row is part of the table but excluded from DataBodyRange,
+        # so all body row arithmetic below stays correct.  The totals row is
+        # kept at the bottom by resizing the table past the body rows.
+        totals_rows = 1 if _com_has_totals_row(list_obj) else 0
 
         # ── Normalise data ────────────────────────────────────────────────
         from fillxl._adapters import TabularAdapter
@@ -287,6 +284,7 @@ class Win32ComBackend:
             old_last_row = header_row
 
         worksheet_title = str(worksheet.Name)
+        old_table_last_row = old_last_row + totals_rows
 
         # ── Empty data: keep a single, cleared body row ───────────────────
         # (openpyxl does the same; an Excel table needs at least one body row.)
@@ -294,14 +292,26 @@ class Win32ComBackend:
             if data_body_range is not None:
                 data_body_range.ClearContents()
             new_last_row = header_row + 1
-            if old_last_row != new_last_row:
-                new_range = self._app.Range(
-                    f"{start_col_letter}{header_row}:{end_col_letter}{new_last_row}",
+            new_table_last_row = new_last_row + totals_rows
+            if new_table_last_row != old_table_last_row:
+                resize_last_row = _resize_target_row(
+                    new_table_last_row,
+                    old_table_last_row,
+                    totals_rows,
                 )
-                list_obj.Resize(new_range)
+                list_obj.Resize(
+                    self._app.Range(
+                        f"{start_col_letter}{header_row}:{end_col_letter}{resize_last_row}",
+                    ),
+                )
+            if new_table_last_row < old_table_last_row:
                 worksheet.Range(
-                    f"{start_col_letter}{new_last_row}:{end_col_letter}{new_last_row}",
+                    f"{start_col_letter}{new_table_last_row + 1}:"
+                    f"{end_col_letter}{old_table_last_row}",
                 ).ClearContents()
+            worksheet.Range(
+                f"{start_col_letter}{new_last_row}:{end_col_letter}{new_last_row}",
+            ).ClearContents()
             return TableChangeSpecs(
                 worksheet_title=worksheet_title,
                 header_row=header_row,
@@ -312,15 +322,20 @@ class Win32ComBackend:
             )
 
         new_end_row = header_row + num_data_rows
-        new_table_range = f"{start_col_letter}{header_row}:{end_col_letter}{new_end_row}"
+        new_table_last_row = new_end_row + totals_rows
 
         # Check for overflow — cells below the table should be empty.
         # Read the entire overflow range in a single COM call (batch read)
         # instead of cell-by-cell (which is ~100x slower for large expansions).
         t_overflow = time.perf_counter()
         if num_data_rows > (old_last_row - header_row):
-            overflow_start = old_last_row + 1
-            overflow_range_str = f"{start_col_letter}{overflow_start}:{end_col_letter}{new_end_row}"
+            # Start below the existing totals row (if any) and check through
+            # the last row the resized table will occupy.
+            overflow_start = old_last_row + 1 + totals_rows
+            new_table_end_row = new_end_row + totals_rows
+            overflow_range_str = (
+                f"{start_col_letter}{overflow_start}:{end_col_letter}{new_table_end_row}"
+            )
             try:
                 overflow_values = worksheet.Range(overflow_range_str).Value
                 if overflow_values is not None:
@@ -361,14 +376,25 @@ class Win32ComBackend:
         # Resize the table first — Excel auto-fills calculated column formulas
         # in new rows when the table is resized.
         t_resize = time.perf_counter()
-        excel_range = self._app.Range(new_table_range)
-        list_obj.Resize(excel_range)
+        if new_table_last_row != old_table_last_row:
+            resize_last_row = _resize_target_row(
+                new_table_last_row,
+                old_table_last_row,
+                totals_rows,
+            )
+            list_obj.Resize(
+                self._app.Range(
+                    f"{start_col_letter}{header_row}:{end_col_letter}{resize_last_row}",
+                ),
+            )
         logger.info("[win32com] resize took %.3fs", time.perf_counter() - t_resize)
 
-        # Clear old data rows if the table has shrunk — batch clear
+        # Clear the rows the table no longer covers — batch clear
         t_clear = time.perf_counter()
-        if num_data_rows < (old_last_row - header_row):
-            clear_range_str = f"{start_col_letter}{new_end_row + 1}:{end_col_letter}{old_last_row}"
+        if new_table_last_row < old_table_last_row:
+            clear_range_str = (
+                f"{start_col_letter}{new_table_last_row + 1}:{end_col_letter}{old_table_last_row}"
+            )
             with contextlib.suppress(Exception):
                 worksheet.Range(clear_range_str).ClearContents()
         logger.info("[win32com] clear took %.3fs", time.perf_counter() - t_clear)
@@ -632,6 +658,32 @@ class Win32ComBackend:
 def _com_has_totals_row(list_obj: Any) -> bool:  # noqa: ANN401
     """Whether a COM ``ListObject`` is configured with a totals row."""
     return bool(getattr(list_obj, "ShowTotals", False))
+
+
+def _resize_target_row(
+    new_table_last_row: int,
+    old_table_last_row: int,
+    totals_rows: int,
+) -> int:
+    """Last row to pass to ``ListObject.Resize`` for a totals-row table.
+
+    Excel interprets the resize range as the final table range while a table
+    grows, but as the range *above* the totals row while it shrinks — the
+    totals row is then appended one row below it.  Adjusting for that makes
+    both directions produce *new_table_last_row* as the table's last row.
+
+    Examples:
+        >>> _resize_target_row(5, 3, 1)
+        5
+        >>> _resize_target_row(3, 5, 1)
+        2
+        >>> _resize_target_row(3, 5, 0)
+        3
+
+    """
+    if new_table_last_row > old_table_last_row:
+        return new_table_last_row
+    return new_table_last_row - totals_rows
 
 
 def _prepare_formula_for_com(formula: str) -> str:

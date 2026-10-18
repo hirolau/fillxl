@@ -169,7 +169,7 @@ Benchmark: **5,000 rows × 20 columns** (list[dict] data).
 - `openpyxl` does not support dynamic arrays, `.xlsm`, or `.xlsb` files and drops some modern chart types.
 - `win32com` requires Windows + Excel.
 - Timezone-aware datetimes are converted to naive (wall-clock preserved).
-- Tables with a totals row are rejected with a clear error — remove the totals row from the template first.
+- Tables with a totals row are supported: the totals row stays directly below the data body, keeping its labels, functions and styling. Totals formulas written as explicit ranges (e.g. `SUM(B2:B5)`) are not rewritten.
 - Strings starting with `=` are written as formulas; pass `FillXLConfig(escape_formulas=True)` for untrusted data.
 
 ---

@@ -19,7 +19,7 @@ table-filling workflow, edge cases, and style preservation.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import openpyxl
 import pytest
@@ -236,7 +236,7 @@ class TestTableEdgeCases:
             fill(
                 template=simple_table_template,
                 output=output_path,
-                tables={"SimpleTable": "not tabular data"},
+                tables={"SimpleTable": cast(Any, "not tabular data")},
             )
 
     def test_table_growth_is_blocked_when_it_would_overwrite_existing_content(

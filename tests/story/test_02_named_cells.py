@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, cast
 import openpyxl
 import pytest
 
-from fillxl import fill
+from fillxl import FillXLConfig, fill
 from fillxl._cells import populate_named_cells
 from fillxl._types import Engine
 
@@ -241,13 +241,13 @@ class TestNamedCellFormatting:
 
 
 class TestFormulaStringsInNamedCells:
-    """Strings starting with '=' are written as Excel formulas."""
+    """Strings starting with '=' are written as Excel formulas when unescaped."""
 
     def test_a_formula_string_is_written_as_an_excel_formula(
         self,
         output_path: Path,
     ) -> None:
-        """Pass '=1+2' and the cell stores it as a formula, not a literal."""
+        """Pass '=1+2' with escaping disabled and the cell stores a formula."""
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Data"
@@ -261,7 +261,12 @@ class TestFormulaStringsInNamedCells:
         wb.save(tmpl)
         wb.close()
 
-        fill(template=tmpl, output=output_path, values={"total": "=A1+B1"})
+        fill(
+            template=tmpl,
+            output=output_path,
+            values={"total": "=A1+B1"},
+            config=FillXLConfig(escape_formulas=False),
+        )
 
         wb2 = openpyxl.load_workbook(output_path)
         try:

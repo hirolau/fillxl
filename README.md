@@ -98,9 +98,9 @@ fill(
     template: str | Path,
     output: str | Path,
     values: dict[str, Any] | None = None,
-    tables: dict[str, list[dict] | DataFrame | ...] | None = None,
+    tables: dict[str, TabularData] | None = None,
     *,
-    engine: str = "auto",      # "openpyxl", "win32com"
+    engine: Engine = "auto",   # "auto", "openpyxl", "win32com"
     config: FillXLConfig | None = None
 ) -> Path
 ```
@@ -112,10 +112,32 @@ See the full documentation for `FillXLConfig` options.
 ## Supported Data Sources
 
 - `list[dict]`
-- `dict[str, list]`
+- `dict[str, sequence]` (lists, tuples, NumPy arrays, pandas/polars Series)
+- `[]` or `{}` (empty data — clears the table)
 - `pandas.DataFrame`
 - `polars.DataFrame`
 - `duckdb.DuckDBPyRelation`
+
+---
+
+## Values
+
+Non-empty strings are always stored as text — `"00123"` stays `"00123"`
+rather than becoming the number `123`, in both engines. Strings starting with
+`=` are kept as literal text by default, so untrusted data cannot inject
+formulas; pass `FillXLConfig(escape_formulas=False)` when the input is trusted
+and is meant to contain formulas.
+
+| Python value | Written to Excel as |
+|--------------|---------------------|
+| `str` | text (error-like strings such as `"#N/A"` included) |
+| `""` | empty cell (openpyxl cannot round-trip an empty text cell) |
+| `int`, `float`, `Decimal`, NumPy scalars | number |
+| `bool` | boolean |
+| `date`, `time`, `datetime` | date/time serial (timezone stripped) |
+| `timedelta` | fraction of a day |
+| `None`, `NaN`, `pd.NA`, `pd.NaT` | empty cell |
+| `"=SUM(A1:A2)"` | literal text (formula with `escape_formulas=False`) |
 
 ---
 
@@ -124,7 +146,11 @@ See the full documentation for `FillXLConfig` options.
 | Engine     | Cross-platform | Requires Excel | Best for                     |
 |------------|----------------|----------------|------------------------------|
 | `openpyxl` | Yes            | No             | Most use cases, Linux/macOS  |
-| `win32com` | Windows only   | Yes            | Modern charts, full fidelity |
+| `win32com` | Windows only   | Yes            | `.xlsm`/`.xlsb`, modern charts |
+
+Both engines write the same values for the same input; the test suite enforces
+this with a cross-backend equivalence suite. See [Backends](backends.md) for the
+engine-specific details.
 
 ---
 
@@ -144,7 +170,9 @@ Benchmark: **5,000 rows × 20 columns** (list[dict] data).
 
 - `openpyxl` does not support dynamic arrays, `.xlsm`, or `.xlsb` files and drops some modern chart types.
 - `win32com` requires Windows + Excel.
-- Timezone-aware datetimes are converted to naive.
+- Timezone-aware datetimes are converted to naive (wall-clock preserved).
+- Tables with a totals row are supported: the totals row stays directly below the data body, keeping its labels, functions and styling. Totals formulas written as explicit ranges (e.g. `SUM(B2:B5)`) are not rewritten.
+- Strings starting with `=` are written as literal text by default; pass `FillXLConfig(escape_formulas=False)` only when the data is trusted and meant to contain formulas.
 
 ---
 
@@ -161,5 +189,7 @@ uv sync --all-extras
 uv run pytest
 ```
 
-**Supported:** Python 3.11–3.14, Windows/Linux (macOS best-effort).  
+**Supported:** Python 3.11–3.15, Windows/Linux (macOS best-effort).  
+**Data backends:** pandas 2–3, polars 0.20–2, duckdb 1.x (duckdb has no
+Python 3.15 wheels yet, so its extra is limited to Python ≤3.14).  
 **License:** [MIT](LICENSE)

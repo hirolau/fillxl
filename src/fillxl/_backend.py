@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, get_args, runtime_checkable
 from fillxl._types import Engine
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from fillxl._charts import TableChangeSpecs
@@ -33,12 +34,13 @@ class Backend(Protocol):
         """
         ...
 
-    def fill_named_cell(self, name: str, value: Any) -> None:  # noqa: ANN401
+    def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.
 
         Args:
             name: Name of the named cell / defined name.
             value: Scalar value to write.
+            config: Global fill configuration.
 
         """
         ...
@@ -57,7 +59,7 @@ class Backend(Protocol):
             config: Global fill configuration.
 
         Returns:
-            A :class:`TableChangeSpecs` describing the old and new table
+            A :class:`TableChangeSpecs` describing the table's old and new
             dimensions (so chart references can be updated).
 
         """
@@ -85,7 +87,7 @@ class Backend(Protocol):
         """
         ...
 
-    def delete_sheets(self, names: list[str]) -> None:
+    def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the worksheets named in *names*.
 
         Args:

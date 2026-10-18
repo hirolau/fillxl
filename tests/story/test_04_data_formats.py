@@ -120,11 +120,7 @@ class TestPythonBuiltInFormats:
         self,
         output_path: Path,
     ) -> None:
-        """Passing dict[str, list] with empty lists clears all data rows.
-
-        Note: a plain empty list [] is NOT recognised as tabular data —
-        you must use the dict-of-lists format for the empty case.
-        """
+        """Passing dict[str, list] with empty lists clears all data rows."""
         _make_simple_table(output_path.with_name("tmpl.xlsx"))
 
         fill(
@@ -138,6 +134,28 @@ class TestPythonBuiltInFormats:
             ws = wb["Sheet1"]
             assert ws["A1"].value == "Name"  # header
             assert ws["A2"].value is None  # cleared
+        finally:
+            wb.close()
+
+    def test_empty_list_clears_the_table(
+        self,
+        output_path: Path,
+    ) -> None:
+        """A plain empty list is valid tabular data with no rows or columns."""
+        _make_simple_table(output_path.with_name("tmpl.xlsx"))
+
+        fill(
+            template=output_path.with_name("tmpl.xlsx"),
+            output=output_path,
+            tables={"Data": []},
+        )
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            ws = wb["Sheet1"]
+            assert ws["A1"].value == "Name"  # header
+            assert ws["A2"].value is None  # cleared
+            assert wb["Sheet1"].tables["Data"].ref == "A1:B2"
         finally:
             wb.close()
 
@@ -327,8 +345,8 @@ class TestTabularAdapterInternals:
         assert list(adapter.rows) == [[1, 2], [3, 4]]
 
     def test_adapter_raises_typeerror_for_unsupported_types(self) -> None:
-        """An empty list or wrong-shaped dict raises TypeError."""
-        with pytest.raises(TypeError):
-            TabularAdapter([])
+        """A wrong-shaped dict raises TypeError; empty payloads are valid."""
+        assert TabularAdapter([]).rows == []
+        assert TabularAdapter({}).rows == []
         with pytest.raises(TypeError):
             TabularAdapter({"a": 1})

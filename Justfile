@@ -3,7 +3,8 @@
 # Use `just <recipe>` to run a task.
 # `just` alone lists available recipes.
 
-set shell := ["powershell.exe", "-c"]
+# PowerShell on Windows, the platform default (sh) elsewhere.
+set windows-shell := ["powershell.exe", "-c"]
 
 # Run CI test subset (no Excel required)
 test:

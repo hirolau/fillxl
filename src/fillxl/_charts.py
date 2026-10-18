@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
 
     from openpyxl.workbook.workbook import Workbook
 
-from openpyxl.utils import column_index_from_string
+from openpyxl.worksheet.cell_range import CellRange
 
 logger = logging.getLogger(__name__)
 
@@ -26,16 +27,77 @@ _R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 class TableChangeSpecs(NamedTuple):
     """Specification for a table range change.
 
+    All row and column numbers are absolute worksheet coordinates and
+    ``header_row`` is the row that holds the column headers, so the first
+    data row is always ``header_row + 1``.  ``old_last_row`` and
+    ``new_last_row`` are the last rows of the table's *data body*, which is
+    what chart data ranges are compared against.  A totals row, if the table
+    has one, sits below ``new_last_row`` and is not included.  Empty data
+    still leaves one blank body row (Excel requires it), so a table with no
+    data rows has ``new_last_row == header_row + 1``.
+
     Attributes:
-        old_ref: Original table reference (e.g., "B12:M13")
-        new_ref: New table reference after resizing (e.g., "B12:M20")
-        worksheet_title: Title of the worksheet containing the table
+        worksheet_title: Title of the worksheet containing the table.
+        header_row: Row number of the table header.
+        first_col: 1-based index of the table's first column.
+        last_col: 1-based index of the table's last column.
+        old_last_row: Last data row of the table before the fill.
+        new_last_row: Last data row of the table after the fill.
+
+    Examples:
+        >>> spec = TableChangeSpecs("Sheet1", 12, 2, 13, 13, 20)
+        >>> spec.first_data_row
+        13
+        >>> spec.old_ref
+        'B12:M13'
+        >>> spec.new_ref
+        'B12:M20'
 
     """
 
-    old_ref: str
-    new_ref: str
     worksheet_title: str
+    header_row: int
+    first_col: int
+    last_col: int
+    old_last_row: int
+    new_last_row: int
+
+    @property
+    def first_data_row(self) -> int:
+        """Row number of the first data row (the row below the header)."""
+        return self.header_row + 1
+
+    @property
+    def old_ref(self) -> str:
+        """The table's reference before the fill (e.g. ``B12:M13``)."""
+        return _format_ref(self.first_col, self.header_row, self.last_col, self.old_last_row)
+
+    @property
+    def new_ref(self) -> str:
+        """The table's reference after the fill (e.g. ``B12:M20``)."""
+        return _format_ref(self.first_col, self.header_row, self.last_col, self.new_last_row)
+
+
+def _format_ref(first_col: int, first_row: int, last_col: int, last_row: int) -> str:
+    """Format a 1-based rectangle as an A1-style reference."""
+    from openpyxl.utils import get_column_letter
+
+    return f"{get_column_letter(first_col)}{first_row}:{get_column_letter(last_col)}{last_row}"
+
+
+def _unquote_sheet_name(sheet_name: str) -> str:
+    """Strip the quoting Excel adds around sheet names.
+
+    Examples:
+        >>> _unquote_sheet_name("'My Sheet'")
+        'My Sheet'
+        >>> _unquote_sheet_name("Data")
+        'Data'
+
+    """
+    if len(sheet_name) >= 2 and sheet_name.startswith("'") and sheet_name.endswith("'"):
+        return sheet_name[1:-1].replace("''", "'")
+    return sheet_name
 
 
 def all_chart_series(workbook: Workbook) -> Generator[Any, None, None]:
@@ -86,8 +148,12 @@ def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None
     When a table's row count changes, charts that reference that table need their
     data ranges updated to match the new table dimensions.
 
+    Only references that point at the table's *data body* — that is, ranges
+    starting one row below the header, ending at the table's last data row,
+    and within the table's columns — are updated.
+
     Args:
-        spec: TableChangeSpecs describing the old and new table references
+        spec: TableChangeSpecs describing the old and new table dimensions
         workbook: openpyxl Workbook instance
 
     """
@@ -97,57 +163,23 @@ def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None
             if not ref:
                 continue
 
-            # Check if this reference is from the correct worksheet
-            if not ref.replace("'", "").startswith(spec.worksheet_title.replace("'", "")):
+            new_ref = _update_series_reference(ref, spec)
+            if new_ref is None or new_ref == ref:
                 continue
 
-            # Parse the reference (e.g., "Sheet1!$B$13:$B$20")
-            ref_start = ref.split("!")[-1].split(":")[0]
-            ref_end_row = int(ref.split("$")[-1])
-            _, ref_start_column, ref_start_row = ref_start.split("$")
-            ref_start_row = int(ref_start_row)
-
-            # Parse the old table reference
-            table_start_row = int("".join([x for x in spec.old_ref.split(":")[0] if x.isdigit()]))
-            old_ref_end_row = int("".join([x for x in spec.old_ref.split(":")[1] if x.isdigit()]))
-
-            # Check if the reference starts one row after the table header
-            # (i.e., it's referencing the data rows, not the header)
-            if ref_start_row - table_start_row != 1:
-                continue
-
-            # Check if the column is within the table column range
-            table_start_col_digit, table_end_col_digit = [
-                column_index_from_string("".join(letter for letter in x if not letter.isdigit()))
-                for x in spec.old_ref.split(":")
-            ]
-            ref_start_column_digit = column_index_from_string(ref_start_column)
-
-            if not (table_start_col_digit <= ref_start_column_digit <= table_end_col_digit):
-                continue
-
-            # Check if the reference end row matches the old table end row
-            if old_ref_end_row != ref_end_row:
-                continue
-
-            # Calculate the new end row from the new table reference
-            new_end_row = int("".join([x for x in spec.new_ref.split(":")[1] if x.isdigit()]))
-
-            # Update the reference (preserve the trailing "$" before the row number)
-            new_data_ref = "$".join(ref.split("$")[:-1]) + "$" + str(new_end_row)
-            reference.f = new_data_ref
+            reference.f = new_ref
 
             # Update the cached data point count to match the new range.
             # openpyxl does not update these automatically, and leaving stale
             # ptCount values can cause Excel to drop axis labels (especially
             # for Area charts).
-            new_pt_count = new_end_row - ref_start_row + 1
+            new_pt_count = spec.new_last_row - spec.first_data_row + 1
             if hasattr(reference, "strCache") and reference.strCache is not None:
                 reference.strCache.ptCount = new_pt_count
             if hasattr(reference, "numCache") and reference.numCache is not None:
                 reference.numCache.ptCount = new_pt_count
 
-            logger.debug("Updated chart reference: %s -> %s", ref, new_data_ref)
+            logger.debug("Updated chart reference: %s -> %s", ref, new_ref)
 
         except Exception:
             logger.exception(
@@ -157,6 +189,51 @@ def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None
                     "worksheet": spec.worksheet_title,
                 },
             )
+
+
+def _update_series_reference(ref: str, spec: TableChangeSpecs) -> str | None:
+    """Return *ref* with its end row updated, or ``None`` if it does not match.
+
+    Args:
+        ref: A chart series reference, e.g. ``'My Sheet'!$B$13:$B$13``.
+        spec: The table change to apply.
+
+    Returns:
+        The updated reference, or ``None`` when the reference does not point
+        at the table's data body.
+
+    Examples:
+        >>> spec = TableChangeSpecs("Data", 12, 2, 13, 13, 20)
+        >>> _update_series_reference("Data!$B$13:$B$13", spec)
+        'Data!$B$13:$B$20'
+        >>> _update_series_reference("Data2!$B$13:$B$13", spec) is None
+        True
+        >>> _update_series_reference("Data!$B$12:$B$13", spec) is None
+        True
+        >>> _update_series_reference("Data!$B$13:$B$40", spec) is None
+        True
+
+    """
+    sheet_name, separator, cell_ref = ref.rpartition("!")
+    if not separator or _unquote_sheet_name(sheet_name) != spec.worksheet_title:
+        return None
+
+    # A reference may cover several areas: "$B$13:$B$13 $D$13:$D$13".
+    areas = cell_ref.split()
+    updated = False
+    for index, area in enumerate(areas):
+        cell_range = CellRange(area)
+        if cell_range.min_row != spec.first_data_row or cell_range.max_row != spec.old_last_row:
+            continue
+        if cell_range.min_col < spec.first_col or cell_range.max_col > spec.last_col:
+            continue
+        # Replace only the trailing row number, preserving "$" prefixes.
+        areas[index] = re.sub(r"\d+$", str(spec.new_last_row), area)
+        updated = True
+
+    if not updated:
+        return None
+    return f"{sheet_name}!{' '.join(areas)}"
 
 
 def detect_unsupported_chart_sheets(path: Path) -> list[str]:

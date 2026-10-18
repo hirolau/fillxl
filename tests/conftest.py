@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
+import time
+import zipfile
 from collections.abc import Generator
+from datetime import datetime
 from pathlib import Path
 
 import openpyxl
 import pytest
 import xlwings as xw
+from freezegun import freeze_time
 from openpyxl.chart import (
     AreaChart,
     BarChart,
@@ -51,6 +56,60 @@ def read_output(path: Path) -> openpyxl.Workbook:
 def output_path(tmp_path: Path) -> Path:
     """Return a temporary output path for each test."""
     return tmp_path / "output.xlsx"
+
+
+@pytest.fixture
+def frozen_clock(monkeypatch: pytest.MonkeyPatch) -> Generator[datetime, None, None]:
+    """Freeze the clock *and* pin every zip-entry timestamp for one test.
+
+    Writing a workbook records a timestamp in every zip entry, which makes
+    "the same fill twice produces the same bytes" flaky: zip timestamps have
+    two-second resolution, so two fills straddling a boundary differ.
+
+    ``freezegun`` covers ``ZipFile.writestr``, which stamps entries from
+    ``time.localtime(time.time())``.  It does *not* cover ``ZipFile.write``,
+    which openpyxl uses for worksheet XML: that path stamps the entry from the
+    modification time of a temporary file (``ZipInfo.from_file``), so the real
+    clock leaks in through a second door.  Both sources are pinned here.
+
+    Yields:
+        The frozen wall-clock time.  The instant is deliberately far in the
+        past, so a real-clock leak cannot coincidentally match it.
+
+    """
+    moment = datetime(2001, 2, 3, 4, 5, 6)
+    with freeze_time(moment):
+        # Whatever the machine's UTC offset, `writestr` will stamp entries with
+        # the frozen instant rendered in local time — so pin `from_file` to the
+        # very same value and every entry in the archive agrees.
+        local = time.localtime(time.time())
+        stamp = (
+            local.tm_year,
+            local.tm_mon,
+            local.tm_mday,
+            local.tm_hour,
+            local.tm_min,
+            local.tm_sec,
+        )
+        original_from_file = zipfile.ZipInfo.__dict__["from_file"]
+
+        def frozen_from_file(
+            filename: str | os.PathLike[str],
+            arcname: str | None = None,
+            strict_timestamps: bool = True,
+        ) -> zipfile.ZipInfo:
+            """Like ``ZipInfo.from_file``, but stamped from the frozen clock."""
+            zinfo: zipfile.ZipInfo = original_from_file.__func__(
+                zipfile.ZipInfo,
+                filename,
+                arcname,
+                strict_timestamps=strict_timestamps,
+            )
+            zinfo.date_time = stamp
+            return zinfo
+
+        monkeypatch.setattr(zipfile.ZipInfo, "from_file", frozen_from_file)
+        yield moment
 
 
 @pytest.fixture

@@ -3,8 +3,9 @@
 Tests every major version of each optional data backend from the minimum
 supported version to the latest, ensuring backward compatibility.
 
-Version-matrix sessions install the *minimum* supported major version and the
-*latest* available version separately to catch regressions.
+Version-matrix sessions install the *minimum* supported version, the *latest*
+version from ``uv.lock``, and any explicitly pinned majors (for example
+polars 2) separately to catch regressions.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ nox.options.reuse_existing_virtualenvs = True
 # Avoid hardlink failures when cache and .nox are on different drives
 os.environ.setdefault("UV_LINK_MODE", "copy")
 
-PYTHONS = ["3.11", "3.12", "3.13", "3.14"]
+PYTHONS = ["3.11", "3.12", "3.13", "3.14", "3.15"]
 _ENV = {"UV_LINK_MODE": "copy"}
 
 
@@ -153,3 +154,14 @@ for _label, _extra, _min_pin, _keyword in _DATA_BACKENDS:
 # Convenience aliases without suffix → latest
 for _label, _extra, _min_pin, _keyword in _DATA_BACKENDS:
     _make_version_session(_label, _extra, "", _keyword)
+
+# Additional major-version sessions for backends with more than one supported
+# release line.  The "-latest" sessions follow uv.lock; pinning a major here
+# keeps that version covered even when the lock moves on.
+_EXTRA_MAJOR_SESSIONS: list[tuple[str, str, str, str]] = [
+    # (label, extra, pin, pytest_keyword)
+    ("polars-2", "polars", ">=2,<3", "polars"),
+]
+
+for _label, _extra, _pin, _keyword in _EXTRA_MAJOR_SESSIONS:
+    _make_version_session(_label, _extra, _pin, _keyword)

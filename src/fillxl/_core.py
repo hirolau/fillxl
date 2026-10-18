@@ -13,7 +13,7 @@ from fillxl._config import FillXLConfig
 from fillxl._normalize import reset_tz_warning_state
 
 if TYPE_CHECKING:
-    from fillxl._types import Engine, PathLike
+    from fillxl._types import Engine, PathLike, TabularData
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def fill(
     template: PathLike,
     output: PathLike,
     values: dict[str, Any] | None = None,
-    tables: dict[str, Any] | None = None,
+    tables: dict[str, TabularData] | None = None,
     *,
     engine: Engine = "auto",
     config: FillXLConfig | None = None,
@@ -31,7 +31,8 @@ def fill(
 
     Accepts separate mappings for table data (``tables``) and named-cell
     values (``values``).  Tabular data can be any of the supported formats
-    (pandas/polars/duckdb DataFrames, ``list[dict]``, or ``dict[str, list]``).
+    (pandas/polars/duckdb DataFrames, ``list[dict]``, or
+    ``dict[str, sequence]``).
 
     Args:
         template: Path to the Excel template file.
@@ -40,7 +41,9 @@ def fill(
         values: Mapping of named cell / defined name to scalar values.
         engine: Backend engine to use (``"auto"``, ``"openpyxl"``, or
             ``"win32com"``).  Defaults to ``"auto"``, which selects the
-            best available backend for the current platform.
+            openpyxl backend.  Pass ``engine="win32com"`` explicitly to drive
+            Microsoft Excel through COM (Windows only, needed for
+            ``.xlsm``/``.xlsb`` templates and for modern chart types).
         config: Configuration options.  Uses :class:`FillXLConfig` defaults
             if not provided.
 
@@ -81,13 +84,18 @@ def fill(
         shutil.copy2(template_path, temp_template_path)
 
         backend = get_backend(engine)
-        backend.load(temp_template_path)
 
         try:
+            # Loading happens inside the try block: if opening the template
+            # fails (missing file, locked file, password prompt), the finally
+            # clause still closes the backend.  Otherwise a hidden EXCEL.EXE
+            # would be left running.
+            backend.load(temp_template_path)
+
             # 1. Fill named cells with scalar values
             if values:
                 for name, value in values.items():
-                    backend.fill_named_cell(name, value)
+                    backend.fill_named_cell(name, value, cfg)
                 logger.debug("Filled %d named cell(s)", len(values))
 
             # 2. Fill tables and update chart references
@@ -122,4 +130,4 @@ def fill(
         finally:
             backend.close()
 
-    return output_path
+    return output_path.resolve()

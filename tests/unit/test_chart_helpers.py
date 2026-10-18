@@ -103,6 +103,7 @@ class TestUpdateChartDataRanges:
         charts_template: Path,
     ) -> None:
         """A chart series referencing a manual range (not table-bound) is not updated."""
+        from fillxl._adapters import TabularAdapter
         from fillxl._charts import update_chart_data_ranges
         from fillxl._tables import populate_table
 
@@ -111,13 +112,15 @@ class TestUpdateChartDataRanges:
             spec = populate_table(
                 wb,
                 "TableTest",
-                [
-                    {"Col1": "a", "Col2": 1, "ColNotFilled": "x"},
-                    {"Col1": "b", "Col2": 2, "ColNotFilled": "y"},
-                    {"Col1": "c", "Col2": 3, "ColNotFilled": "z"},
-                    {"Col1": "d", "Col2": 4, "ColNotFilled": "w"},
-                    {"Col1": "e", "Col2": 5, "ColNotFilled": "v"},
-                ],
+                TabularAdapter(
+                    [
+                        {"Col1": "a", "Col2": 1, "ColNotFilled": "x"},
+                        {"Col1": "b", "Col2": 2, "ColNotFilled": "y"},
+                        {"Col1": "c", "Col2": 3, "ColNotFilled": "z"},
+                        {"Col1": "d", "Col2": 4, "ColNotFilled": "w"},
+                        {"Col1": "e", "Col2": 5, "ColNotFilled": "v"},
+                    ]
+                ),
             )
             update_chart_data_ranges(spec, wb)
 
@@ -140,9 +143,12 @@ class TestUpdateChartDataRanges:
         wb = openpyxl.load_workbook(charts_template)
         try:
             spec = TableChangeSpecs(
-                old_ref="A1:B5",
-                new_ref="A1:B10",
                 worksheet_title="NonExistentSheet",
+                header_row=1,
+                first_col=1,
+                last_col=2,
+                old_last_row=5,
+                new_last_row=10,
             )
             update_chart_data_ranges(spec, wb)
         finally:
@@ -164,9 +170,12 @@ class TestUpdateChartDataRanges:
             refs_before = {(r.f, id(r)) for r in all_chart_series_references(wb)}
 
             spec = TableChangeSpecs(
-                old_ref="A1:B5",
-                new_ref="A1:B5",
                 worksheet_title="TestTable",
+                header_row=1,
+                first_col=1,
+                last_col=2,
+                old_last_row=5,
+                new_last_row=5,
             )
             update_chart_data_ranges(spec, wb)
 
@@ -192,9 +201,12 @@ class TestUpdateChartDataRanges:
                             ser.val.numRef.f = None
 
             spec = TableChangeSpecs(
-                old_ref="A1:B5",
-                new_ref="A1:B6",
                 worksheet_title="TestTable",
+                header_row=1,
+                first_col=1,
+                last_col=2,
+                old_last_row=5,
+                new_last_row=6,
             )
             update_chart_data_ranges(spec, wb)
         finally:
@@ -210,11 +222,55 @@ class TestUpdateChartDataRanges:
         wb = openpyxl.load_workbook(charts_template)
         try:
             spec = TableChangeSpecs(
-                old_ref="A1:E5",
-                new_ref="A1:E10",
                 worksheet_title="TestTable",
+                header_row=1,
+                first_col=1,
+                last_col=5,
+                old_last_row=5,
+                new_last_row=10,
             )
             update_chart_data_ranges(spec, wb)
+        finally:
+            wb.close()
+
+    def test_update_chart_data_ranges_handles_refs_without_dollar_signs(
+        self,
+        charts_template: Path,
+    ) -> None:
+        """Refs without "$" separators are parsed and updated, not skipped."""
+        from fillxl._charts import (
+            TableChangeSpecs,
+            all_chart_series_references,
+            update_chart_data_ranges,
+        )
+
+        wb = openpyxl.load_workbook(charts_template)
+        try:
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                for chart in getattr(ws, "_charts", []):
+                    for ser in chart.ser:
+                        for label in ("cat", "val", "xVal", "yVal"):
+                            item = getattr(ser, label, None)
+                            if item is None:
+                                continue
+                            for ref_type in ("strRef", "numRef"):
+                                ref = getattr(item, ref_type, None)
+                                if ref is not None and ref.f:
+                                    ref.f = ref.f.replace("$", "")
+
+            spec = TableChangeSpecs(
+                worksheet_title="TestTable",
+                header_row=1,
+                first_col=1,
+                last_col=2,
+                old_last_row=5,
+                new_last_row=10,
+            )
+            update_chart_data_ranges(spec, wb)
+
+            updated_refs = [r.f for r in all_chart_series_references(wb) if r.f]
+            assert any(r.endswith("10") for r in updated_refs), updated_refs
         finally:
             wb.close()
 
@@ -223,7 +279,7 @@ class TestUpdateChartDataRanges:
         charts_template: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """When a chart reference causes a parse error, the exception is logged."""
+        """When a chart reference cannot be parsed, the exception is logged."""
         import logging
 
         from fillxl._charts import (
@@ -244,14 +300,17 @@ class TestUpdateChartDataRanges:
                             for ref_type in ("strRef", "numRef"):
                                 ref = getattr(item, ref_type, None)
                                 if ref is not None and ref.f:
-                                    ref.f = ref.f.replace("$", "")
+                                    ref.f = "TestTable!not-a-range"
 
             caplog.set_level(logging.DEBUG)
 
             spec = TableChangeSpecs(
-                old_ref="A1:B5",
-                new_ref="A1:B10",
                 worksheet_title="TestTable",
+                header_row=1,
+                first_col=1,
+                last_col=2,
+                old_last_row=5,
+                new_last_row=10,
             )
             update_chart_data_ranges(spec, wb)
 
@@ -304,9 +363,12 @@ class TestUpdateChartDataRanges:
         ws.add_table(table)
 
         spec = TableChangeSpecs(
-            old_ref="A1:B5",
-            new_ref="A1:B10",
             worksheet_title="Data",
+            header_row=1,
+            first_col=1,
+            last_col=2,
+            old_last_row=5,
+            new_last_row=10,
         )
         update_chart_data_ranges(spec, wb)
 
@@ -314,6 +376,82 @@ class TestUpdateChartDataRanges:
         for r in refs:
             end_row = int("".join(ch for ch in r.split("$")[-1] if ch.isdigit()))
             assert end_row == 10, f"Expected end_row=10, got {end_row} in {r}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# win32com series formulas
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestWin32ComSeriesFormula:
+    """The COM chart updater parses references instead of matching substrings."""
+
+    def test_a_sheet_whose_name_starts_with_the_table_sheet_is_untouched(self) -> None:
+        """A chart on "Data2" must not follow a fill of "Data"."""
+        from fillxl._backends._win32com import _update_series_formula
+        from fillxl._charts import TableChangeSpecs
+
+        spec = TableChangeSpecs("Data", 12, 2, 3, 13, 20)
+        assert _update_series_formula("=SERIES(T,'Data2'!$B$13:$B$13,1)", spec) is None
+
+    def test_a_reference_to_the_table_body_is_updated(self) -> None:
+        """Data-body references grow to the new last row."""
+        from fillxl._backends._win32com import _update_series_formula
+        from fillxl._charts import TableChangeSpecs
+
+        spec = TableChangeSpecs("Data", 12, 2, 3, 13, 20)
+        formula = "=SERIES(Title,'Data'!$B$13:$B$13,'Data'!$C$13:$C$13,1)"
+        assert (
+            _update_series_formula(formula, spec)
+            == "=SERIES(Title,'Data'!$B$13:$B$20,'Data'!$C$13:$C$20,1)"
+        )
+
+    def test_a_reference_to_the_header_is_not_updated(self) -> None:
+        """A series-name reference to the header stays put; data refs grow."""
+        from fillxl._backends._win32com import _update_series_formula
+        from fillxl._charts import TableChangeSpecs
+
+        spec = TableChangeSpecs("Data", 12, 2, 3, 13, 20)
+        assert (
+            _update_series_formula("=SERIES('Data'!$C$12,'Data'!$B$13:$B$13,1)", spec)
+            == "=SERIES('Data'!$C$12,'Data'!$B$13:$B$20,1)"
+        )
+
+    def test_a_reference_ending_elsewhere_is_not_updated(self) -> None:
+        """Only references that end at the old last row are resized."""
+        from fillxl._backends._win32com import _update_series_formula
+        from fillxl._charts import TableChangeSpecs
+
+        spec = TableChangeSpecs("Data", 12, 2, 3, 13, 20)
+        assert _update_series_formula("=SERIES(T,'Data'!$B$13:$B$40,1)", spec) is None
+
+    def test_references_without_dollar_signs_are_still_updated(self) -> None:
+        """Refs are parsed, so "$"-less references work too."""
+        from fillxl._backends._win32com import _update_series_formula
+        from fillxl._charts import TableChangeSpecs
+
+        spec = TableChangeSpecs("Data", 12, 2, 3, 13, 20)
+        updated = _update_series_formula("=SERIES(T,Data!B13:B13,1)", spec)
+        assert updated == "=SERIES(T,Data!B13:B20,1)"
+
+    def test_a_quoted_sheet_name_with_spaces_is_matched_exactly(self) -> None:
+        """Quoted sheet names are unquoted before comparing."""
+        from fillxl._backends._win32com import _update_series_formula
+        from fillxl._charts import TableChangeSpecs
+
+        spec = TableChangeSpecs("My Sheet", 12, 2, 3, 13, 20)
+        assert (
+            _update_series_formula("=SERIES(T,'My Sheet'!$B$13:$B$13,1)", spec)
+            == "=SERIES(T,'My Sheet'!$B$13:$B$20,1)"
+        )
+
+    def test_an_unparseable_reference_is_skipped(self) -> None:
+        """A formula with a broken range reference is returned unchanged."""
+        from fillxl._backends._win32com import _update_series_formula
+        from fillxl._charts import TableChangeSpecs
+
+        spec = TableChangeSpecs("Data", 12, 2, 3, 13, 20)
+        assert _update_series_formula("=SERIES(T,'Data'!$B$:B$13,1)", spec) is None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

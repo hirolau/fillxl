@@ -1,7 +1,8 @@
 """Core fill() integration tests — unique coverage not in story suite.
 
-Tests behaviours that the story tests don't cover: idempotency.
-Nested output directory creation is covered by ``tests/story/test_01_basics.py``.
+Tests behaviours that the story tests don't cover: idempotency and resource
+cleanup.  Nested output directory creation is covered by
+``tests/story/test_01_basics.py``.
 """
 
 from __future__ import annotations
@@ -10,12 +11,80 @@ from copy import deepcopy
 from typing import TYPE_CHECKING
 
 import openpyxl
+import pytest
+from openpyxl.workbook.defined_name import DefinedName
 
 from fillxl import fill
 from tests.conftest import TEMPLATE
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class TestBackendCleanup:
+    """The backend is always closed, even when something fails."""
+
+    def test_the_backend_is_closed_when_the_template_cannot_be_opened(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failed load() must not leak the backend.
+
+        For the win32com engine an unclosed backend means a hidden EXCEL.EXE
+        keeps running after the error.
+        """
+        import fillxl._core
+
+        closed: list[str] = []
+
+        class ExplodingBackend:
+            def load(self, path: Path) -> None:
+                raise OSError("cannot open the template")
+
+            def close(self) -> None:
+                closed.append("closed")
+
+        monkeypatch.setattr(
+            fillxl._core,
+            "get_backend",
+            lambda _engine: ExplodingBackend(),  # pyrefly: ignore[implicit-any-lambda]
+        )
+
+        template = tmp_path / "template.xlsx"
+        template.write_bytes(b"not a workbook at all")
+
+        with pytest.raises(OSError, match="cannot open"):
+            fill(template=template, output=tmp_path / "out.xlsx")
+
+        assert closed == ["closed"]
+
+
+class TestNamedCellScope:
+    """Defined names are resolved the same way in both engines."""
+
+    def test_a_sheet_scoped_defined_name_can_be_filled(self, output_path: Path) -> None:
+        """Sheet-scoped names live on the worksheet, not on the workbook.
+
+        win32com resolves them through ``Workbook.Names``; the openpyxl
+        backend has to look at ``worksheet.defined_names`` as well.
+        """
+        template = output_path.with_name("sheet_scoped.xlsx")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws["B2"] = "old"
+        ws.defined_names.add(DefinedName("scoped_title", attr_text="Data!$B$2"))
+        wb.save(template)
+        wb.close()
+
+        fill(template=template, output=output_path, values={"scoped_title": "Scoped"})
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            assert wb["Data"]["B2"].value == "Scoped"
+        finally:
+            wb.close()
 
 
 def test_fill_is_idempotent_when_applied_twice(output_path: Path) -> None:

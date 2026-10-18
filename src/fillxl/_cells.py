@@ -5,21 +5,42 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from fillxl._normalize import normalize_value
+from openpyxl.worksheet.worksheet import Worksheet
+
+from fillxl._normalize import is_text_cell_value, prepare_cell_value
 
 if TYPE_CHECKING:
+    from openpyxl.workbook.defined_name import DefinedName
     from openpyxl.workbook.workbook import Workbook
 
 logger = logging.getLogger(__name__)
 
 
-def _normalise_value(value: Any) -> Any:  # noqa: ANN401
-    """Normalise a scalar value for Excel compatibility.
+def find_defined_name(workbook: Workbook, name: str) -> DefinedName | None:
+    """Find a defined name, including names scoped to a single sheet.
 
-    Delegates to :func:`~fillxl._normalize.normalize_value` (which strips
-    timezone info from datetimes and converts custom objects to ``str``).
+    ``Workbook.defined_names`` only holds workbook-global names; names scoped
+    to a sheet live on that sheet (``Worksheet.defined_names``).  Looking in
+    both keeps the openpyxl backend in step with win32com, which resolves
+    sheet-scoped names through ``Workbook.Names``.
+
+    Args:
+        workbook: openpyxl Workbook instance
+        name: Defined name to look up
+
+    Returns:
+        The :class:`~openpyxl.workbook.defined_name.DefinedName`, or ``None``.
+
     """
-    return normalize_value(value)
+    if name in workbook.defined_names:
+        return workbook.defined_names[name]
+
+    for worksheet in workbook.worksheets:
+        scoped_names = worksheet.defined_names
+        if name in scoped_names:
+            return scoped_names[name]
+
+    return None
 
 
 def populate_named_cells(
@@ -27,6 +48,7 @@ def populate_named_cells(
     cells: dict[str, Any],
     *,
     allow_missing: bool = False,
+    escape_formulas: bool = False,
 ) -> None:
     """Populate named cells with scalar values.
 
@@ -34,13 +56,16 @@ def populate_named_cells(
         workbook: openpyxl Workbook instance
         cells: Dictionary mapping named cell names to values
         allow_missing: If False, raise error if named cell is not found
+        escape_formulas: If True, strings starting with ``=`` are written as
+            literal text instead of becoming formulas.
 
     Raises:
         KeyError: If a named cell is not found and allow_missing is False
 
     """
     for name, value in cells.items():
-        if name not in workbook.defined_names:
+        defined_name = find_defined_name(workbook, name)
+        if defined_name is None:
             if allow_missing:
                 logger.warning("Named cell '%s' not found in workbook, skipping", name)
                 continue
@@ -48,10 +73,10 @@ def populate_named_cells(
             raise KeyError(msg)
 
         # Normalise value for Excel compatibility
-        normalised_value = _normalise_value(value)
+        normalised_value = prepare_cell_value(value)
 
         # Get the cell destinations for this defined name
-        destinations = list(workbook.defined_names[name].destinations)
+        destinations = list(defined_name.destinations)
         if not destinations:
             logger.warning("Named cell '%s' has no destinations, skipping", name)
             continue
@@ -73,10 +98,18 @@ def populate_named_cells(
             )
 
         worksheet = workbook[worksheet_name]
-        if not isinstance(worksheet, type(workbook.active)):
+        if not isinstance(worksheet, Worksheet):
             logger.warning("Worksheet '%s' is not a regular worksheet, skipping", worksheet_name)
             continue
-        worksheet[cell_address] = normalised_value
+
+        cell = worksheet[cell_address]
+        cell.value = normalised_value
+
+        # Force text for strings openpyxl would reinterpret: error values
+        # such as "#N/A", and formulas when escaping is enabled.
+        if is_text_cell_value(normalised_value, escape_formulas=escape_formulas):
+            cell.data_type = "s"
+
         logger.debug(
             "Set named cell '%s' (%s!%s) = %s",
             name,

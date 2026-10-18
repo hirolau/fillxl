@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import openpyxl
+import pytest
 
 from fillxl import FillXLConfig, fill
 from tests.conftest import TEMPLATE
@@ -81,5 +82,199 @@ def test_new_rows_do_not_inherit_styles_when_copy_table_styles_is_false(output_p
         assert new_row_fill.patternType is None, (
             f"Expected no fill pattern on new row, got {new_row_fill.patternType}"
         )
+    finally:
+        wb.close()
+
+
+def _build_totals_template(path: Path, *, data_rows: int) -> None:
+    """Create a one-table workbook whose table has a totals row."""
+    from openpyxl.styles import Font
+    from openpyxl.worksheet.filters import AutoFilter
+    from openpyxl.worksheet.table import Table, TableColumn
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws["A1"] = "Name"
+    ws["B1"] = "Value"
+    for offset in range(data_rows):
+        ws.cell(row=2 + offset, column=1, value=f"old{offset}")
+        ws.cell(row=2 + offset, column=2, value=offset)
+    totals_row = data_rows + 2
+    ws.cell(row=totals_row, column=1, value="Total").font = Font(bold=True)
+    ws.cell(row=totals_row, column=2, value="=SUBTOTAL(109,Totals[Value])")
+    ws.add_table(
+        Table(
+            displayName="Totals",
+            ref=f"A1:B{totals_row}",
+            autoFilter=AutoFilter(ref=f"A1:B{totals_row - 1}"),
+            tableColumns=[
+                TableColumn(id=1, name="Name", totalsRowLabel="Total"),
+                TableColumn(id=2, name="Value", totalsRowFunction="sum"),
+            ],
+            totalsRowCount=1,
+            totalsRowShown=True,
+        ),
+    )
+    wb.save(path)
+    wb.close()
+
+
+def test_a_totals_row_stays_below_the_new_data(output_path: Path) -> None:
+    """The data replaces the body and the totals row moves below it intact."""
+    template = output_path.with_name("totals.xlsx")
+    _build_totals_template(template, data_rows=1)
+
+    fill(
+        template=template,
+        output=output_path,
+        tables={"Totals": [{"Name": f"row{i}", "Value": i} for i in range(1, 4)]},
+    )
+
+    wb = openpyxl.load_workbook(output_path)
+    try:
+        ws = wb["Data"]
+        table = ws.tables["Totals"]
+
+        assert table.ref == "A1:B5"
+        assert table.totalsRowCount == 1
+        # Excel excludes the totals row from the auto-filter range.
+        assert table.autoFilter.ref == "A1:B4"
+        assert [col.totalsRowLabel for col in table.tableColumns] == ["Total", None]
+        assert [col.totalsRowFunction for col in table.tableColumns] == [None, "sum"]
+
+        assert [ws.cell(row=r, column=1).value for r in range(2, 5)] == [
+            "row1",
+            "row2",
+            "row3",
+        ]
+        assert [ws.cell(row=r, column=2).value for r in range(2, 5)] == [1, 2, 3]
+
+        assert ws.cell(row=5, column=1).value == "Total"
+        assert ws.cell(row=5, column=2).value == "=SUBTOTAL(109,Totals[Value])"
+        assert ws.cell(row=5, column=1).font.bold is True
+    finally:
+        wb.close()
+
+
+def test_a_totals_row_moves_up_when_the_data_shrinks(output_path: Path) -> None:
+    """Shrinking clears the old body rows and moves the totals row up."""
+    template = output_path.with_name("totals_shrink.xlsx")
+    _build_totals_template(template, data_rows=3)
+
+    fill(
+        template=template,
+        output=output_path,
+        tables={"Totals": [{"Name": "only", "Value": 7}]},
+    )
+
+    wb = openpyxl.load_workbook(output_path)
+    try:
+        ws = wb["Data"]
+        table = ws.tables["Totals"]
+
+        assert table.ref == "A1:B3"
+        assert table.autoFilter.ref == "A1:B2"
+        assert ws.cell(row=2, column=1).value == "only"
+        assert ws.cell(row=3, column=1).value == "Total"
+        assert ws.cell(row=3, column=2).value == "=SUBTOTAL(109,Totals[Value])"
+        assert ws.cell(row=4, column=1).value is None
+        assert ws.cell(row=5, column=1).value is None
+    finally:
+        wb.close()
+
+
+def test_growing_a_totals_table_by_one_row_keeps_the_totals_row(output_path: Path) -> None:
+    """The existing totals row is not mistaken for content below the table."""
+    template = output_path.with_name("totals_grow_one.xlsx")
+    _build_totals_template(template, data_rows=1)
+
+    fill(
+        template=template,
+        output=output_path,
+        tables={"Totals": [{"Name": "a", "Value": 1}, {"Name": "b", "Value": 2}]},
+    )
+
+    wb = openpyxl.load_workbook(output_path)
+    try:
+        ws = wb["Data"]
+        table = ws.tables["Totals"]
+
+        assert table.ref == "A1:B4"
+        assert [ws.cell(row=r, column=2).value for r in range(2, 4)] == [1, 2]
+        assert ws.cell(row=4, column=1).value == "Total"
+    finally:
+        wb.close()
+
+
+def test_content_below_a_totals_table_is_still_rejected(output_path: Path) -> None:
+    """Expanding past the totals row must not overwrite unrelated content."""
+    template = output_path.with_name("totals_overflow.xlsx")
+    _build_totals_template(template, data_rows=1)
+
+    wb = openpyxl.load_workbook(template)
+    wb["Data"]["A4"] = "DO NOT OVERWRITE"
+    wb.save(template)
+    wb.close()
+
+    with pytest.raises(ValueError, match="cannot expand"):
+        fill(
+            template=template,
+            output=output_path,
+            tables={"Totals": [{"Name": f"row{i}", "Value": i} for i in range(1, 4)]},
+        )
+
+
+def test_empty_data_keeps_one_body_row_and_the_totals_row(output_path: Path) -> None:
+    """Empty data leaves a single cleared body row above the totals row."""
+    template = output_path.with_name("totals_empty.xlsx")
+    _build_totals_template(template, data_rows=2)
+
+    fill(
+        template=template,
+        output=output_path,
+        tables={"Totals": {"Name": [], "Value": []}},
+    )
+
+    wb = openpyxl.load_workbook(output_path)
+    try:
+        ws = wb["Data"]
+        table = ws.tables["Totals"]
+
+        assert table.ref == "A1:B3"
+        assert table.autoFilter.ref == "A1:B2"
+        assert ws.cell(row=2, column=1).value is None
+        assert ws.cell(row=2, column=2).value is None
+        assert ws.cell(row=3, column=1).value == "Total"
+    finally:
+        wb.close()
+
+
+def test_an_empty_dataframe_leaves_one_cleared_body_row(output_path: Path) -> None:
+    """Empty data keeps a single empty row so the table stays valid."""
+    import pandas as pd
+
+    columns = ["Col1", "Col2", "ColNotFilled", "TestFormattedPct"]
+    fill(
+        template=TEMPLATE,
+        output=output_path,
+        tables={
+            "TableTest": pd.DataFrame(columns=columns),
+        },
+    )
+
+    wb = openpyxl.load_workbook(output_path)
+    try:
+        ws = wb["TestTable"]
+        table = next(iter(ws.tables.values()))
+        assert table.ref == "A1:E2"
+        assert table.autoFilter.ref == "A1:E2"
+        assert [ws.cell(row=2, column=col).value for col in range(1, 6)] == [
+            None,
+            None,
+            None,
+            None,
+            None,
+        ]
     finally:
         wb.close()

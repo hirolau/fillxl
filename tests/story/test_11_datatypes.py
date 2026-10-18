@@ -441,7 +441,7 @@ class TestStringValues:
         self,
         output_path: Path,
     ) -> None:
-        """A string starting with '=' becomes a formula."""
+        """A string starting with '=' becomes a formula when escaping is off."""
         _make_dtype_template(output_path.with_name("tmpl.xlsx"))
 
         fill(
@@ -468,6 +468,7 @@ class TestStringValues:
             template=tmpl2,
             output=output_path,
             values={"formula_result": "=1+1"},
+            config=FillXLConfig(escape_formulas=False),
         )
 
         wb2 = openpyxl.load_workbook(output_path)

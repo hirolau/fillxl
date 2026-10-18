@@ -1,20 +1,121 @@
 """Chart integration tests — unique coverage not in story suite.
 
-Tests chartEx warning emission and axis-position preservation —
-behaviours that the story chart tests don't cover.
+Tests chartEx warning emission, axis-position preservation, and exact
+worksheet-name matching — behaviours that the story chart tests don't cover.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import openpyxl
 import pytest
+from openpyxl.chart import BarChart, Reference
+from openpyxl.worksheet.table import Table, TableColumn
 
-from fillxl import fill
+from fillxl import Engine, fill
 from tests.conftest import CHARTS_TEMPLATE_2
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+ENGINES = [
+    pytest.param("openpyxl", id="openpyxl"),
+    pytest.param("win32com", id="win32com", marks=pytest.mark.win32com),
+]
+
+
+def _build_two_sheet_chart_template(path: Path) -> None:
+    """Build a workbook with tables (and charts) on ``Data`` and ``Data2``."""
+    wb = openpyxl.Workbook()
+    for sheet_title in ("Data", "Data2"):
+        ws = wb.create_sheet(sheet_title) if sheet_title == "Data2" else wb.active
+        ws.title = sheet_title
+        ws["A1"] = "Category"
+        ws["B1"] = "Value"
+        for row in range(2, 4):
+            ws.cell(row=row, column=1, value=f"cat{row - 1}")
+            ws.cell(row=row, column=2, value=(row - 1) * 10)
+        ws.add_table(
+            Table(
+                displayName=f"Table{sheet_title}",
+                ref="A1:B3",
+                tableColumns=[TableColumn(id=1, name="Category"), TableColumn(id=2, name="Value")],
+            ),
+        )
+
+        chart = BarChart()
+        chart.add_data(Reference(ws, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+        chart.set_categories(Reference(ws, min_col=1, min_row=2, max_row=3))
+        charts_ws = wb.create_sheet(f"{sheet_title} Chart")
+        charts_ws.add_chart(chart, "A1")
+
+    wb.save(path)
+    wb.close()
+
+
+def _series_end_rows(path: Path) -> dict[str, set[str]]:
+    """Map each chart's sheet name to the data references of its series."""
+    wb = openpyxl.load_workbook(path)
+    try:
+        result: dict[str, set[str]] = {}
+        for sheet_name in wb.sheetnames:
+            for chart in getattr(wb[sheet_name], "_charts", []):
+                refs = {
+                    reference.f
+                    for series in chart.ser
+                    for label in (series.cat, series.val)
+                    for reference in (
+                        getattr(label, "numRef", None),
+                        getattr(label, "strRef", None),
+                    )
+                    if reference is not None and reference.f
+                }
+                result[sheet_name] = refs
+        return result
+    finally:
+        wb.close()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_chart_on_sheet_Data2_is_untouched_when_Data_is_filled(  # noqa: N802
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Sheet "Data" must not match sheet "Data2" by string prefix."""
+    if engine == "win32com":
+        pytest.importorskip("win32com.client")
+    template = output_path.with_name("two_sheet_charts.xlsx")
+    _build_two_sheet_chart_template(template)
+
+    try:
+        fill(
+            template=template,
+            output=output_path,
+            tables={
+                "TableData": [
+                    {"Category": "a", "Value": 1},
+                    {"Category": "b", "Value": 2},
+                    {"Category": "c", "Value": 3},
+                    {"Category": "d", "Value": 4},
+                ],
+            },
+            engine=engine,
+        )
+    except Exception as exc:
+        message = str(exc).lower()
+        if engine == "win32com" and ("win32com" in message or "excel" in message):
+            pytest.skip(f"win32com backend not available: {exc}")
+        raise
+
+    refs = _series_end_rows(output_path)
+    assert refs["Data Chart"], refs
+    assert refs["Data2 Chart"], refs
+
+    # The chart bound to "Data" follows the table down to row 5 …
+    assert all(ref.endswith("$5") for ref in refs["Data Chart"]), refs
+    # … while the one bound to "Data2" still points at its original rows 2..3.
+    assert all(ref.endswith("$3") for ref in refs["Data2 Chart"]), refs
 
 
 @pytest.mark.filterwarnings("ignore:.*chartEx.*:UserWarning")

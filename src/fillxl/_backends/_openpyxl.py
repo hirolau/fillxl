@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 
+from fillxl._adapters import TabularAdapter
 from fillxl._cells import populate_named_cells
 from fillxl._charts import (
     TableChangeSpecs,
@@ -19,6 +20,7 @@ from fillxl._tables import populate_table
 from fillxl._validation import ColumnValidationStrategy, validate_columns
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from fillxl._config import FillXLConfig
@@ -45,6 +47,18 @@ class OpenpyxlBackend:
     def __init__(self) -> None:
         self._workbook: openpyxl.Workbook | None = None
         self._unsupported_chart_sheets: list[str] = []
+
+    def _require_workbook(self) -> openpyxl.Workbook:
+        """Return the loaded workbook or raise.
+
+        Raises:
+            RuntimeError: If no workbook has been loaded yet.
+
+        """
+        if self._workbook is None:
+            msg = "No workbook loaded — call load() first"
+            raise RuntimeError(msg)
+        return self._workbook
 
     # ── Backend protocol ────────────────────────────────────────────────────
 
@@ -78,18 +92,21 @@ class OpenpyxlBackend:
         self._workbook = openpyxl.load_workbook(path)
         _fix_chart_axes(self._workbook)
 
-    def fill_named_cell(self, name: str, value: Any) -> None:  # noqa: ANN401
+    def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.
 
         Args:
             name: Name of the named cell / defined name.
             value: Scalar value to write.
+            config: Global fill configuration.
 
         """
-        if self._workbook is None:
-            msg = "No workbook loaded — call load() first"
-            raise RuntimeError(msg)
-        populate_named_cells(self._workbook, {name: value})
+        workbook = self._require_workbook()
+        populate_named_cells(
+            workbook,
+            {name: value},
+            escape_formulas=config.escape_formulas,
+        )
 
     def fill_table(
         self,
@@ -109,27 +126,25 @@ class OpenpyxlBackend:
             dimensions (so chart references can be updated).
 
         """
-        if self._workbook is None:
-            msg = "No workbook loaded — call load() first"
-            raise RuntimeError(msg)
+        workbook = self._require_workbook()
 
-        # Column validation
-        from fillxl._adapters import TabularAdapter
-
+        # The adapter is built once and shared with populate_table so that
+        # expensive data (e.g. a DuckDB relation) is only read once.
         adapter = TabularAdapter(data)
         _validate_table_columns(
-            workbook=self._workbook,
+            workbook=workbook,
             table_name=name,
             data_columns=adapter.columns,
             strategy=config.column_validation_strategy,
         )
 
         return populate_table(
-            self._workbook,
+            workbook,
             name,
-            data,
+            adapter,
             copy_style_in_tables=config.copy_table_styles,
             extend_conditional_formatting=config.extend_conditional_formatting,
+            escape_formulas=config.escape_formulas,
         )
 
     def update_charts(self, spec: TableChangeSpecs) -> None:
@@ -139,17 +154,11 @@ class OpenpyxlBackend:
             spec: The table dimension change to reflect in charts.
 
         """
-        if self._workbook is None:
-            msg = "No workbook loaded — call load() first"
-            raise RuntimeError(msg)
-        update_chart_data_ranges(spec, self._workbook)
+        update_chart_data_ranges(spec, self._require_workbook())
 
     def set_pivot_refresh(self) -> None:
         """Mark all pivot caches for refresh on load."""
-        if self._workbook is None:
-            msg = "No workbook loaded — call load() first"
-            raise RuntimeError(msg)
-        for worksheet in self._workbook.worksheets:
+        for worksheet in self._require_workbook().worksheets:
             for pivot in worksheet._pivots:  # type: ignore[attr-defined, unused-ignore]
                 pivot.cache.refreshOnLoad = True
         logger.debug("Set all pivot tables to refresh on load")
@@ -161,30 +170,25 @@ class OpenpyxlBackend:
             prefix: Sheet name prefix (e.g. ``"_"``).
 
         """
-        if self._workbook is None:
-            msg = "No workbook loaded — call load() first"
-            raise RuntimeError(msg)
-        for sheet_name in self._workbook.sheetnames:
+        workbook = self._require_workbook()
+        for sheet_name in workbook.sheetnames:
             if sheet_name.startswith(prefix):
-                worksheet = self._workbook[sheet_name]
-                worksheet.sheet_state = "hidden"
+                workbook[sheet_name].sheet_state = "hidden"
                 logger.debug("Hidden worksheet '%s'", sheet_name)
 
-    def delete_sheets(self, names: list[str]) -> None:
+    def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the worksheets named in *names*.
 
         Args:
             names: Sheet names to remove.
 
         """
-        if self._workbook is None:
-            msg = "No workbook loaded — call load() first"
-            raise RuntimeError(msg)
+        workbook = self._require_workbook()
         for sheet_name in names:
-            if sheet_name in self._workbook.sheetnames:
-                ws = self._workbook[sheet_name]
+            if sheet_name in workbook.sheetnames:
+                ws = workbook[sheet_name]
                 if isinstance(ws, Worksheet):
-                    self._workbook.remove(ws)
+                    workbook.remove(ws)
                     logger.debug("Deleted worksheet '%s'", sheet_name)
                 else:
                     logger.warning("Sheet '%s' is not a regular worksheet, skipping", sheet_name)
@@ -198,14 +202,11 @@ class OpenpyxlBackend:
             name: Name of the worksheet to activate.
 
         """
-        if self._workbook is None:
-            msg = "No workbook loaded — call load() first"
-            raise RuntimeError(msg)
-        if name in self._workbook.sheetnames:
-            ws = self._workbook[name]
+        workbook = self._require_workbook()
+        if name in workbook.sheetnames:
+            ws = workbook[name]
             if isinstance(ws, Worksheet):
-                idx = self._workbook.index(ws)
-                self._workbook.active = idx
+                workbook.active = workbook.index(ws)
             logger.debug("Set active worksheet to '%s'", name)
         else:
             logger.warning("Sheet '%s' not found, keeping default active sheet", name)
@@ -217,18 +218,16 @@ class OpenpyxlBackend:
             path: Destination path.
 
         """
-        if self._workbook is None:
-            msg = "No workbook loaded — call load() first"
-            raise RuntimeError(msg)
+        workbook = self._require_workbook()
         if self._unsupported_chart_sheets:
             msg = _CHARTEX_WARNING.format(
                 sheets=", ".join(repr(s) for s in self._unsupported_chart_sheets),
             )
             logger.warning(msg)
             warnings.warn(msg, stacklevel=2)
-        _fix_chart_axes(self._workbook)
+        _fix_chart_axes(workbook)
         logger.debug("Saving workbook to %s", path)
-        self._workbook.save(path)
+        workbook.save(path)
 
     def close(self) -> None:
         """Close the workbook and release resources."""

@@ -26,11 +26,13 @@ def validate_columns(
     strategy: ColumnValidationStrategy = "all_but_formulas",
     *,
     formula_columns: list[str] | None = None,
-) -> list[str]:
+) -> None:
     """Validate data columns against Excel table columns.
 
     Compares the columns present in the incoming data against the columns
     expected by the Excel table, and decides how to handle mismatches.
+    Backends match columns by *name*, so the data columns never need to be
+    filtered here.
 
     Args:
         table_columns: Column names from the Excel table definition.
@@ -49,9 +51,6 @@ def validate_columns(
         formula_columns: Names of table columns that are formulas.  Only
             relevant for ``"all_but_formulas"`` / ``"all_but_formulas_strict"``.
 
-    Returns:
-        The (possibly filtered) list of data columns to use.
-
     Raises:
         ValueError: If *strategy* is ``"strict"``, ``"all_but_formulas"``, or
             ``"all_but_formulas_strict"`` and the validation fails.
@@ -59,7 +58,12 @@ def validate_columns(
     """
     # "none" skips all checks
     if strategy == "none":
-        return data_columns
+        return
+
+    # An empty payload has no schema to validate.  It is an explicit request
+    # to clear the table, not a column mismatch.
+    if not data_columns:
+        return
 
     formula_set = set(formula_columns or [])
 
@@ -77,7 +81,7 @@ def validate_columns(
     extra = data_set - table_set  # columns in data but not in table
 
     if not missing and not extra:
-        return data_columns
+        return
 
     # ── Strict modes ───────────────────────────────────────────────────────
 
@@ -109,7 +113,7 @@ def validate_columns(
                 f"Data columns: {data_columns}."
             )
             raise ValueError(msg)
-        return data_columns
+        return
 
     if strategy == "all_but_formulas":
         if missing:
@@ -121,8 +125,7 @@ def validate_columns(
                 f"Data columns: {data_columns}."
             )
             raise ValueError(msg)
-        # Extra columns are allowed — return all data columns as-is
-        return data_columns
+        return
 
     # ── Non-strict modes ───────────────────────────────────────────────────
 
@@ -131,10 +134,9 @@ def validate_columns(
             logger.info("Dropping extra data columns: %s", sorted(extra))
         if missing:
             logger.info("Skipping missing table columns: %s", sorted(missing))
-        return [col for col in data_columns if col in table_set]
+        return
 
     if missing:
         logger.warning("Data missing columns expected by table: %s", sorted(missing))
     if extra:
         logger.warning("Data has extra columns not in table: %s", sorted(extra))
-    return data_columns

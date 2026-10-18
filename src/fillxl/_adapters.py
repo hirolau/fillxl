@@ -3,12 +3,68 @@
 from __future__ import annotations
 
 import logging
+import sys
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+# Optional dependencies are looked up in ``sys.modules`` instead of imported:
+# an object of one of these types can only exist if the module has already
+# been imported, and a per-call ``import`` is both slow and repeatedly fails
+# to find packages that are not installed.
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
+
+
+def _is_column_values(values: Any) -> bool:  # noqa: ANN401
+    """Whether *values* is a column of data (list, tuple, array, Series, …).
+
+    Strings and mappings are excluded: ``{"a": "hello"}`` is a single value,
+    not a column.
+
+    Examples:
+        >>> _is_column_values([1, 2, 3])
+        True
+        >>> _is_column_values((1, 2))
+        True
+        >>> _is_column_values("abc")
+        False
+        >>> _is_column_values({"a": 1})
+        False
+
+    """
+    if isinstance(values, (str, bytes, bytearray, dict)):
+        return False
+    if isinstance(values, Sequence):
+        return True
+    # NumPy arrays and pandas/polars Series are not ``Sequence`` instances.
+    return hasattr(values, "tolist") and hasattr(values, "__len__")
+
+
+def _check_column_lengths(keys: list[Any], column_values: list[list[Any]]) -> None:
+    """Raise a column-aware error when the columns have different lengths.
+
+    ``zip(..., strict=True)`` reports ``zip() argument 2 is shorter...``,
+    which does not say which column is wrong.
+
+    Examples:
+        >>> _check_column_lengths(["a", "b"], [[1, 2], [3, 4]])
+        >>> _check_column_lengths(["a", "b"], [[1, 2], [3]])
+        Traceback (most recent call last):
+            ...
+        ValueError: Ragged column data: column 'b' has 1 row(s), expected 2.
+
+    """
+    expected = len(column_values[0])
+    ragged = [
+        f"column {str(key)!r} has {len(values)} row(s), expected {expected}"
+        for key, values in zip(keys, column_values, strict=True)
+        if len(values) != expected
+    ]
+    if ragged:
+        msg = f"Ragged column data: {'; '.join(ragged)}."
+        raise ValueError(msg)
 
 
 class TabularAdapter:
@@ -23,72 +79,80 @@ class TabularAdapter:
         """
         self.data = data
         self._columns: list[str] | None = None
-        self._rows: Iterable[Sequence[Any]] | None = None
+        self._rows: list[Sequence[Any]] | None = None
         self._detect_type()
 
     def _detect_type(self) -> None:
-        """Detect the type of data and prepare column names and row iterator."""
+        """Detect the type of data and prepare column names and rows."""
         data = self.data
 
         # Try pandas DataFrame
-        try:
-            import pandas as pd
-
-            if isinstance(data, pd.DataFrame):
-                self._columns = data.columns.tolist()
-                self._rows = data.itertuples(index=False, name=None)
-                logger.debug("Detected pandas DataFrame with %d columns", len(self._columns))
-                return
-        except ImportError:
-            pass
-
-        # Try polars DataFrame
-        try:
-            import polars as pl
-
-            if isinstance(data, pl.DataFrame):
-                self._columns = data.columns
-                self._rows = data.iter_rows()
-                logger.debug("Detected polars DataFrame with %d columns", len(self._columns))
-                return
-        except ImportError:
-            pass
-
-        # Try duckdb Relation
-        try:
-            import duckdb
-
-            if isinstance(data, duckdb.DuckDBPyRelation):
-                self._columns = data.columns
-                self._rows = iter(data.fetchall())
-                logger.debug("Detected duckdb Relation with %d columns", len(self._columns))
-                return
-        except ImportError:
-            pass
-
-        # Try list[dict]
-        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-            self._columns = list(data[0].keys())  # ty:ignore[invalid-assignment]
-            self._rows = ([row.get(col) for col in self._columns] for row in data)  # ty:ignore[not-iterable]
-            logger.debug("Detected list[dict] with %d columns", len(self._columns))  # ty:ignore[invalid-argument-type]
+        pd = sys.modules.get("pandas")
+        if pd is not None and isinstance(data, pd.DataFrame):
+            self._columns = [str(col) for col in data.columns]
+            self._rows = list(data.itertuples(index=False, name=None))
+            logger.debug("Detected pandas DataFrame with %d columns", len(self._columns))
             return
 
-        # Try dict[str, list]
-        if isinstance(data, dict) and len(data) > 0:
-            first_value = next(iter(data.values()))
-            if isinstance(first_value, list):
-                self._columns = list(data.keys())  # ty:ignore[invalid-assignment]
-                # Transpose: dict of columns -> list of rows
-                num_rows = len(first_value)
-                self._rows = ([data[col][i] for col in self._columns] for i in range(num_rows))  # ty:ignore[not-iterable]
-                logger.debug("Detected dict[str, list] with %d columns", len(self._columns))  # ty:ignore[invalid-argument-type]
+        # Try polars DataFrame
+        pl = sys.modules.get("polars")
+        if pl is not None and isinstance(data, pl.DataFrame):
+            self._columns = [str(col) for col in data.columns]
+            self._rows = list(data.iter_rows())
+            logger.debug("Detected polars DataFrame with %d columns", len(self._columns))
+            return
+
+        # Try duckdb Relation
+        duckdb = sys.modules.get("duckdb")
+        if duckdb is not None and isinstance(data, duckdb.DuckDBPyRelation):
+            self._columns = [str(col) for col in data.columns]
+            self._rows = [tuple(row) for row in data.fetchall()]
+            logger.debug("Detected duckdb Relation with %d columns", len(self._columns))
+            return
+
+        # Empty payloads are valid: they mean "no rows" (and, for an empty
+        # list, no schema).  The table is cleared instead of raising a
+        # misleading TypeError.
+        if isinstance(data, list) and not data:
+            self._columns = []
+            self._rows = []
+            logger.debug("Detected empty list (no rows, no columns)")
+            return
+
+        # Try list[dict]
+        if isinstance(data, list) and isinstance(data[0], dict):
+            columns = [str(col) for col in data[0]]
+            self._columns = columns
+            self._rows = [[row.get(col) for col in columns] for row in data]
+            logger.debug("Detected list[dict] with %d columns", len(columns))
+            return
+
+        # Try dict[str, column] — column values may be lists, tuples, numpy
+        # arrays, pandas/polars Series, or anything else sequence-like.
+        if isinstance(data, dict) and not data:
+            self._columns = []
+            self._rows = []
+            logger.debug("Detected empty dict (no rows, no columns)")
+            return
+
+        if isinstance(data, dict):
+            first_value: Any = next(iter(data.values()))
+            if _is_column_values(first_value):
+                keys = list(data)
+                self._columns = [str(key) for key in keys]
+                # Materialise each column positionally: list(Series) ignores
+                # a non-default index, and this also handles arrays/tuples.
+                column_values = [list(data[key]) for key in keys]
+                _check_column_lengths(keys, column_values)
+                self._rows = [list(row) for row in zip(*column_values, strict=True)]
+                logger.debug("Detected dict[str, column] with %d columns", len(keys))
                 return
 
         # If we get here, it's not tabular data
         msg = (
             f"Unsupported data type: {type(data).__name__}. "
             "Expected pandas.DataFrame, polars.DataFrame, duckdb.DuckDBPyRelation, "
-            "list[dict], or dict[str, list]. "
+            "list[dict], or dict[str, sequence]. "
             "Install the appropriate optional dependency (pandas, polars, or duckdb) "
             "if you're trying to use one of those backends."
         )
@@ -105,12 +169,22 @@ class TabularAdapter:
         return self._columns
 
     @property
-    def rows(self) -> Iterable[Sequence[Any]]:
-        """Get row iterator."""
+    def rows(self) -> list[Sequence[Any]]:
+        """Get the materialised rows.
+
+        Rows are materialised in the constructor so that the property can be
+        read repeatedly — a one-shot iterator would silently yield nothing on
+        the second access.
+        """
         if self._rows is None:
             msg = "Rows not initialized"
             raise RuntimeError(msg)
         return self._rows
+
+    @property
+    def iter_rows(self) -> Iterable[Sequence[Any]]:
+        """Get a fresh iterator over the rows."""
+        return iter(self.rows)
 
     @staticmethod
     def is_tabular(data: Any) -> bool:  # noqa: ANN401
@@ -123,14 +197,12 @@ class TabularAdapter:
             True if data is likely tabular, False otherwise
 
         """
-        # Quick check without importing heavy dependencies
-        if isinstance(data, (list, dict)):
-            if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-                return True
-            if isinstance(data, dict) and len(data) > 0:
-                first_value = next(iter(data.values()))
-                if isinstance(first_value, list):
-                    return True
+        # Quick check without importing heavy dependencies.  Empty payloads
+        # are valid tabular data — they clear a table.
+        if isinstance(data, list):
+            return not data or isinstance(data[0], dict)
+        if isinstance(data, dict):
+            return not data or _is_column_values(next(iter(data.values())))
 
         # Check for known DataFrame types by class name to avoid imports
         return type(data).__name__ in ("DataFrame", "DuckDBPyRelation")

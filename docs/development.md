@@ -35,14 +35,30 @@ uv run mkdocs build        # Build static site to site/
 
 ## Supported Environments
 
-| | 3.11 | 3.12 | 3.13 | 3.14 |
-|---|:---:|:---:|:---:|:---:|
-| Windows | :material-check: | :material-check: | :material-check: | :material-check: |
-| Linux | :material-check: | :material-check: | :material-check: | :material-check: |
-| macOS | :material-check: | :material-check: | :material-check: | :material-check: |
+| | 3.11 | 3.12 | 3.13 | 3.14 | 3.15 |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Windows | :material-check: | :material-check: | :material-check: | :material-check: | :material-check: |
+| Linux | :material-check: | :material-check: | :material-check: | :material-check: | :material-check: |
+| macOS | :material-check: | :material-check: | :material-check: | :material-check: | :material-check: |
 
 !!! note "macOS"
     macOS is best-effort — CI does not currently test on macOS runners.
+
+## Supported Data Backends
+
+The nox version matrix tests the minimum supported release, the version in
+`uv.lock`, and explicit major versions of the optional data libraries:
+
+| Backend | Minimum | Also tested | Latest |
+|---------|---------|-------------|--------|
+| pandas | 2.0 | 3.x | 3.x |
+| polars | 0.20 | 2.x | 2.x |
+| duckdb | 1.0 | — | 1.x |
+
+!!! note "duckdb on Python 3.15"
+    duckdb publishes no cp315 wheels yet, so the `duckdb` extra is marked
+    `python_version < '3.15'`. The duckdb tests skip on 3.15 until upstream
+    provides wheels; the rest of the package is fully supported.
 
 ## Project Structure
 

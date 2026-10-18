@@ -58,9 +58,11 @@ class TestOpenpyxlBackendRuntimeErrorGuards:
 
     def test_fill_named_cell_raises_when_not_loaded(self) -> None:
         """Calling fill_named_cell before load raises RuntimeError."""
+        from fillxl._config import FillXLConfig
+
         backend = OpenpyxlBackend()
         with pytest.raises(RuntimeError, match="No workbook loaded"):
-            backend.fill_named_cell("test", 42)
+            backend.fill_named_cell("test", 42, FillXLConfig())
 
     def test_fill_table_raises_when_not_loaded(self) -> None:
         """Calling fill_table before load raises RuntimeError."""
@@ -74,7 +76,7 @@ class TestOpenpyxlBackendRuntimeErrorGuards:
         """Calling update_charts before load raises RuntimeError."""
         backend = OpenpyxlBackend()
         with pytest.raises(RuntimeError, match="No workbook loaded"):
-            backend.update_charts(TableChangeSpecs("A1:B2", "A1:B3", "Sheet1"))
+            backend.update_charts(TableChangeSpecs("Sheet1", 1, 1, 2, 2, 3))
 
     def test_set_pivot_refresh_raises_when_not_loaded(self) -> None:
         """Calling set_pivot_refresh before load raises RuntimeError."""

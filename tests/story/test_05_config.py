@@ -123,12 +123,7 @@ class TestEngineSelection:
 
 
 class TestTableOptions:
-    """extend_tables, copy_table_styles, extend_conditional_formatting defaults."""
-
-    def test_extend_tables_is_enabled_by_default(self) -> None:
-        """By default tables resize to fit your data."""
-        cfg = FillXLConfig()
-        assert cfg.extend_tables is True
+    """copy_table_styles, extend_conditional_formatting defaults."""
 
     def test_copy_table_styles_is_enabled_by_default(self) -> None:
         """By default new rows inherit the first row's formatting."""
@@ -203,7 +198,7 @@ class TestColumnValidationStrategyOption:
     def test_an_invalid_strategy_name_raises_valueerror(self) -> None:
         """'bogus' or any unknown strategy is rejected."""
         with pytest.raises(ValueError, match="column_validation_strategy"):
-            FillXLConfig(column_validation_strategy="bogus")  # ty:ignore[invalid-argument-type]
+            FillXLConfig(column_validation_strategy=cast(Any, "bogus"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

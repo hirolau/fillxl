@@ -11,17 +11,22 @@ Only works on **Windows** with Microsoft Excel installed.
 from __future__ import annotations
 
 import contextlib
-import datetime as dt
 import logging
+import re
 import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from fillxl._charts import TableChangeSpecs
-from fillxl._normalize import normalize_value
+from openpyxl.worksheet.cell_range import CellRange
+
+from fillxl._charts import TableChangeSpecs, _unquote_sheet_name
+from fillxl._normalize import prepare_com_value
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
+
+    from openpyxl.worksheet.table import Table
 
     from fillxl._config import FillXLConfig
 
@@ -31,8 +36,22 @@ _is_windows = sys.platform == "win32"
 
 # COM constants (fallback if early binding is unavailable)
 _XL_SHEET_HIDDEN = 0
-_XL_OPEN_XML_WORKBOOK = 51
 _XL_PASTE_FORMATS = -4122
+
+# SaveAs file formats, keyed by output suffix.  Saving an .xlsm template with
+# the .xlsx format silently strips its macros, so the format is inferred from
+# the requested output path instead of being hard-coded.
+_FILE_FORMATS: dict[str, int] = {
+    ".xlsx": 51,  # xlOpenXMLWorkbook
+    ".xlsm": 52,  # xlOpenXMLWorkbookMacroEnabled
+    ".xlsb": 50,  # xlExcel12
+    ".xls": 56,  # xlExcel8
+}
+
+# A chart series formula contains references such as 'Sheet 1'!$B$13:$B$13.
+_SERIES_RANGE_RE = re.compile(
+    r"(?:'[^']+'|[A-Za-z0-9_.]+)!\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?",
+)
 
 
 class Win32ComBackend:
@@ -53,6 +72,10 @@ class Win32ComBackend:
         self._app: Any = None
         self._workbook: Any = None
         self._load_path: Path | None = None
+        # Calculated-column formulas for every table, read once per load.
+        # Reading them opens the workbook with openpyxl, which must not
+        # happen once per table in a fill.
+        self._formula_cache: dict[str, tuple[list[str], dict[str, str]]] | None = None
 
     # ── Internal helpers ───────────────────────────────────────────────────
 
@@ -99,6 +122,27 @@ class Win32ComBackend:
             msg = "No workbook loaded — call load() first"
             raise RuntimeError(msg)
 
+    def _read_calculated_column_formulas(
+        self,
+        table_name: str,
+    ) -> tuple[list[str], dict[str, str]]:
+        """Return the calculated column names and formulas for *table_name*.
+
+        The formulas for **all** tables are read in a single openpyxl load and
+        cached for the lifetime of the loaded workbook, so filling many tables
+        does not reopen the file for each one.
+
+        Args:
+            table_name: Name of the table to inspect.
+
+        Returns:
+            A tuple of (formula_column_names, formula_map).
+
+        """
+        if self._formula_cache is None:
+            self._formula_cache = _read_all_calculated_column_formulas(self._load_path)
+        return self._formula_cache.get(table_name, ([], {}))
+
     # ── Backend protocol ───────────────────────────────────────────────────
 
     def load(self, path: Path) -> None:
@@ -113,15 +157,17 @@ class Win32ComBackend:
         abs_path = path.resolve()
         logger.debug("Loading workbook from %s", abs_path)
         self._load_path = abs_path
+        self._formula_cache = None
         self._workbook = self._app.Workbooks.Open(str(abs_path))
         logger.info("[win32com] load took %.3fs", time.perf_counter() - t0)
 
-    def fill_named_cell(self, name: str, value: Any) -> None:  # noqa: ANN401
+    def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.
 
         Args:
             name: Name of the named cell / defined name.
             value: Scalar value to write.
+            config: Global fill configuration.
 
         Raises:
             KeyError: If *name* is not a defined name in the workbook.
@@ -129,23 +175,15 @@ class Win32ComBackend:
         """
         self._ensure_workbook()
 
-        # Convert pandas Timestamp to plain Python datetime
-        # (COM cannot marshal pd.Timestamp; normalize_value handles
-        # the rest: pd.NA/NaT, date→datetime, time→datetime,
-        # timedelta→float, Decimal→float, tz stripping, …).
-        try:
-            import pandas as pd
-
-            if isinstance(value, pd.Timestamp):
-                value = value.to_pydatetime()
-        except ImportError:
-            pass
-
-        value = normalize_value(value)
+        # Same normalisation as the table path (pandas objects, date/time
+        # promotion, Decimal, tz stripping) plus the apostrophe prefix that
+        # keeps COM from reinterpreting strings, and the UTC marking that
+        # keeps it from shifting datetimes by the local timezone offset.
+        prepared = prepare_com_value(value, escape_formulas=config.escape_formulas)
 
         try:
             name_obj = self._workbook.Names(name)
-            name_obj.RefersToRange.Value = value
+            name_obj.RefersToRange.Value = prepared
         except Exception as exc:
             msg = f"Named cell '{name}' not found in workbook"
             raise KeyError(msg) from exc
@@ -190,12 +228,17 @@ class Win32ComBackend:
             msg = f"Table '{name}' not found in workbook"
             raise KeyError(msg)
 
+        # A totals row is part of the table but excluded from DataBodyRange,
+        # so all body row arithmetic below stays correct.  The totals row is
+        # kept at the bottom by resizing the table past the body rows.
+        totals_rows = 1 if _com_has_totals_row(list_obj) else 0
+
         # ── Normalise data ────────────────────────────────────────────────
         from fillxl._adapters import TabularAdapter
 
         adapter = TabularAdapter(data)
         data_columns = adapter.columns
-        rows = list(adapter.rows)
+        rows = adapter.rows
         num_data_rows = len(rows)
 
         # ── Get table metadata ────────────────────────────────────────────
@@ -204,12 +247,11 @@ class Win32ComBackend:
         header_row = header_range.Row
         start_col = header_range.Column
         num_cols = header_range.Columns.Count
-        end_col = start_col + num_cols - 1
 
         from fillxl._utils import col_to_excel
 
         start_col_letter = col_to_excel(start_col)
-        end_col_letter = col_to_excel(end_col)
+        end_col_letter = col_to_excel(start_col + num_cols - 1)
 
         # Column names from the table — read all at once (single COM call)
         header_values = header_range.Value
@@ -223,7 +265,7 @@ class Win32ComBackend:
         # ── Column validation (must happen before resize so we know what to write) ──
         from fillxl._validation import validate_columns
 
-        formula_columns, formula_map = _read_calculated_column_formulas(self._load_path, name)
+        formula_columns, formula_map = self._read_calculated_column_formulas(name)
 
         validate_columns(
             table_columns=table_columns,
@@ -232,45 +274,74 @@ class Win32ComBackend:
             formula_columns=formula_columns,
         )
 
-        # ── Build old reference ───────────────────────────────────────────
+        # ── Measure the existing table ────────────────────────────────────
         data_body_range = list_obj.DataBodyRange
         if data_body_range is not None:
-            old_end_row = data_body_range.Row + data_body_range.Rows.Count - 1
-            old_ref = f"{start_col_letter}{data_body_range.Row}:{end_col_letter}{old_end_row}"
+            old_data_row = data_body_range.Row
+            old_last_row = old_data_row + data_body_range.Rows.Count - 1
         else:
-            old_ref = f"{start_col_letter}{header_row + 1}:{end_col_letter}{header_row + 1}"
-            old_end_row = header_row
+            old_data_row = header_row + 1
+            old_last_row = header_row
 
         worksheet_title = str(worksheet.Name)
+        old_table_last_row = old_last_row + totals_rows
 
-        # ── Resize table ──────────────────────────────────────────────────
+        # ── Empty data: keep a single, cleared body row ───────────────────
+        # (openpyxl does the same; an Excel table needs at least one body row.)
         if num_data_rows == 0:
-            # No data — clear existing data body
             if data_body_range is not None:
                 data_body_range.ClearContents()
-            new_ref = f"{start_col_letter}{header_row + 1}:{end_col_letter}{header_row + 1}"
+            new_last_row = header_row + 1
+            new_table_last_row = new_last_row + totals_rows
+            if new_table_last_row != old_table_last_row:
+                resize_last_row = _resize_target_row(
+                    new_table_last_row,
+                    old_table_last_row,
+                    totals_rows,
+                )
+                list_obj.Resize(
+                    self._app.Range(
+                        f"{start_col_letter}{header_row}:{end_col_letter}{resize_last_row}",
+                    ),
+                )
+            if new_table_last_row < old_table_last_row:
+                worksheet.Range(
+                    f"{start_col_letter}{new_table_last_row + 1}:"
+                    f"{end_col_letter}{old_table_last_row}",
+                ).ClearContents()
+            worksheet.Range(
+                f"{start_col_letter}{new_last_row}:{end_col_letter}{new_last_row}",
+            ).ClearContents()
             return TableChangeSpecs(
-                old_ref=old_ref,
-                new_ref=new_ref,
                 worksheet_title=worksheet_title,
+                header_row=header_row,
+                first_col=start_col,
+                last_col=start_col + num_cols - 1,
+                old_last_row=old_last_row,
+                new_last_row=new_last_row,
             )
 
         new_end_row = header_row + num_data_rows
-        new_table_range = f"{start_col_letter}{header_row}:{end_col_letter}{new_end_row}"
+        new_table_last_row = new_end_row + totals_rows
 
         # Check for overflow — cells below the table should be empty.
         # Read the entire overflow range in a single COM call (batch read)
         # instead of cell-by-cell (which is ~100x slower for large expansions).
         t_overflow = time.perf_counter()
-        if num_data_rows > (old_end_row - header_row):
-            overflow_start = old_end_row + 1
-            overflow_range_str = f"{start_col_letter}{overflow_start}:{end_col_letter}{new_end_row}"
+        if num_data_rows > (old_last_row - header_row):
+            # Start below the existing totals row (if any) and check through
+            # the last row the resized table will occupy.
+            overflow_start = old_last_row + 1 + totals_rows
+            new_table_end_row = new_end_row + totals_rows
+            overflow_range_str = (
+                f"{start_col_letter}{overflow_start}:{end_col_letter}{new_table_end_row}"
+            )
             try:
                 overflow_values = worksheet.Range(overflow_range_str).Value
                 if overflow_values is not None:
                     if isinstance(overflow_values, tuple):
                         for row_idx, row_tuple in enumerate(overflow_values):
-                            for col_idx, val in enumerate(row_tuple):  # ty:ignore[invalid-argument-type]
+                            for col_idx, val in enumerate(row_tuple):
                                 if val is not None:
                                     check_row = overflow_start + row_idx
                                     check_col = start_col + col_idx
@@ -305,15 +376,25 @@ class Win32ComBackend:
         # Resize the table first — Excel auto-fills calculated column formulas
         # in new rows when the table is resized.
         t_resize = time.perf_counter()
-        excel_range = self._app.Range(new_table_range)
-        list_obj.Resize(excel_range)
+        if new_table_last_row != old_table_last_row:
+            resize_last_row = _resize_target_row(
+                new_table_last_row,
+                old_table_last_row,
+                totals_rows,
+            )
+            list_obj.Resize(
+                self._app.Range(
+                    f"{start_col_letter}{header_row}:{end_col_letter}{resize_last_row}",
+                ),
+            )
         logger.info("[win32com] resize took %.3fs", time.perf_counter() - t_resize)
 
-        # Clear old data rows if the table has shrunk — batch clear
+        # Clear the rows the table no longer covers — batch clear
         t_clear = time.perf_counter()
-        old_data_end = old_end_row
-        if num_data_rows < (old_data_end - header_row):
-            clear_range_str = f"{start_col_letter}{new_end_row + 1}:{end_col_letter}{old_data_end}"
+        if new_table_last_row < old_table_last_row:
+            clear_range_str = (
+                f"{start_col_letter}{new_table_last_row + 1}:{end_col_letter}{old_table_last_row}"
+            )
             with contextlib.suppress(Exception):
                 worksheet.Range(clear_range_str).ClearContents()
         logger.info("[win32com] clear took %.3fs", time.perf_counter() - t_clear)
@@ -328,29 +409,15 @@ class Win32ComBackend:
         values_matrix: list[list[Any]] = []
         for row in rows:
             row_values: list[Any] = []
-            for _col_idx, col_name in enumerate(table_columns):
+            for col_name in table_columns:
                 if col_name in data_col_index and col_name not in formula_columns:
-                    val = row[data_col_index[col_name]]
-                    # Convert pandas Timestamp to plain Python datetime
-                    # (COM cannot marshal pd.Timestamp; normalize_value handles
-                    # the rest: pd.NA/NaT, date→datetime, time→datetime,
-                    # timedelta→float, Decimal→float, tz stripping, …)
-                    try:
-                        import pandas as pd
-
-                        if isinstance(val, pd.Timestamp):
-                            val = val.to_pydatetime()
-                    except ImportError:
-                        pass
                     # Central normalisation — guarantees identical results
-                    # with the openpyxl backend.
-                    val = normalize_value(val)
-                    # COM applies the local timezone offset when writing
-                    # naive datetime objects.  Convert to UTC first so the
-                    # serial number stored in Excel matches the original
-                    # wall-clock time when read back.
-                    if isinstance(val, dt.datetime):
-                        val = val.replace(tzinfo=dt.UTC)
+                    # with the openpyxl backend (apostrophe-prefixed strings
+                    # and the UTC marking for datetimes).
+                    val = prepare_com_value(
+                        row[data_col_index[col_name]],
+                        escape_formulas=config.escape_formulas,
+                    )
                     row_values.append(val)
                 else:
                     row_values.append(None)
@@ -395,18 +462,17 @@ class Win32ComBackend:
             # row) to avoid a column shift when pasting.
             first_data_row_range = new_data_body.Rows(1)
             first_data_row_range.Copy()
-            if num_data_rows > 1:
-                dest_range = worksheet.Range(
-                    f"{start_col_letter}{header_row + 2}:{end_col_letter}{new_end_row}",
-                )
-                dest_range.PasteSpecial(Paste=_XL_PASTE_FORMATS)
+            dest_range = worksheet.Range(
+                f"{start_col_letter}{header_row + 2}:{end_col_letter}{new_end_row}",
+            )
+            dest_range.PasteSpecial(Paste=_XL_PASTE_FORMATS)
             # Clear the clipboard (copy mode)
             self._app.CutCopyMode = False
         logger.info("[win32com] copy styles took %.3fs", time.perf_counter() - t_style)
 
         # ── Extend conditional formatting ─────────────────────────────────
         t_cf = time.perf_counter()
-        if config.extend_conditional_formatting and num_data_rows > 0:
+        if config.extend_conditional_formatting:
             _extend_conditional_formatting_com(
                 worksheet=worksheet,
                 start_col_letter=start_col_letter,
@@ -416,11 +482,13 @@ class Win32ComBackend:
             )
         logger.info("[win32com] conditional formatting took %.3fs", time.perf_counter() - t_cf)
 
-        new_ref = f"{start_col_letter}{header_row + 1}:{end_col_letter}{new_end_row}"
         return TableChangeSpecs(
-            old_ref=old_ref,
-            new_ref=new_ref,
             worksheet_title=worksheet_title,
+            header_row=header_row,
+            first_col=start_col,
+            last_col=start_col + num_cols - 1,
+            old_last_row=old_last_row,
+            new_last_row=new_end_row,
         )
 
     def update_charts(self, spec: TableChangeSpecs) -> None:
@@ -434,11 +502,6 @@ class Win32ComBackend:
 
         """
         self._ensure_workbook()
-
-        # Parse old/new row counts from the spec
-        old_ref_end = int("".join(ch for ch in spec.old_ref.split(":")[1] if ch.isdigit()))
-        new_ref_end = int("".join(ch for ch in spec.new_ref.split(":")[1] if ch.isdigit()))
-        old_start = int("".join(ch for ch in spec.old_ref.split(":")[0] if ch.isdigit()))
 
         for sheet in self._workbook.Sheets:
             try:
@@ -456,31 +519,34 @@ class Win32ComBackend:
                     except Exception:
                         continue
 
-                    # Check if this series references the table's worksheet
-                    if spec.worksheet_title not in formula:
-                        continue
-
                     # Parse the formula to find end row references
                     # Formula format: =SERIES(name, x_values, y_values, plot_order)
                     # Each range is like: 'Sheet'!$A$2:$A$N
-                    updated = _update_series_formula(
-                        formula=formula,
-                        old_end_row=old_ref_end,
-                        new_end_row=new_ref_end,
-                        table_start_row=old_start,
-                    )
+                    updated = _update_series_formula(formula, spec)
                     if updated:
                         logger.debug("Updated chart series formula: %s -> %s", formula, updated)
                         series.Formula = updated
 
     def set_pivot_refresh(self) -> None:
-        """Mark all pivot caches for refresh on load."""
+        """Mark all pivot caches for refresh, and refresh them now.
+
+        The openpyxl backend can only mark caches for refresh on open; this
+        backend does the same *and* recalculates the caches, so the saved
+        workbook is up to date whichever engine produced it.
+        """
         self._ensure_workbook()
         for pcache in self._workbook.PivotCaches():
             try:
                 pcache.Refresh()
             except Exception:
                 logger.exception("Failed to refresh pivot cache")
+            # The COM property is ``RefreshOnFileOpen``; it is what the file
+            # format stores as ``refreshOnLoad``.  (``RefreshOnLoad`` is the
+            # XML attribute name, not a COM property.)
+            try:
+                pcache.RefreshOnFileOpen = True
+            except Exception:
+                logger.exception("Failed to mark pivot cache for refresh on open")
         logger.debug("Refreshed all pivot caches")
 
     def hide_sheets(self, prefix: str) -> None:
@@ -500,7 +566,7 @@ class Win32ComBackend:
             except Exception:
                 logger.exception("Failed to hide sheet")
 
-    def delete_sheets(self, names: list[str]) -> None:
+    def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the worksheets named in *names*.
 
         Args:
@@ -534,18 +600,35 @@ class Win32ComBackend:
     def save(self, path: Path) -> None:
         """Save the workbook to *path*.
 
+        The file format is inferred from the output suffix, so filling an
+        ``.xlsm`` template keeps its macros instead of silently saving the
+        workbook as macro-free ``.xlsx``.
+
         Args:
             path: Destination path.
+
+        Raises:
+            ValueError: If the output suffix is not a supported Excel format.
 
         """
         self._ensure_workbook()
         t0 = time.perf_counter()
+        suffix = path.suffix.lower()
+        file_format = _FILE_FORMATS.get(suffix)
+        if file_format is None:
+            supported = ", ".join(sorted(_FILE_FORMATS))
+            msg = (
+                f"Cannot save '{suffix}' files. Supported output formats "
+                f"for the win32com backend: {supported}."
+            )
+            raise ValueError(msg)
+
         # Resolve to absolute path — COM/Excel resolves relative paths
         # from the Excel process working directory, not the Python CWD.
         abs_path = path.resolve()
         abs_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.debug("Saving workbook to %s", abs_path)
-        self._workbook.SaveAs(str(abs_path), FileFormat=_XL_OPEN_XML_WORKBOOK)
+        logger.debug("Saving workbook to %s (format %d)", abs_path, file_format)
+        self._workbook.SaveAs(str(abs_path), FileFormat=file_format)
         logger.info("[win32com] save took %.3fs", time.perf_counter() - t0)
 
     def close(self) -> None:
@@ -570,6 +653,37 @@ class Win32ComBackend:
 
 
 # ── Standalone helpers ──────────────────────────────────────────────────────
+
+
+def _com_has_totals_row(list_obj: Any) -> bool:  # noqa: ANN401
+    """Whether a COM ``ListObject`` is configured with a totals row."""
+    return bool(getattr(list_obj, "ShowTotals", False))
+
+
+def _resize_target_row(
+    new_table_last_row: int,
+    old_table_last_row: int,
+    totals_rows: int,
+) -> int:
+    """Last row to pass to ``ListObject.Resize`` for a totals-row table.
+
+    Excel interprets the resize range as the final table range while a table
+    grows, but as the range *above* the totals row while it shrinks — the
+    totals row is then appended one row below it.  Adjusting for that makes
+    both directions produce *new_table_last_row* as the table's last row.
+
+    Examples:
+        >>> _resize_target_row(5, 3, 1)
+        5
+        >>> _resize_target_row(3, 5, 1)
+        2
+        >>> _resize_target_row(3, 5, 0)
+        3
+
+    """
+    if new_table_last_row > old_table_last_row:
+        return new_table_last_row
+    return new_table_last_row - totals_rows
 
 
 def _prepare_formula_for_com(formula: str) -> str:
@@ -605,23 +719,98 @@ def _prepare_formula_for_com(formula: str) -> str:
     )
 
 
+def _formula_columns_from_table(table: Table) -> tuple[list[str], dict[str, str]]:
+    """Extract calculated-column names and formulas from an openpyxl table.
+
+    openpyxl sets ``calculatedColumnFormula`` for any non-empty default
+    value, not just real formulas, so plain numbers and booleans are skipped.
+
+    Args:
+        table: The openpyxl table definition.
+
+    Returns:
+        A tuple of (formula_column_names, formula_map) where *formula_map*
+        maps column names to their formula strings (with ``=`` prefix).
+
+    """
+    formula_columns: list[str] = []
+    formula_map: dict[str, str] = {}
+
+    for col in table.tableColumns:
+        if not col.calculatedColumnFormula:
+            continue
+        attr_text = col.calculatedColumnFormula.attr_text
+        if not attr_text:
+            continue
+        text = str(attr_text)
+        if text in ("TRUE", "FALSE", "true", "false"):
+            continue
+        try:
+            float(text)
+            continue
+        except ValueError:
+            pass
+        name = str(col.name)
+        formula_str = "=" + text
+        formula_columns.append(name)
+        formula_map[name] = formula_str
+        logger.debug("Detected calculated column '%s' formula=%s", name, formula_str)
+
+    return formula_columns, formula_map
+
+
+def _read_all_calculated_column_formulas(
+    path: Path | None,
+) -> dict[str, tuple[list[str], dict[str, str]]]:
+    """Read every table's calculated-column formulas with a single load.
+
+    COM does not reliably expose ``calculatedColumnFormula`` for tables
+    created by openpyxl, so the table definitions are read from the ``.xlsx``
+    file.  Loading the whole workbook is expensive; doing it once for all
+    tables keeps a fill with many tables cheap.
+
+    Args:
+        path: Path to the workbook file.
+
+    Returns:
+        A mapping of table name to (formula_column_names, formula_map).
+
+    """
+    if path is None or not path.exists():
+        return {}
+
+    try:
+        import openpyxl as _op
+
+        wb = _op.load_workbook(str(path))
+        try:
+            return {
+                str(table.name): _formula_columns_from_table(table)
+                for worksheet in wb.worksheets
+                for table in worksheet.tables.values()
+            }
+        finally:
+            wb.close()
+    except Exception:
+        logger.exception("Failed to read calculated column formulas from %s", path)
+        return {}
+
+
 def _read_calculated_column_formulas(
     path: Path | None,
     table_name: str,
 ) -> tuple[list[str], dict[str, str]]:
-    """Read calculated column formulas from the template using openpyxl.
+    """Read the calculated column formulas of one table using openpyxl.
 
-    COM does not reliably expose ``calculatedColumnFormula`` for tables
-    created by openpyxl.  This helper reads the table definition directly
-    from the ``.xlsx`` file to detect formula columns.
+    Prefer :meth:`Win32ComBackend._read_calculated_column_formulas`, which
+    reads the formulas of all tables in one load and caches them.
 
     Args:
         path: Path to the workbook file.
         table_name: Name of the table to inspect.
 
     Returns:
-        A tuple of (formula_column_names, formula_map) where *formula_map*
-        maps column names to their formula strings (with ``=`` prefix).
+        A tuple of (formula_column_names, formula_map).
 
     """
     if path is None or not path.exists():
@@ -635,37 +824,7 @@ def _read_calculated_column_formulas(
             from fillxl._utils import find_worksheet_and_table
 
             _, table = find_worksheet_and_table(wb, table_name)
-
-            formula_columns: list[str] = []
-            formula_map: dict[str, str] = {}
-
-            for col in table.tableColumns:
-                if col.calculatedColumnFormula:
-                    name = str(col.name)
-                    attr_text = col.calculatedColumnFormula.attr_text
-                    if attr_text:
-                        # openpyxl sets calculatedColumnFormula for any
-                        # non-empty default value, not just real formulas.
-                        # Skip plain numbers, booleans, and simple strings
-                        # — they are default values, not formulas.
-                        text = str(attr_text)
-                        if text.isdigit() or text in ("TRUE", "FALSE", "true", "false"):
-                            continue
-                        try:
-                            float(text)
-                            continue
-                        except ValueError:
-                            pass
-                        formula_str = "=" + text
-                        formula_columns.append(name)
-                        formula_map[name] = formula_str
-                        logger.debug(
-                            "Detected calculated column '%s' formula=%s",
-                            name,
-                            formula_str,
-                        )
-
-            return formula_columns, formula_map
+            return _formula_columns_from_table(table)
         finally:
             wb.close()
     except Exception:
@@ -711,65 +870,49 @@ def _extend_conditional_formatting_com(
         logger.exception("Failed to extend conditional formatting")
 
 
-def _update_series_formula(
-    formula: str,
-    old_end_row: int,
-    new_end_row: int,
-    table_start_row: int,
-) -> str | None:
-    """Update a chart series formula to reflect a new end row.
+def _update_series_formula(formula: str, spec: TableChangeSpecs) -> str | None:
+    """Update a chart series formula to reflect the table's new last row.
 
-    Only updates references that start exactly one row below the table header
-    (i.e., the data body start).
+    Only references that point at the table's data body — starting one row
+    below the header, ending at the table's last row, and within the table's
+    columns — are updated.  The sheet name is compared exactly, so a chart on
+    ``Data2`` is left alone while ``Data`` is filled.
 
     Args:
         formula: The original series formula (e.g., ``=SERIES(...)``).
-        old_end_row: The old end row of the table data body.
-        new_end_row: The new end row of the table data body.
-        table_start_row: The row of the table header.
+        spec: The table change to apply.
 
     Returns:
         The updated formula string, or ``None`` if no update was needed.
 
+    Examples:
+        >>> spec = TableChangeSpecs("Data", 12, 2, 13, 13, 20)
+        >>> _update_series_formula("=SERIES(T,'Data'!$B$13:$B$13,1)", spec)
+        "=SERIES(T,'Data'!$B$13:$B$20,1)"
+        >>> _update_series_formula("=SERIES(T,'Data2'!$B$13:$B$13,1)", spec) is None
+        True
+
     """
-    import re
+    updated_any = False
 
-    original = formula
+    def _replace_reference(match: re.Match[str]) -> str:
+        nonlocal updated_any
+        reference = match.group(0)
+        sheet_part, separator, cell_part = reference.rpartition("!")
+        if not separator or _unquote_sheet_name(sheet_part) != spec.worksheet_title:
+            return reference
+        try:
+            cell_range = CellRange(cell_part)
+        except ValueError:
+            return reference
+        if cell_range.min_row != spec.first_data_row or cell_range.max_row != spec.old_last_row:
+            return reference
+        if cell_range.min_col < spec.first_col or cell_range.max_col > spec.last_col:
+            return reference
+        updated_any = True
+        # Replace only the trailing row number, preserving "$" prefixes.
+        new_cell_part = re.sub(r"\d+$", str(spec.new_last_row), cell_part)
+        return f"{sheet_part}!{new_cell_part}"
 
-    def _replace_end_row(match: re.Match[str]) -> str:
-        full = str(match.group(0))
-        parts = full.split(":")
-        if len(parts) != 2:
-            return full
-
-        # Parse start part: e.g., $A$2 or A2
-        start = parts[0]
-        start_row_match = re.search(r"\$?(\d+)$", start)
-        if not start_row_match:
-            return full
-        start_row = int(str(start_row_match.group(1)))
-
-        # Only update if this range starts at the data body start
-        if start_row != table_start_row + 1:
-            return full
-
-        # Parse end part: e.g., $A$5 or A5
-        end = parts[1]
-        end_row_match = re.search(r"\$?(\d+)$", end)
-        if not end_row_match:
-            return full
-        end_row = int(str(end_row_match.group(1)))
-
-        # Only update if end row matches the old end row
-        if end_row != old_end_row:
-            return full
-
-        # Replace end row number
-        new_end = end[: int(end_row_match.start(1))] + str(new_end_row)
-        return start + ":" + new_end
-
-    # Match range references like $A$2:$A$5 or 'Sheet'!$A$2:$A$5
-    pattern = r"(?:'[^']*'!)?\$?[A-Z]+\$?\d+:\$?[A-Z]+\$?\d+"
-    updated = str(re.sub(pattern, _replace_end_row, formula))
-
-    return updated if updated != original else None
+    updated = str(_SERIES_RANGE_RE.sub(_replace_reference, formula))
+    return updated if updated_any else None

@@ -64,7 +64,7 @@ fillxl.fill(
     values={
         "Title": "Q4 Report",
         "Date": "2024-01-01",
-    }
+    },
 )
 ```
 

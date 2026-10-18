@@ -16,6 +16,8 @@ and are marked ``@pytest.mark.win32com``.
 from __future__ import annotations
 
 import datetime as dt_module
+import re
+import zipfile
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -31,7 +33,7 @@ if TYPE_CHECKING:
 
     from fillxl._types import Engine
 
-ASSETS = Path(__file__).parent / "assets"
+ASSETS = Path(__file__).parent.parent / "assets"
 GOLDEN = ASSETS / "golden"
 
 # Each entry: (test_id, template_name, golden_name, engine, fill_kwargs)
@@ -544,6 +546,65 @@ def _compare_sheets(
     return diffs
 
 
+_CHART_PART_RE = re.compile(r"xl/charts/chart\d+\.xml")
+_PIVOT_CACHE_RE = re.compile(r"xl/pivotCache/pivotCacheDefinition\d+\.xml")
+_CHART_FORMULA_RE = re.compile(r"<(?:\w+:)?f>([^<]+)</(?:\w+:)?f>")
+
+
+def _chart_formulas(path: Path) -> set[str]:
+    """Every chart data reference in the package, ignoring the XML prefix."""
+    formulas: set[str] = set()
+    with zipfile.ZipFile(path) as archive:
+        for name in archive.namelist():
+            if _CHART_PART_RE.fullmatch(name):
+                raw = archive.read(name).decode("utf-8", errors="replace")
+                formulas.update(_CHART_FORMULA_RE.findall(raw))
+    return formulas
+
+
+def _pivot_refresh_flags(path: Path) -> list[bool]:
+    """The ``refreshOnLoad`` flag of every pivot cache in the package."""
+    with zipfile.ZipFile(path) as archive:
+        return [
+            bool(re.search(r'\brefreshOnLoad="(1|true)"', archive.read(name).decode("utf-8")))
+            for name in sorted(archive.namelist())
+            if _PIVOT_CACHE_RE.fullmatch(name)
+        ]
+
+
+def _compare_package_parts(actual_path: Path, expected_path: Path) -> list[str]:
+    """Compare the parts openpyxl's object model cannot see.
+
+    Cell values are compared through openpyxl above; chart data references and
+    the pivot cache refresh flags only exist inside the zip package, so they
+    are read straight from it.
+
+    Returns:
+        A list of difference messages (empty if identical).
+
+    """
+    diffs: list[str] = []
+
+    actual_formulas = _chart_formulas(actual_path)
+    expected_formulas = _chart_formulas(expected_path)
+    if actual_formulas != expected_formulas:
+        only_actual = sorted(actual_formulas - expected_formulas)
+        only_expected = sorted(expected_formulas - actual_formulas)
+        if only_actual:
+            diffs.append(f"Extra chart references: {only_actual}")
+        if only_expected:
+            diffs.append(f"Missing chart references: {only_expected}")
+
+    actual_flags = _pivot_refresh_flags(actual_path)
+    expected_flags = _pivot_refresh_flags(expected_path)
+    if actual_flags != expected_flags:
+        diffs.append(
+            f"Pivot refreshOnLoad flags differ: actual={actual_flags}, expected={expected_flags}",
+        )
+
+    return diffs
+
+
 def _assert_workbooks_match(
     actual_path: Path,
     expected_path: Path,
@@ -560,6 +621,7 @@ def _assert_workbooks_match(
         all_diffs.extend(_compare_sheets(wb_actual, wb_expected))
         all_diffs.extend(_compare_tables(wb_actual, wb_expected))
         all_diffs.extend(_compare_defined_names(wb_actual, wb_expected))
+        all_diffs.extend(_compare_package_parts(actual_path, expected_path))
 
         # Cell-by-cell comparison for each sheet
         sheet_names = wb_actual.sheetnames

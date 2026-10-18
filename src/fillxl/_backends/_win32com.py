@@ -512,10 +512,15 @@ class Win32ComBackend:
         for pcache in self._workbook.PivotCaches():
             try:
                 pcache.Refresh()
-                # Keep the on-open flag in step with the openpyxl backend.
-                pcache.RefreshOnLoad = True
             except Exception:
                 logger.exception("Failed to refresh pivot cache")
+            # The COM property is ``RefreshOnFileOpen``; it is what the file
+            # format stores as ``refreshOnLoad``.  (``RefreshOnLoad`` is the
+            # XML attribute name, not a COM property.)
+            try:
+                pcache.RefreshOnFileOpen = True
+            except Exception:
+                logger.exception("Failed to mark pivot cache for refresh on open")
         logger.debug("Refreshed all pivot caches")
 
     def hide_sheets(self, prefix: str) -> None:

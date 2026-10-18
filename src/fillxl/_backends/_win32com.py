@@ -397,11 +397,10 @@ class Win32ComBackend:
             # row) to avoid a column shift when pasting.
             first_data_row_range = new_data_body.Rows(1)
             first_data_row_range.Copy()
-            if num_data_rows > 1:
-                dest_range = worksheet.Range(
-                    f"{start_col_letter}{header_row + 2}:{end_col_letter}{new_end_row}",
-                )
-                dest_range.PasteSpecial(Paste=_XL_PASTE_FORMATS)
+            dest_range = worksheet.Range(
+                f"{start_col_letter}{header_row + 2}:{end_col_letter}{new_end_row}",
+            )
+            dest_range.PasteSpecial(Paste=_XL_PASTE_FORMATS)
             # Clear the clipboard (copy mode)
             self._app.CutCopyMode = False
         logger.info("[win32com] copy styles took %.3fs", time.perf_counter() - t_style)

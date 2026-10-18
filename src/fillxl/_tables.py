@@ -168,6 +168,12 @@ def populate_table(
             for row_ix, row_values in enumerate(rows):
                 cell_to_fill = table_first_cell.offset(column=col_ix, row=row_ix + 1)
 
+                # Copy the style first: openpyxl applies a number format when
+                # the value is assigned, so a datetime written before the style
+                # copy would lose its date format.
+                if copy_style_in_tables:
+                    cell_to_fill._style = first_row_style
+
                 value = prepare_cell_value(row_values[data_col_idx])
                 cell_to_fill.value = value
 
@@ -176,18 +182,14 @@ def populate_table(
                 if is_text_cell_value(value, escape_formulas=escape_formulas):
                     cell_to_fill.data_type = "s"
 
-                # Copy style from first row
-                if copy_style_in_tables:
-                    cell_to_fill._style = first_row_style
-
         # Handle calculated columns (formulas)
         elif column.calculatedColumnFormula:
             formula = column.calculatedColumnFormula.attr_text or ""
-            for row_ix in range(len(rows)):
+            for row_ix in range(num_data_rows):
                 cell_to_fill = table_first_cell.offset(column=col_ix, row=row_ix + 1)
-                cell_to_fill.value = "=" + formula
                 if copy_style_in_tables:
                     cell_to_fill._style = first_row_style
+                cell_to_fill.value = "=" + formula
 
         else:
             # The column is missing from the data: clear whatever sample values

@@ -143,3 +143,12 @@ class TestTabularAdapter:
         adapter._rows = None
         with pytest.raises(RuntimeError, match="Rows not initialized"):
             _ = adapter.rows
+
+    def test_rows_can_be_read_more_than_once(self) -> None:
+        """Rows are materialised, so a second access is not empty."""
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter([{"a": 1}, {"a": 2}])
+        assert list(adapter.rows) == [[1], [2]]
+        assert list(adapter.rows) == [[1], [2]]
+        assert list(adapter.iter_rows) == [[1], [2]]

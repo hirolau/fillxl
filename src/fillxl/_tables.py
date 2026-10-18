@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from openpyxl.cell.cell import Cell
 from openpyxl.utils import column_index_from_string
@@ -47,7 +47,7 @@ def is_single_cell(cell: object) -> bool:
 def populate_table(
     workbook: Workbook,
     table_name: str,
-    data: Any,  # noqa: ANN401
+    adapter: TabularAdapter,
     *,
     copy_style_in_tables: bool = True,
     extend_conditional_formatting: bool = True,
@@ -58,7 +58,9 @@ def populate_table(
     Args:
         workbook: openpyxl Workbook instance
         table_name: Name of the table to populate
-        data: Tabular data (DataFrame, list[dict], dict[str, list], etc.)
+        adapter: Adapter holding the column names and rows to write.  The
+            caller builds it (and reuses it for column validation) so that
+            the underlying data is not read twice.
         copy_style_in_tables: If True, copy cell styles from first data row to new rows
         extend_conditional_formatting: If True, extend conditional formatting
             rules to cover new rows
@@ -73,10 +75,8 @@ def populate_table(
         ValueError: If table structure is invalid
 
     """
-    # Normalize data using adapter
-    adapter = TabularAdapter(data)
     columns = adapter.columns
-    rows = list(adapter.rows)  # Materialize rows for length calculation
+    rows = adapter.rows
 
     worksheet: Worksheet
     table: Table

@@ -103,6 +103,7 @@ class TestUpdateChartDataRanges:
         charts_template: Path,
     ) -> None:
         """A chart series referencing a manual range (not table-bound) is not updated."""
+        from fillxl._adapters import TabularAdapter
         from fillxl._charts import update_chart_data_ranges
         from fillxl._tables import populate_table
 
@@ -111,13 +112,15 @@ class TestUpdateChartDataRanges:
             spec = populate_table(
                 wb,
                 "TableTest",
-                [
-                    {"Col1": "a", "Col2": 1, "ColNotFilled": "x"},
-                    {"Col1": "b", "Col2": 2, "ColNotFilled": "y"},
-                    {"Col1": "c", "Col2": 3, "ColNotFilled": "z"},
-                    {"Col1": "d", "Col2": 4, "ColNotFilled": "w"},
-                    {"Col1": "e", "Col2": 5, "ColNotFilled": "v"},
-                ],
+                TabularAdapter(
+                    [
+                        {"Col1": "a", "Col2": 1, "ColNotFilled": "x"},
+                        {"Col1": "b", "Col2": 2, "ColNotFilled": "y"},
+                        {"Col1": "c", "Col2": 3, "ColNotFilled": "z"},
+                        {"Col1": "d", "Col2": 4, "ColNotFilled": "w"},
+                        {"Col1": "e", "Col2": 5, "ColNotFilled": "v"},
+                    ]
+                ),
             )
             update_chart_data_ranges(spec, wb)
 

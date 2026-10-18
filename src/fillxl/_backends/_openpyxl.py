@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 
+from fillxl._adapters import TabularAdapter
 from fillxl._cells import populate_named_cells
 from fillxl._charts import (
     TableChangeSpecs,
@@ -126,9 +127,8 @@ class OpenpyxlBackend:
         """
         workbook = self._require_workbook()
 
-        # Column validation
-        from fillxl._adapters import TabularAdapter
-
+        # The adapter is built once and shared with populate_table so that
+        # expensive data (e.g. a DuckDB relation) is only read once.
         adapter = TabularAdapter(data)
         _validate_table_columns(
             workbook=workbook,
@@ -140,7 +140,7 @@ class OpenpyxlBackend:
         return populate_table(
             workbook,
             name,
-            data,
+            adapter,
             copy_style_in_tables=config.copy_table_styles,
             extend_conditional_formatting=config.extend_conditional_formatting,
             escape_formulas=config.escape_formulas,

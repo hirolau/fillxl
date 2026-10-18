@@ -117,6 +117,7 @@ class TestBackendReuse:
         output_path: Path,
     ) -> None:
         """Load → fill → save → close can be repeated with the same instance."""
+        from fillxl._adapters import TabularAdapter
         from fillxl._backends._openpyxl import OpenpyxlBackend
         from fillxl._tables import populate_table
 
@@ -127,7 +128,7 @@ class TestBackendReuse:
         _make_simple_table(path1, "T1")
         backend.load(path1)
         assert backend._workbook is not None
-        populate_table(backend._workbook, "T1", [{"Name": "first", "Value": 1}])
+        populate_table(backend._workbook, "T1", TabularAdapter([{"Name": "first", "Value": 1}]))
         backend.save(path1)
         backend.close()
 
@@ -144,7 +145,7 @@ class TestBackendReuse:
         _make_simple_table(path2, "T2")
         backend.load(path2)
         assert backend._workbook is not None
-        populate_table(backend._workbook, "T2", [{"Name": "second", "Value": 2}])
+        populate_table(backend._workbook, "T2", TabularAdapter([{"Name": "second", "Value": 2}]))
         backend.save(path2)
         backend.close()
 

@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import logging
+import sys
 from typing import TYPE_CHECKING, Any
 
+# Optional dependencies are looked up in ``sys.modules`` instead of imported:
+# an object of one of these types can only exist if the module has already
+# been imported, and a per-call ``import`` is both slow and repeatedly fails
+# to find packages that are not installed.
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
@@ -23,54 +28,43 @@ class TabularAdapter:
         """
         self.data = data
         self._columns: list[str] | None = None
-        self._rows: Iterable[Sequence[Any]] | None = None
+        self._rows: list[Sequence[Any]] | None = None
         self._detect_type()
 
     def _detect_type(self) -> None:
-        """Detect the type of data and prepare column names and row iterator."""
+        """Detect the type of data and prepare column names and rows."""
         data = self.data
 
         # Try pandas DataFrame
-        try:
-            import pandas as pd
-
-            if isinstance(data, pd.DataFrame):
-                self._columns = data.columns.tolist()
-                self._rows = data.itertuples(index=False, name=None)
-                logger.debug("Detected pandas DataFrame with %d columns", len(self._columns))
-                return
-        except ImportError:
-            pass
+        pd = sys.modules.get("pandas")
+        if pd is not None and isinstance(data, pd.DataFrame):
+            self._columns = [str(col) for col in data.columns]
+            self._rows = list(data.itertuples(index=False, name=None))
+            logger.debug("Detected pandas DataFrame with %d columns", len(self._columns))
+            return
 
         # Try polars DataFrame
-        try:
-            import polars as pl
-
-            if isinstance(data, pl.DataFrame):
-                self._columns = data.columns
-                self._rows = data.iter_rows()
-                logger.debug("Detected polars DataFrame with %d columns", len(self._columns))
-                return
-        except ImportError:
-            pass
+        pl = sys.modules.get("polars")
+        if pl is not None and isinstance(data, pl.DataFrame):
+            self._columns = [str(col) for col in data.columns]
+            self._rows = list(data.iter_rows())
+            logger.debug("Detected polars DataFrame with %d columns", len(self._columns))
+            return
 
         # Try duckdb Relation
-        try:
-            import duckdb
-
-            if isinstance(data, duckdb.DuckDBPyRelation):
-                self._columns = data.columns
-                self._rows = iter(data.fetchall())
-                logger.debug("Detected duckdb Relation with %d columns", len(self._columns))
-                return
-        except ImportError:
-            pass
+        duckdb = sys.modules.get("duckdb")
+        if duckdb is not None and isinstance(data, duckdb.DuckDBPyRelation):
+            self._columns = [str(col) for col in data.columns]
+            self._rows = [tuple(row) for row in data.fetchall()]
+            logger.debug("Detected duckdb Relation with %d columns", len(self._columns))
+            return
 
         # Try list[dict]
         if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-            self._columns = list(data[0].keys())
-            self._rows = ([row.get(col) for col in self._columns] for row in data)
-            logger.debug("Detected list[dict] with %d columns", len(self._columns))
+            columns = [str(col) for col in data[0]]
+            self._columns = columns
+            self._rows = [[row.get(col) for col in columns] for row in data]
+            logger.debug("Detected list[dict] with %d columns", len(columns))
             return
 
         # Try dict[str, list]
@@ -80,7 +74,7 @@ class TabularAdapter:
                 self._columns = list(data.keys())
                 # Transpose: dict of columns -> list of rows
                 num_rows = len(first_value)
-                self._rows = ([data[col][i] for col in self._columns] for i in range(num_rows))
+                self._rows = [[data[col][i] for col in self._columns] for i in range(num_rows)]
                 logger.debug("Detected dict[str, list] with %d columns", len(self._columns))
                 return
 
@@ -105,12 +99,22 @@ class TabularAdapter:
         return self._columns
 
     @property
-    def rows(self) -> Iterable[Sequence[Any]]:
-        """Get row iterator."""
+    def rows(self) -> list[Sequence[Any]]:
+        """Get the materialised rows.
+
+        Rows are materialised in the constructor so that the property can be
+        read repeatedly — a one-shot iterator would silently yield nothing on
+        the second access.
+        """
         if self._rows is None:
             msg = "Rows not initialized"
             raise RuntimeError(msg)
         return self._rows
+
+    @property
+    def iter_rows(self) -> Iterable[Sequence[Any]]:
+        """Get a fresh iterator over the rows."""
+        return iter(self.rows)
 
     @staticmethod
     def is_tabular(data: Any) -> bool:  # noqa: ANN401

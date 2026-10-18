@@ -237,18 +237,22 @@ class TestChartReferenceUpdates:
 class TestTableChangeSpecs:
     """The data structure that tracks table dimension changes."""
 
-    def test_table_change_specs_captures_old_and_new_references(self) -> None:
-        """A TableChangeSpecs holds the old ref, new ref, and worksheet title."""
+    def test_table_change_specs_captures_old_and_new_dimensions(self) -> None:
+        """A TableChangeSpecs holds the table rectangle before and after a fill."""
         from fillxl._charts import TableChangeSpecs
 
         spec = TableChangeSpecs(
-            old_ref="A1:B5",
-            new_ref="A1:B10",
             worksheet_title="Data",
+            header_row=1,
+            first_col=1,
+            last_col=2,
+            old_last_row=5,
+            new_last_row=10,
         )
+        assert spec.worksheet_title == "Data"
+        assert spec.first_data_row == 2
         assert spec.old_ref == "A1:B5"
         assert spec.new_ref == "A1:B10"
-        assert spec.worksheet_title == "Data"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

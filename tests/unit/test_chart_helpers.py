@@ -143,9 +143,12 @@ class TestUpdateChartDataRanges:
         wb = openpyxl.load_workbook(charts_template)
         try:
             spec = TableChangeSpecs(
-                old_ref="A1:B5",
-                new_ref="A1:B10",
                 worksheet_title="NonExistentSheet",
+                header_row=1,
+                first_col=1,
+                last_col=2,
+                old_last_row=5,
+                new_last_row=10,
             )
             update_chart_data_ranges(spec, wb)
         finally:
@@ -167,9 +170,12 @@ class TestUpdateChartDataRanges:
             refs_before = {(r.f, id(r)) for r in all_chart_series_references(wb)}
 
             spec = TableChangeSpecs(
-                old_ref="A1:B5",
-                new_ref="A1:B5",
                 worksheet_title="TestTable",
+                header_row=1,
+                first_col=1,
+                last_col=2,
+                old_last_row=5,
+                new_last_row=5,
             )
             update_chart_data_ranges(spec, wb)
 
@@ -195,9 +201,12 @@ class TestUpdateChartDataRanges:
                             ser.val.numRef.f = None
 
             spec = TableChangeSpecs(
-                old_ref="A1:B5",
-                new_ref="A1:B6",
                 worksheet_title="TestTable",
+                header_row=1,
+                first_col=1,
+                last_col=2,
+                old_last_row=5,
+                new_last_row=6,
             )
             update_chart_data_ranges(spec, wb)
         finally:
@@ -213,9 +222,12 @@ class TestUpdateChartDataRanges:
         wb = openpyxl.load_workbook(charts_template)
         try:
             spec = TableChangeSpecs(
-                old_ref="A1:E5",
-                new_ref="A1:E10",
                 worksheet_title="TestTable",
+                header_row=1,
+                first_col=1,
+                last_col=5,
+                old_last_row=5,
+                new_last_row=10,
             )
             update_chart_data_ranges(spec, wb)
         finally:
@@ -252,9 +264,12 @@ class TestUpdateChartDataRanges:
             caplog.set_level(logging.DEBUG)
 
             spec = TableChangeSpecs(
-                old_ref="A1:B5",
-                new_ref="A1:B10",
                 worksheet_title="TestTable",
+                header_row=1,
+                first_col=1,
+                last_col=2,
+                old_last_row=5,
+                new_last_row=10,
             )
             update_chart_data_ranges(spec, wb)
 
@@ -307,9 +322,12 @@ class TestUpdateChartDataRanges:
         ws.add_table(table)
 
         spec = TableChangeSpecs(
-            old_ref="A1:B5",
-            new_ref="A1:B10",
             worksheet_title="Data",
+            header_row=1,
+            first_col=1,
+            last_col=2,
+            old_last_row=5,
+            new_last_row=10,
         )
         update_chart_data_ranges(spec, wb)
 

@@ -59,7 +59,7 @@ class Backend(Protocol):
             config: Global fill configuration.
 
         Returns:
-            A :class:`TableChangeSpecs` describing the old and new table
+            A :class:`TableChangeSpecs` describing the table's old and new
             dimensions (so chart references can be updated).
 
         """

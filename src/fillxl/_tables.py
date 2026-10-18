@@ -185,9 +185,12 @@ def populate_table(
         )
 
     return TableChangeSpecs(
-        old_ref=original_table_ref,
-        new_ref=new_table_ref,
         worksheet_title=worksheet_title,
+        header_row=table_start_row,
+        first_col=table_start_column,
+        last_col=column_index_from_string(table_end_column_letter),
+        old_last_row=table_old_end_row,
+        new_last_row=table_end_row,
     )
 
 

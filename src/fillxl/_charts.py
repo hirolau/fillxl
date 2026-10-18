@@ -26,16 +26,60 @@ _R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 class TableChangeSpecs(NamedTuple):
     """Specification for a table range change.
 
+    All row and column numbers are absolute worksheet coordinates and
+    ``header_row`` is the row that holds the column headers, so the first
+    data row is always ``header_row + 1``.  ``old_last_row`` and
+    ``new_last_row`` are the last rows *of the table* (headers included),
+    which is what chart data ranges are compared against.  A table without
+    any data rows has ``last_row == header_row``.
+
     Attributes:
-        old_ref: Original table reference (e.g., "B12:M13")
-        new_ref: New table reference after resizing (e.g., "B12:M20")
-        worksheet_title: Title of the worksheet containing the table
+        worksheet_title: Title of the worksheet containing the table.
+        header_row: Row number of the table header.
+        first_col: 1-based index of the table's first column.
+        last_col: 1-based index of the table's last column.
+        old_last_row: Last row of the table before the fill.
+        new_last_row: Last row of the table after the fill.
+
+    Examples:
+        >>> spec = TableChangeSpecs("Sheet1", 12, 2, 13, 13, 20)
+        >>> spec.first_data_row
+        13
+        >>> spec.old_ref
+        'B12:M13'
+        >>> spec.new_ref
+        'B12:M20'
 
     """
 
-    old_ref: str
-    new_ref: str
     worksheet_title: str
+    header_row: int
+    first_col: int
+    last_col: int
+    old_last_row: int
+    new_last_row: int
+
+    @property
+    def first_data_row(self) -> int:
+        """Row number of the first data row (the row below the header)."""
+        return self.header_row + 1
+
+    @property
+    def old_ref(self) -> str:
+        """The table's reference before the fill (e.g. ``B12:M13``)."""
+        return _format_ref(self.first_col, self.header_row, self.last_col, self.old_last_row)
+
+    @property
+    def new_ref(self) -> str:
+        """The table's reference after the fill (e.g. ``B12:M20``)."""
+        return _format_ref(self.first_col, self.header_row, self.last_col, self.new_last_row)
+
+
+def _format_ref(first_col: int, first_row: int, last_col: int, last_row: int) -> str:
+    """Format a 1-based rectangle as an A1-style reference."""
+    from openpyxl.utils import get_column_letter
+
+    return f"{get_column_letter(first_col)}{first_row}:{get_column_letter(last_col)}{last_row}"
 
 
 def all_chart_series(workbook: Workbook) -> Generator[Any, None, None]:
@@ -87,7 +131,7 @@ def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None
     data ranges updated to match the new table dimensions.
 
     Args:
-        spec: TableChangeSpecs describing the old and new table references
+        spec: TableChangeSpecs describing the old and new table dimensions
         workbook: openpyxl Workbook instance
 
     """
@@ -107,31 +151,23 @@ def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None
             _, ref_start_column, ref_start_row = ref_start.split("$")
             ref_start_row = int(ref_start_row)
 
-            # Parse the old table reference
-            table_start_row = int("".join([x for x in spec.old_ref.split(":")[0] if x.isdigit()]))
-            old_ref_end_row = int("".join([x for x in spec.old_ref.split(":")[1] if x.isdigit()]))
-
             # Check if the reference starts one row after the table header
             # (i.e., it's referencing the data rows, not the header)
-            if ref_start_row - table_start_row != 1:
+            if ref_start_row - spec.header_row != 1:
                 continue
 
             # Check if the column is within the table column range
-            table_start_col_digit, table_end_col_digit = [
-                column_index_from_string("".join(letter for letter in x if not letter.isdigit()))
-                for x in spec.old_ref.split(":")
-            ]
             ref_start_column_digit = column_index_from_string(ref_start_column)
 
-            if not (table_start_col_digit <= ref_start_column_digit <= table_end_col_digit):
+            if not (spec.first_col <= ref_start_column_digit <= spec.last_col):
                 continue
 
             # Check if the reference end row matches the old table end row
-            if old_ref_end_row != ref_end_row:
+            if spec.old_last_row != ref_end_row:
                 continue
 
-            # Calculate the new end row from the new table reference
-            new_end_row = int("".join([x for x in spec.new_ref.split(":")[1] if x.isdigit()]))
+            # Calculate the new end row from the new table dimensions
+            new_end_row = spec.new_last_row
 
             # Update the reference (preserve the trailing "$" before the row number)
             new_data_ref = "$".join(ref.split("$")[:-1]) + "$" + str(new_end_row)

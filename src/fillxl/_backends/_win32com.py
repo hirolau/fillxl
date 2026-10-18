@@ -229,9 +229,7 @@ class Win32ComBackend:
         data_body_range = list_obj.DataBodyRange
         if data_body_range is not None:
             old_end_row = data_body_range.Row + data_body_range.Rows.Count - 1
-            old_ref = f"{start_col_letter}{data_body_range.Row}:{end_col_letter}{old_end_row}"
         else:
-            old_ref = f"{start_col_letter}{header_row + 1}:{end_col_letter}{header_row + 1}"
             old_end_row = header_row
 
         worksheet_title = str(worksheet.Name)
@@ -241,11 +239,13 @@ class Win32ComBackend:
             # No data — clear existing data body
             if data_body_range is not None:
                 data_body_range.ClearContents()
-            new_ref = f"{start_col_letter}{header_row + 1}:{end_col_letter}{header_row + 1}"
             return TableChangeSpecs(
-                old_ref=old_ref,
-                new_ref=new_ref,
                 worksheet_title=worksheet_title,
+                header_row=header_row,
+                first_col=start_col,
+                last_col=start_col + num_cols - 1,
+                old_last_row=old_end_row,
+                new_last_row=header_row + 1,
             )
 
         new_end_row = header_row + num_data_rows
@@ -392,11 +392,13 @@ class Win32ComBackend:
             )
         logger.info("[win32com] conditional formatting took %.3fs", time.perf_counter() - t_cf)
 
-        new_ref = f"{start_col_letter}{header_row + 1}:{end_col_letter}{new_end_row}"
         return TableChangeSpecs(
-            old_ref=old_ref,
-            new_ref=new_ref,
             worksheet_title=worksheet_title,
+            header_row=header_row,
+            first_col=start_col,
+            last_col=start_col + num_cols - 1,
+            old_last_row=old_end_row,
+            new_last_row=new_end_row,
         )
 
     def update_charts(self, spec: TableChangeSpecs) -> None:

@@ -123,12 +123,7 @@ class TestEngineSelection:
 
 
 class TestTableOptions:
-    """extend_tables, copy_table_styles, extend_conditional_formatting defaults."""
-
-    def test_extend_tables_is_enabled_by_default(self) -> None:
-        """By default tables resize to fit your data."""
-        cfg = FillXLConfig()
-        assert cfg.extend_tables is True
+    """copy_table_styles, extend_conditional_formatting defaults."""
 
     def test_copy_table_styles_is_enabled_by_default(self) -> None:
         """By default new rows inherit the first row's formatting."""

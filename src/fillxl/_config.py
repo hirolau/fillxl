@@ -55,7 +55,6 @@ class FillXLConfig:
             data; enable it when data may come from untrusted sources, where
             a leading ``=`` would otherwise be executed by Excel.
         refresh_pivot_tables: Whether to mark pivot caches for refresh on open.
-        extend_tables: Whether to resize tables to fit data.
         extend_conditional_formatting: Whether to extend conditional
             formatting rules when a table is resized.
         copy_table_styles: Whether to copy existing table cell styles to new
@@ -72,7 +71,6 @@ class FillXLConfig:
     )
     escape_formulas: bool = field(default=False, validator=instance_of(bool))
     refresh_pivot_tables: bool = field(default=True, validator=instance_of(bool))
-    extend_tables: bool = field(default=True, validator=instance_of(bool))
     extend_conditional_formatting: bool = field(default=True, validator=instance_of(bool))
     copy_table_styles: bool = field(default=True, validator=instance_of(bool))
     hide_underscore_sheets: bool = field(default=True, validator=instance_of(bool))

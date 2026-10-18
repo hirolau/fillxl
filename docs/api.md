@@ -30,12 +30,19 @@ fill(
 | `output` | `str \| Path` | Path where the filled workbook will be saved. |
 | `values` | `dict[str, Any] \| None` | Map of named cell → value to fill. |
 | `tables` | `dict[str, TabularData] \| None` | Map of table name → data to fill. |
-| `engine` | `Engine` | Backend engine: `"auto"`, `"openpyxl"`, or `"win32com"`. Default: `"auto"`. |
+| `engine` | `Engine` | Backend engine: `"auto"`, `"openpyxl"`, or `"win32com"`. Default: `"auto"` (openpyxl). |
 | `config` | `FillXLConfig \| None` | Advanced configuration (see below). |
 
 ### Returns
 
 `Path` — the path to the saved output file.
+
+### Which engine does `"auto"` pick?
+
+`"auto"` selects the **openpyxl** backend: it works everywhere and needs no
+Excel installation. Pass `engine="win32com"` explicitly to drive Microsoft
+Excel through COM — that is the engine to use for `.xlsm`/`.xlsb` templates
+and for chart types openpyxl cannot write.
 
 ---
 
@@ -47,9 +54,10 @@ Fine-grained control over fill behaviour.
 from fillxl import FillXLConfig
 
 config = FillXLConfig(
-    validate_columns="strict",
+    column_validation_strategy="strict",
+    escape_formulas=True,
     active_sheet="Report",
-    hide_sheets=["RawData"],
+    delete_sheets=["RawData"],
 )
 ```
 
@@ -57,12 +65,14 @@ config = FillXLConfig(
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `validate_columns` | `str` | `"strict"` | Strategy for mismatched columns: `"strict"`, `"drop"`, `"warn"`, `"all_but_formulas"`, `"none"`. |
+| `column_validation_strategy` | `str` | `"all_but_formulas"` | Strategy for mismatched columns (see below). |
+| `escape_formulas` | `bool` | `False` | Write strings starting with `=` as literal text instead of formulas. Enable this for untrusted data. |
+| `refresh_pivot_tables` | `bool` | `True` | Refresh pivot caches after filling. |
+| `extend_conditional_formatting` | `bool` | `True` | Resize conditional formatting ranges with the table. |
+| `copy_table_styles` | `bool` | `True` | Copy the first data row's styles to new rows. |
+| `hide_underscore_sheets` | `bool` | `True` | Hide sheets whose names start with `_`. |
+| `delete_sheets` | `Sequence[str] \| None` | `None` | Sheet names to delete (stored as a tuple). |
 | `active_sheet` | `str \| None` | `None` | Name of the sheet to make active after filling. |
-| `hide_sheets` | `list[str] \| None` | `None` | Sheet names to hide after filling. |
-| `delete_sheets` | `list[str] \| None` | `None` | Sheet names to delete after filling. |
-| `refresh_pivots` | `bool` | `True` | Refresh pivot tables after filling. |
-| `extend_conditional_formatting` | `bool` | `True` | Extend conditional formatting ranges when tables grow. |
 
 ---
 
@@ -71,7 +81,12 @@ config = FillXLConfig(
 | Strategy | Behaviour |
 |----------|-----------|
 | `"strict"` | Raise `ValueError` if data columns don't match table columns. |
-| `"drop"` | Drop extra data columns, fill missing ones with `None`. |
-| `"warn"` | Warn about mismatches but continue filling. |
-| `"all_but_formulas"` | Like `"strict"`, but exempt calculated/formula columns. |
+| `"all_but_formulas"` | Like `"strict"`, but exempt calculated/formula columns. Extra data columns are allowed. |
+| `"all_but_formulas_strict"` | Like `"all_but_formulas"`, but extra data columns raise. |
+| `"drop"` | Skip table columns that have no data column and ignore extra data columns. |
+| `"warn"` | Log warnings about mismatches but continue filling. |
 | `"none"` | No validation — best-effort fill. |
+
+Table columns without a matching data column are cleared (or keep their
+calculated-column formula), so sample values from the template do not leak
+into the output.

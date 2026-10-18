@@ -41,7 +41,9 @@ def fill(
         values: Mapping of named cell / defined name to scalar values.
         engine: Backend engine to use (``"auto"``, ``"openpyxl"``, or
             ``"win32com"``).  Defaults to ``"auto"``, which selects the
-            best available backend for the current platform.
+            openpyxl backend.  Pass ``engine="win32com"`` explicitly to drive
+            Microsoft Excel through COM (Windows only, needed for
+            ``.xlsm``/``.xlsb`` templates and for modern chart types).
         config: Configuration options.  Uses :class:`FillXLConfig` defaults
             if not provided.
 

@@ -189,6 +189,15 @@ def populate_table(
                 if copy_style_in_tables:
                     cell_to_fill._style = first_row_style
 
+        else:
+            # The column is missing from the data: clear whatever sample values
+            # the template left in the rows this fill covers.
+            column_index = table_start_column + col_ix
+            for clear_row in range(first_data_row, new_table_last_row + 1):
+                stale_cell = worksheet.cell(row=clear_row, column=column_index)
+                if is_single_cell(stale_cell):
+                    stale_cell.value = None
+
     # Extend conditional formatting to cover all new rows
     # Guard: skip when there are no data rows (first_data_row > new_table_last_row)
     if extend_conditional_formatting and first_data_row <= new_table_last_row:

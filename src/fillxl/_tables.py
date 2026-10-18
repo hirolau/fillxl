@@ -77,6 +77,7 @@ def populate_table(
     """
     columns = adapter.columns
     rows = adapter.rows
+    num_data_rows = len(rows)
 
     worksheet: Worksheet
     table: Table
@@ -99,24 +100,28 @@ def populate_table(
     # Calculate dimensions
     table_start_row = int("".join(x for x in table_start if x.isdigit()))
     table_old_end_row = int("".join(x for x in table_end if x.isdigit()))
-    table_end_row = table_start_row + len(rows)
     table_start_column_letter = "".join(x for x in table_start if not x.isdigit())
     table_start_column = column_index_from_string(table_start_column_letter)
     table_end_column_letter = "".join(x for x in table_end if not x.isdigit())
     first_data_row = table_start_row + 1
     worksheet_title: str = str(worksheet.title)
 
+    # An Excel table needs at least one body row, so empty data keeps a single
+    # (cleared) row — the same thing the win32com backend does.
+    new_table_last_row = table_start_row + max(num_data_rows, 1)
+    new_table_ref = table_start + ":" + table_end_column_letter + str(new_table_last_row)
+
     # Check for overflow: if the table is growing, ensure no existing content
     # is overwritten
-    if table_end_row > table_old_end_row:
+    if new_table_last_row > table_old_end_row:
         end_col = column_index_from_string(table_end_column_letter)
-        for check_row in range(table_old_end_row + 1, table_end_row + 1):
+        for check_row in range(table_old_end_row + 1, new_table_last_row + 1):
             for check_col in range(table_start_column, end_col + 1):
                 existing = worksheet.cell(row=check_row, column=check_col).value
                 if existing is not None:
                     cell_ref = f"{col_to_excel(check_col)}{check_row}"
                     msg = (
-                        f"Table '{table_name}' cannot expand to {table_end_row} rows: "
+                        f"Table '{table_name}' cannot expand to {new_table_last_row} rows: "
                         f"cell {cell_ref} already contains data ({existing!r}). "
                         f"Move or remove the content below the table first."
                     )
@@ -126,7 +131,6 @@ def populate_table(
 
     # Update table reference — the autoFilter must stay in step with the table,
     # otherwise Excel reports the workbook as repaired on open.
-    new_table_ref = table_start + ":" + table_end_column_letter + str(table_start_row + len(rows))
     table.ref = new_table_ref
     if table.autoFilter is not None:
         table.autoFilter.ref = new_table_ref
@@ -138,16 +142,15 @@ def populate_table(
         msg = "Expected a single cell! This should never happen in a table."
         raise ValueError(msg)
 
-    # Clear any leftover rows if the new data is shorter than the old table
-    if table_old_end_row > table_end_row:
-        range_to_clear = worksheet[
-            f"{table_start_column_letter}{table_end_row + 1}:"
-            f"{table_end_column_letter}{table_old_end_row}"
-        ]
-        for row in range_to_clear:
-            for cell in row:
-                if is_single_cell(cell):
-                    cell.value = None
+    # Clear any leftover rows the new data does not cover (this also clears the
+    # single body row that empty data leaves behind).
+    first_unused_row = first_data_row + num_data_rows
+    for clear_row in range(first_unused_row, table_old_end_row + 1):
+        end_col = column_index_from_string(table_end_column_letter)
+        for clear_col in range(table_start_column, end_col + 1):
+            stale_cell = worksheet.cell(row=clear_row, column=clear_col)
+            if is_single_cell(stale_cell):
+                stale_cell.value = None
 
     # Create a mapping of data column names to column indices
     data_column_map = {col_name: idx for idx, col_name in enumerate(columns)}
@@ -187,14 +190,14 @@ def populate_table(
                     cell_to_fill._style = first_row_style
 
     # Extend conditional formatting to cover all new rows
-    # Guard: skip when there are no data rows (first_data_row > table_end_row)
-    if extend_conditional_formatting and first_data_row <= table_end_row:
+    # Guard: skip when there are no data rows (first_data_row > new_table_last_row)
+    if extend_conditional_formatting and first_data_row <= new_table_last_row:
         _extend_conditional_formatting(
             worksheet=worksheet,
             table_start_column_letter=table_start_column_letter,
             table_end_column_letter=table_end_column_letter,
             first_data_row=first_data_row,
-            table_end_row=table_end_row,
+            table_end_row=new_table_last_row,
         )
 
     return TableChangeSpecs(
@@ -203,7 +206,7 @@ def populate_table(
         first_col=table_start_column,
         last_col=column_index_from_string(table_end_column_letter),
         old_last_row=table_old_end_row,
-        new_last_row=table_end_row,
+        new_last_row=new_table_last_row,
     )
 
 

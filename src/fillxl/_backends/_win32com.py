@@ -241,27 +241,38 @@ class Win32ComBackend:
             formula_columns=formula_columns,
         )
 
-        # ── Build old reference ───────────────────────────────────────────
+        # ── Measure the existing table ────────────────────────────────────
         data_body_range = list_obj.DataBodyRange
         if data_body_range is not None:
-            old_end_row = data_body_range.Row + data_body_range.Rows.Count - 1
+            old_data_row = data_body_range.Row
+            old_last_row = old_data_row + data_body_range.Rows.Count - 1
         else:
-            old_end_row = header_row
+            old_data_row = header_row + 1
+            old_last_row = header_row
 
         worksheet_title = str(worksheet.Name)
 
-        # ── Resize table ──────────────────────────────────────────────────
+        # ── Empty data: keep a single, cleared body row ───────────────────
+        # (openpyxl does the same; an Excel table needs at least one body row.)
         if num_data_rows == 0:
-            # No data — clear existing data body
             if data_body_range is not None:
                 data_body_range.ClearContents()
+            new_last_row = header_row + 1
+            if old_last_row != new_last_row:
+                new_range = self._app.Range(
+                    f"{start_col_letter}{header_row}:{end_col_letter}{new_last_row}",
+                )
+                list_obj.Resize(new_range)
+                worksheet.Range(
+                    f"{start_col_letter}{new_last_row}:{end_col_letter}{new_last_row}",
+                ).ClearContents()
             return TableChangeSpecs(
                 worksheet_title=worksheet_title,
                 header_row=header_row,
                 first_col=start_col,
                 last_col=start_col + num_cols - 1,
-                old_last_row=old_end_row,
-                new_last_row=header_row + 1,
+                old_last_row=old_last_row,
+                new_last_row=new_last_row,
             )
 
         new_end_row = header_row + num_data_rows
@@ -271,8 +282,8 @@ class Win32ComBackend:
         # Read the entire overflow range in a single COM call (batch read)
         # instead of cell-by-cell (which is ~100x slower for large expansions).
         t_overflow = time.perf_counter()
-        if num_data_rows > (old_end_row - header_row):
-            overflow_start = old_end_row + 1
+        if num_data_rows > (old_last_row - header_row):
+            overflow_start = old_last_row + 1
             overflow_range_str = f"{start_col_letter}{overflow_start}:{end_col_letter}{new_end_row}"
             try:
                 overflow_values = worksheet.Range(overflow_range_str).Value
@@ -320,9 +331,8 @@ class Win32ComBackend:
 
         # Clear old data rows if the table has shrunk — batch clear
         t_clear = time.perf_counter()
-        old_data_end = old_end_row
-        if num_data_rows < (old_data_end - header_row):
-            clear_range_str = f"{start_col_letter}{new_end_row + 1}:{end_col_letter}{old_data_end}"
+        if num_data_rows < (old_last_row - header_row):
+            clear_range_str = f"{start_col_letter}{new_end_row + 1}:{end_col_letter}{old_last_row}"
             with contextlib.suppress(Exception):
                 worksheet.Range(clear_range_str).ClearContents()
         logger.info("[win32com] clear took %.3fs", time.perf_counter() - t_clear)
@@ -398,7 +408,7 @@ class Win32ComBackend:
 
         # ── Extend conditional formatting ─────────────────────────────────
         t_cf = time.perf_counter()
-        if config.extend_conditional_formatting and num_data_rows > 0:
+        if config.extend_conditional_formatting:
             _extend_conditional_formatting_com(
                 worksheet=worksheet,
                 start_col_letter=start_col_letter,
@@ -413,7 +423,7 @@ class Win32ComBackend:
             header_row=header_row,
             first_col=start_col,
             last_col=start_col + num_cols - 1,
-            old_last_row=old_end_row,
+            old_last_row=old_last_row,
             new_last_row=new_end_row,
         )
 

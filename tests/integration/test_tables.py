@@ -125,3 +125,33 @@ def test_a_table_with_a_totals_row_is_rejected(output_path: Path) -> None:
             output=output_path,
             tables={"Totals": [{"Name": "b", "Value": 2}]},
         )
+
+
+def test_an_empty_dataframe_leaves_one_cleared_body_row(output_path: Path) -> None:
+    """Empty data keeps a single empty row so the table stays valid."""
+    import pandas as pd
+
+    columns = ["Col1", "Col2", "ColNotFilled", "TestFormattedPct"]
+    fill(
+        template=TEMPLATE,
+        output=output_path,
+        tables={
+            "TableTest": pd.DataFrame(columns=columns),
+        },
+    )
+
+    wb = openpyxl.load_workbook(output_path)
+    try:
+        ws = wb["TestTable"]
+        table = next(iter(ws.tables.values()))
+        assert table.ref == "A1:E2"
+        assert table.autoFilter.ref == "A1:E2"
+        assert [ws.cell(row=2, column=col).value for col in range(1, 6)] == [
+            None,
+            None,
+            None,
+            None,
+            None,
+        ]
+    finally:
+        wb.close()

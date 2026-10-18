@@ -364,6 +364,124 @@ class TestWin32ComTotalsRows:
             )
 
 
+class TestWin32ComHeaderlessTable:
+    """Tables whose header row is hidden still fill and keep their ListObject.
+
+    Excel drops the ListObject when a *whole* headerless body is written or
+    cleared in one call, so these tests guard the row-by-row workaround.
+    """
+
+    @staticmethod
+    def _build_template(path: Path, *, data_rows: int) -> None:
+        from openpyxl.worksheet.table import Table, TableColumn
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        for offset in range(data_rows):
+            ws.cell(row=3 + offset, column=2, value=100 + offset)
+            ws.cell(row=3 + offset, column=3, value=offset)
+        ws.add_table(
+            Table(
+                displayName="NoHeaders",
+                ref=f"B3:C{2 + data_rows}",
+                tableColumns=[
+                    TableColumn(id=1, name="Column1"),
+                    TableColumn(id=2, name="Column2"),
+                ],
+                headerRowCount=0,
+            ),
+        )
+        wb.save(path)
+        wb.close()
+
+    def test_a_headerless_table_grows_and_keeps_its_list_object(self, tmp_path: Path) -> None:
+        """Growing writes every new row and Excel keeps the table."""
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = tmp_path / "headerless_grow.xlsx"
+        self._build_template(template, data_rows=2)
+
+        fill(
+            template=template,
+            output=tmp_path / "out.xlsx",
+            tables={
+                "NoHeaders": [
+                    {"Column1": 10, "Column2": 60},
+                    {"Column1": 20, "Column2": 70},
+                    {"Column1": 30, "Column2": 80},
+                ],
+            },
+            engine="win32com",
+        )
+
+        wb = openpyxl.load_workbook(tmp_path / "out.xlsx")
+        try:
+            ws = wb["Data"]
+            table = ws.tables["NoHeaders"]
+
+            assert table.headerRowCount == 0
+            assert table.ref == "B3:C5"
+            assert [ws.cell(row=r, column=2).value for r in (3, 4, 5)] == [10, 20, 30]
+            assert [ws.cell(row=r, column=3).value for r in (3, 4, 5)] == [60, 70, 80]
+        finally:
+            wb.close()
+
+    def test_a_headerless_table_can_shrink_to_a_single_row(self, tmp_path: Path) -> None:
+        """A one-row body is written cell by cell, so the table survives."""
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = tmp_path / "headerless_shrink.xlsx"
+        self._build_template(template, data_rows=3)
+
+        fill(
+            template=template,
+            output=tmp_path / "out.xlsx",
+            tables={"NoHeaders": [{"Column1": 7, "Column2": 8}]},
+            engine="win32com",
+        )
+
+        wb = openpyxl.load_workbook(tmp_path / "out.xlsx")
+        try:
+            ws = wb["Data"]
+            table = ws.tables["NoHeaders"]
+
+            assert table.ref == "B3:C3"
+            assert ws.cell(row=3, column=2).value == 7
+            assert ws.cell(row=3, column=3).value == 8
+            assert ws.cell(row=4, column=2).value is None
+        finally:
+            wb.close()
+
+    def test_empty_data_keeps_the_headerless_table(self, tmp_path: Path) -> None:
+        """Clearing a headerless table row by row does not drop it."""
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = tmp_path / "headerless_empty.xlsx"
+        self._build_template(template, data_rows=2)
+
+        fill(
+            template=template,
+            output=tmp_path / "out.xlsx",
+            tables={"NoHeaders": []},
+            engine="win32com",
+        )
+
+        wb = openpyxl.load_workbook(tmp_path / "out.xlsx")
+        try:
+            ws = wb["Data"]
+            table = ws.tables["NoHeaders"]
+
+            assert table.ref == "B3:C3"
+            assert ws.cell(row=3, column=2).value is None
+            assert ws.cell(row=3, column=3).value is None
+        finally:
+            wb.close()
+
+
 class TestWin32ComOverflowGuard:
     """COM reads the cells below the table before resizing it."""
 

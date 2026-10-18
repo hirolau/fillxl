@@ -1,6 +1,6 @@
 [project]
 name = "fillxl"
-version = "0.3.0"
+version = "0.4.0"
 description = "Fill Excel templates with data from Python."
 readme = "README.md"
 requires-python = ">=3.11"

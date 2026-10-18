@@ -172,6 +172,7 @@ Benchmark: **5,000 rows × 20 columns** (list[dict] data).
 - `win32com` requires Windows + Excel.
 - Timezone-aware datetimes are converted to naive (wall-clock preserved).
 - Tables with a totals row are supported: the totals row stays directly below the data body, keeping its labels, functions and styling. Totals formulas written as explicit ranges (e.g. `SUM(B2:B5)`) are not rewritten.
+- Tables without a header row are supported: Excel names their columns `Column1`, `Column2`, …, so pass those names as the data keys.
 - Strings starting with `=` are written as literal text by default; pass `FillXLConfig(escape_formulas=False)` only when the data is trusted and meant to contain formulas.
 
 ---

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-10-18
+
+### Added
+
+- Tables **without a header row** (the table's "Header Row" option is off) are
+  supported by both backends. Excel names their columns `Column1`,
+  `Column2`, …, so that is how the data is addressed, and the data is written
+  starting in the table's first row instead of one row below it. win32com
+  writes and clears such tables row by row (cell by cell for a single-row
+  body), because Excel drops the table when a whole headerless body is
+  written in one call.
+
 ## [0.3.0] — 2026-10-18
 
 ### Added
@@ -201,7 +213,8 @@ Initial release, focused on turning an internal tool into a proper package with 
 - Hide/delete sheets, set active sheet, pivot table refresh.
 - Style copying for new table rows.
 
-[unreleased]: https://github.com/hirolau/fillxl/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/hirolau/fillxl/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/hirolau/fillxl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hirolau/fillxl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hirolau/fillxl/compare/v0.2.0-beta.1...v0.2.0
 [0.2.0-beta.1]: https://github.com/hirolau/fillxl/releases/tag/v0.2.0-beta.1

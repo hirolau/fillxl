@@ -18,6 +18,7 @@ def populate_named_cells(
     cells: dict[str, Any],
     *,
     allow_missing: bool = False,
+    escape_formulas: bool = False,
 ) -> None:
     """Populate named cells with scalar values.
 
@@ -25,6 +26,8 @@ def populate_named_cells(
         workbook: openpyxl Workbook instance
         cells: Dictionary mapping named cell names to values
         allow_missing: If False, raise error if named cell is not found
+        escape_formulas: If True, strings starting with ``=`` are written as
+            literal text instead of becoming formulas.
 
     Raises:
         KeyError: If a named cell is not found and allow_missing is False
@@ -71,8 +74,8 @@ def populate_named_cells(
         cell.value = normalised_value
 
         # Force text for strings openpyxl would reinterpret: error values
-        # such as "#N/A".
-        if is_text_cell_value(normalised_value):
+        # such as "#N/A", and formulas when escaping is enabled.
+        if is_text_cell_value(normalised_value, escape_formulas=escape_formulas):
             cell.data_type = "s"
 
         logger.debug(

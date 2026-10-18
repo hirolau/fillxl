@@ -115,12 +115,13 @@ class Win32ComBackend:
         self._workbook = self._app.Workbooks.Open(str(abs_path))
         logger.info("[win32com] load took %.3fs", time.perf_counter() - t0)
 
-    def fill_named_cell(self, name: str, value: Any) -> None:  # noqa: ANN401
+    def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.
 
         Args:
             name: Name of the named cell / defined name.
             value: Scalar value to write.
+            config: Global fill configuration.
 
         Raises:
             KeyError: If *name* is not a defined name in the workbook.
@@ -128,11 +129,15 @@ class Win32ComBackend:
         """
         self._ensure_workbook()
 
-        value = prepare_com_value(value)
+        # Same normalisation as the table path (pandas objects, date/time
+        # promotion, Decimal, tz stripping) plus the apostrophe prefix that
+        # keeps COM from reinterpreting strings, and the UTC marking that
+        # keeps it from shifting datetimes by the local timezone offset.
+        prepared = prepare_com_value(value, escape_formulas=config.escape_formulas)
 
         try:
             name_obj = self._workbook.Names(name)
-            name_obj.RefersToRange.Value = value
+            name_obj.RefersToRange.Value = prepared
         except Exception as exc:
             msg = f"Named cell '{name}' not found in workbook"
             raise KeyError(msg) from exc
@@ -317,7 +322,10 @@ class Win32ComBackend:
             row_values: list[Any] = []
             for _col_idx, col_name in enumerate(table_columns):
                 if col_name in data_col_index and col_name not in formula_columns:
-                    val = prepare_com_value(row[data_col_index[col_name]])
+                    val = prepare_com_value(
+                        row[data_col_index[col_name]],
+                        escape_formulas=config.escape_formulas,
+                    )
                     row_values.append(val)
                 else:
                     row_values.append(None)

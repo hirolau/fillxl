@@ -87,7 +87,7 @@ def fill(
             # 1. Fill named cells with scalar values
             if values:
                 for name, value in values.items():
-                    backend.fill_named_cell(name, value)
+                    backend.fill_named_cell(name, value, cfg)
                 logger.debug("Filled %d named cell(s)", len(values))
 
             # 2. Fill tables and update chart references

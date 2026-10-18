@@ -90,11 +90,12 @@ class TestOpenpyxlBackendGuards:
         close() is safe to call anytime — it's a no-op when nothing is loaded.
         """
         from fillxl._backends._openpyxl import OpenpyxlBackend
+        from fillxl._config import FillXLConfig
 
         backend = OpenpyxlBackend()
 
         with pytest.raises(RuntimeError, match="No workbook loaded"):
-            backend.fill_named_cell("cell", "value")
+            backend.fill_named_cell("cell", "value", FillXLConfig())
 
         with pytest.raises(RuntimeError, match="No workbook loaded"):
             backend.save(Path("out.xlsx"))

@@ -20,7 +20,7 @@ class TestWin32ComBackendNoWorkbook:
         "method_call",
         [
             pytest.param(
-                lambda b: b.fill_named_cell("test", "value"),  # pyrefly: ignore[implicit-any-lambda]
+                lambda b: b.fill_named_cell("test", "value", FillXLConfig()),  # pyrefly: ignore[implicit-any-lambda]
                 id="fill_named_cell",
             ),
             pytest.param(

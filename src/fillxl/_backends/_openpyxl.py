@@ -90,16 +90,21 @@ class OpenpyxlBackend:
         self._workbook = openpyxl.load_workbook(path)
         _fix_chart_axes(self._workbook)
 
-    def fill_named_cell(self, name: str, value: Any) -> None:  # noqa: ANN401
+    def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.
 
         Args:
             name: Name of the named cell / defined name.
             value: Scalar value to write.
+            config: Global fill configuration.
 
         """
         workbook = self._require_workbook()
-        populate_named_cells(workbook, {name: value})
+        populate_named_cells(
+            workbook,
+            {name: value},
+            escape_formulas=config.escape_formulas,
+        )
 
     def fill_table(
         self,
@@ -138,6 +143,7 @@ class OpenpyxlBackend:
             data,
             copy_style_in_tables=config.copy_table_styles,
             extend_conditional_formatting=config.extend_conditional_formatting,
+            escape_formulas=config.escape_formulas,
         )
 
     def update_charts(self, spec: TableChangeSpecs) -> None:

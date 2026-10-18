@@ -51,6 +51,7 @@ def populate_table(
     *,
     copy_style_in_tables: bool = True,
     extend_conditional_formatting: bool = True,
+    escape_formulas: bool = False,
 ) -> TableChangeSpecs:
     """Populate an Excel table with tabular data.
 
@@ -61,6 +62,8 @@ def populate_table(
         copy_style_in_tables: If True, copy cell styles from first data row to new rows
         extend_conditional_formatting: If True, extend conditional formatting
             rules to cover new rows
+        escape_formulas: If True, strings starting with ``=`` are written as
+            literal text instead of becoming formulas.
 
     Returns:
         TableChangeSpecs describing the old and new table references
@@ -153,8 +156,8 @@ def populate_table(
                 cell_to_fill.value = value
 
                 # Force text for strings openpyxl would reinterpret: error
-                # values such as "#N/A".
-                if is_text_cell_value(value):
+                # values such as "#N/A", and formulas when escaping is on.
+                if is_text_cell_value(value, escape_formulas=escape_formulas):
                     cell_to_fill.data_type = "s"
 
                 # Copy style from first row

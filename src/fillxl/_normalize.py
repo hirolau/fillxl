@@ -324,7 +324,7 @@ def is_formula_string(value: Any) -> bool:  # noqa: ANN401
     return isinstance(value, str) and value.startswith("=")
 
 
-def is_text_cell_value(value: Any) -> bool:  # noqa: ANN401
+def is_text_cell_value(value: Any, *, escape_formulas: bool = False) -> bool:  # noqa: ANN401
     """Whether *value* must be forced to the text cell type in openpyxl.
 
     openpyxl treats a string starting with ``=`` as a formula and a string
@@ -334,6 +334,7 @@ def is_text_cell_value(value: Any) -> bool:  # noqa: ANN401
 
     Args:
         value: The normalised value about to be written.
+        escape_formulas: If True, formula-like strings are text as well.
 
     Examples:
         >>> is_text_cell_value("hello")
@@ -342,13 +343,15 @@ def is_text_cell_value(value: Any) -> bool:  # noqa: ANN401
         True
         >>> is_text_cell_value("=1+1")
         False
+        >>> is_text_cell_value("=1+1", escape_formulas=True)
+        True
         >>> is_text_cell_value(42)
         False
 
     """
     if not isinstance(value, str):
         return False
-    return not is_formula_string(value)
+    return escape_formulas or not is_formula_string(value)
 
 
 def prepare_cell_value(value: Any) -> Any:  # noqa: ANN401
@@ -369,7 +372,7 @@ def prepare_cell_value(value: Any) -> Any:  # noqa: ANN401
     return normalize_value(_to_python_datetime(value))
 
 
-def prepare_com_value(value: Any) -> Any:  # noqa: ANN401
+def prepare_com_value(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
     """Prepare *value* for writing through the win32com backend.
 
     Applies the same normalisation as :func:`prepare_cell_value`, then takes
@@ -383,10 +386,12 @@ def prepare_com_value(value: Any) -> Any:  # noqa: ANN401
       as text".  Without it COM parses strings the way typed input is parsed:
       ``"00123"`` becomes the number 123 and ``"1/2"`` becomes a date, while
       openpyxl keeps them as text.  Strings starting with ``=`` are left alone
-      so they stay formulas.
+      so they stay formulas, unless *escape_formulas* is set.
 
     Args:
         value: Raw value from user data.
+        escape_formulas: If True, strings starting with ``=`` are stored as
+            literal text instead of becoming formulas.
 
     Returns:
         A value suitable for assigning to a COM ``Range``.
@@ -399,6 +404,8 @@ def prepare_com_value(value: Any) -> Any:  # noqa: ANN401
         "'00123"
         >>> prepare_com_value("=1+1")
         '=1+1'
+        >>> prepare_com_value("=1+1", escape_formulas=True)
+        "'=1+1"
         >>> prepare_com_value(dt.datetime(2025, 6, 15, 14, 30)).isoformat()
         '2025-06-15T14:30:00+00:00'
 
@@ -406,7 +413,7 @@ def prepare_com_value(value: Any) -> Any:  # noqa: ANN401
     value = normalize_value(_to_python_datetime(value))
 
     if isinstance(value, str):
-        if not value.startswith("="):
+        if escape_formulas or not value.startswith("="):
             return "'" + value
         return value
 

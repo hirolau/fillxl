@@ -194,6 +194,9 @@ class TestComValuePreparation:
         """Both backends turn "=1+1" into a formula unless escaping is on."""
         assert prepare_com_value("=1+1") == "=1+1"
 
+    def test_a_formula_string_is_escaped_when_requested(self) -> None:
+        assert prepare_com_value("=1+1", escape_formulas=True) == "'=1+1"
+
     def test_datetimes_are_marked_as_utc(self) -> None:
         """COM would otherwise shift the serial number by the local offset."""
         prepared = prepare_com_value(dt.datetime(2025, 6, 15, 14, 30))

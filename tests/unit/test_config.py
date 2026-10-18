@@ -27,3 +27,11 @@ class TestConfigValidation:
         assert frozenset(get_args(ColumnValidationStrategy)) == _KNOWN_STRATEGIES
         for strategy in get_args(ColumnValidationStrategy):
             FillXLConfig(column_validation_strategy=strategy)
+
+
+class TestFrozenConfigAttributes:
+    """FillXLConfig is frozen, so its attributes must be immutable too."""
+
+    def test_formula_escaping_is_off_by_default(self) -> None:
+        """Strings starting with "=" become formulas unless you opt in."""
+        assert FillXLConfig().escape_formulas is False

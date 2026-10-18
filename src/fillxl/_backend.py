@@ -33,12 +33,13 @@ class Backend(Protocol):
         """
         ...
 
-    def fill_named_cell(self, name: str, value: Any) -> None:  # noqa: ANN401
+    def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.
 
         Args:
             name: Name of the named cell / defined name.
             value: Scalar value to write.
+            config: Global fill configuration.
 
         """
         ...

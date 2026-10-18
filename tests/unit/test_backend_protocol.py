@@ -58,9 +58,11 @@ class TestOpenpyxlBackendRuntimeErrorGuards:
 
     def test_fill_named_cell_raises_when_not_loaded(self) -> None:
         """Calling fill_named_cell before load raises RuntimeError."""
+        from fillxl._config import FillXLConfig
+
         backend = OpenpyxlBackend()
         with pytest.raises(RuntimeError, match="No workbook loaded"):
-            backend.fill_named_cell("test", 42)
+            backend.fill_named_cell("test", 42, FillXLConfig())
 
     def test_fill_table_raises_when_not_loaded(self) -> None:
         """Calling fill_table before load raises RuntimeError."""

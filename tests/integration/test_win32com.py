@@ -80,7 +80,7 @@ class TestWin32ComNamedCells:
         backend = Win32ComBackend()
         try:
             backend.load(TEMPLATE)
-            backend.fill_named_cell("single_cell", "COM Value")
+            backend.fill_named_cell("single_cell", "COM Value", FillXLConfig())
             backend.save(output_path)
 
             wb = openpyxl.load_workbook(output_path)
@@ -102,7 +102,7 @@ class TestWin32ComNamedCells:
         try:
             backend.load(TEMPLATE)
             with pytest.raises(KeyError, match="Nonexistent"):
-                backend.fill_named_cell("NonexistentCell", "value")
+                backend.fill_named_cell("NonexistentCell", "value", FillXLConfig())
         finally:
             backend.close()
 
@@ -120,10 +120,10 @@ class TestWin32ComNamedCells:
         backend = Win32ComBackend()
         try:
             backend.load(template)
-            backend.fill_named_cell("single_cell", "Updated")
-            backend.fill_named_cell("date_cell", datetime(2025, 6, 15))
-            backend.fill_named_cell("bool_cell", True)
-            backend.fill_named_cell("pct_cell", 0.42)
+            backend.fill_named_cell("single_cell", "Updated", FillXLConfig())
+            backend.fill_named_cell("date_cell", datetime(2025, 6, 15), FillXLConfig())
+            backend.fill_named_cell("bool_cell", True, FillXLConfig())
+            backend.fill_named_cell("pct_cell", 0.42, FillXLConfig())
             backend.save(output_path)
 
             wb = openpyxl.load_workbook(output_path)

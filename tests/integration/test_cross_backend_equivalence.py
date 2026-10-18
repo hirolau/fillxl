@@ -323,31 +323,34 @@ def test_a_column_missing_from_the_data_does_not_leak_template_values(
 
 
 @pytest.mark.parametrize("engine", ENGINES)
-def test_formula_like_text_becomes_a_formula_by_default(
+def test_formula_like_text_stays_literal_by_default(
     equivalence_template: Path,
     output_path: Path,
     engine: Engine,
 ) -> None:
-    """A string starting with "=" is a formula in both engines."""
+    """A string starting with "=" is literal text in both engines."""
     filled = _fill_and_read(
         equivalence_template,
         output_path,
         engine,
+        values={"probe_cell": "=1+1"},
         tables={"Items": _table_rows("=1+1")},
     )
 
+    assert filled.named_cell == "=1+1"
+    assert filled.worksheet["E1"].data_type == "s"
     assert filled.first_row[1] == "=1+1"
-    assert filled.worksheet["B2"].data_type == "f"
+    assert filled.worksheet["B2"].data_type == "s"
 
 
 @pytest.mark.parametrize("engine", ENGINES)
-def test_escape_formulas_stores_literal_text_in_both_engines(
+def test_escape_formulas_false_writes_formulas_in_both_engines(
     equivalence_template: Path,
     output_path: Path,
     engine: Engine,
 ) -> None:
-    """With escape_formulas=True the "=" string stays text, not a formula."""
-    config = FillXLConfig(escape_formulas=True)
+    """With escape_formulas=False the "=" string becomes a formula."""
+    config = FillXLConfig(escape_formulas=False)
     filled = _fill_and_read(
         equivalence_template,
         output_path,
@@ -358,9 +361,9 @@ def test_escape_formulas_stores_literal_text_in_both_engines(
     )
 
     assert filled.named_cell == "=1+1"
-    assert filled.worksheet["E1"].data_type == "s"
+    assert filled.worksheet["E1"].data_type == "f"
     assert filled.first_row[1] == "=1+1"
-    assert filled.worksheet["B2"].data_type == "s"
+    assert filled.worksheet["B2"].data_type == "f"
 
 
 @pytest.mark.parametrize("engine", ENGINES)

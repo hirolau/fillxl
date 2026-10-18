@@ -32,8 +32,9 @@ class TableChangeSpecs(NamedTuple):
     data row is always ``header_row + 1``.  ``old_last_row`` and
     ``new_last_row`` are the last rows of the table's *data body*, which is
     what chart data ranges are compared against.  A totals row, if the table
-    has one, sits below ``new_last_row`` and is not included.  A table without
-    any data rows has ``last_row == header_row``.
+    has one, sits below ``new_last_row`` and is not included.  Empty data
+    still leaves one blank body row (Excel requires it), so a table with no
+    data rows has ``new_last_row == header_row + 1``.
 
     Attributes:
         worksheet_title: Title of the worksheet containing the table.

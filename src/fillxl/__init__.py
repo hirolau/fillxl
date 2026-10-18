@@ -18,4 +18,5 @@ __all__ = [
 try:
     __version__ = version("fillxl")
 except PackageNotFoundError:  # pragma: no cover - only when running from a source tree
-    __version__ = "0.0.0"
+    # A local version is honest about the fact that this is not a release.
+    __version__ = "0.0.0+unknown"

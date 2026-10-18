@@ -42,6 +42,6 @@ class TestFrozenConfigAttributes:
         assert FillXLConfig(delete_sheets=("Raw",)).delete_sheets == ("Raw",)
         assert FillXLConfig().delete_sheets is None
 
-    def test_formula_escaping_is_off_by_default(self) -> None:
-        """Strings starting with "=" become formulas unless you opt in."""
-        assert FillXLConfig().escape_formulas is False
+    def test_formula_escaping_is_on_by_default(self) -> None:
+        """Strings starting with "=" stay literal unless the caller opts out."""
+        assert FillXLConfig().escape_formulas is True

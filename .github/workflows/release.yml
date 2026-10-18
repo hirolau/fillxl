@@ -9,13 +9,54 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check tag matches package version
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import sys
+          import tomllib
+
+          version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          expected = f"v{version}"
+          if tag != expected:
+              sys.exit(f"Tag {tag!r} does not match pyproject version {version!r} (expected {expected!r})")
+          print(f"Tag {tag} matches pyproject version {version}")
+          PY
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Lint (ruff)
+        run: uv run ruff check src/fillxl/ tests/
+
+      - name: Run tests
+        run: uv run pytest tests/ -m "not xlwings and not win32com" -q
+
+  release:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           enable-cache: true
 
@@ -29,6 +70,11 @@ jobs:
 
       - name: Build package
         run: uv build
+
+      - name: Check distributions
+        run: |
+          uvx twine check --strict dist/*
+          uvx check-wheel-contents dist/*.whl
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

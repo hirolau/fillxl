@@ -42,6 +42,31 @@ def _is_column_values(values: Any) -> bool:  # noqa: ANN401
     return hasattr(values, "tolist") and hasattr(values, "__len__")
 
 
+def _check_column_lengths(keys: list[Any], column_values: list[list[Any]]) -> None:
+    """Raise a column-aware error when the columns have different lengths.
+
+    ``zip(..., strict=True)`` reports ``zip() argument 2 is shorter...``,
+    which does not say which column is wrong.
+
+    Examples:
+        >>> _check_column_lengths(["a", "b"], [[1, 2], [3, 4]])
+        >>> _check_column_lengths(["a", "b"], [[1, 2], [3]])
+        Traceback (most recent call last):
+            ...
+        ValueError: Ragged column data: column 'b' has 1 row(s), expected 2.
+
+    """
+    expected = len(column_values[0])
+    ragged = [
+        f"column {str(key)!r} has {len(values)} row(s), expected {expected}"
+        for key, values in zip(keys, column_values, strict=True)
+        if len(values) != expected
+    ]
+    if ragged:
+        msg = f"Ragged column data: {'; '.join(ragged)}."
+        raise ValueError(msg)
+
+
 class TabularAdapter:
     """Adapter that normalizes different tabular data types to a common interface."""
 
@@ -85,8 +110,17 @@ class TabularAdapter:
             logger.debug("Detected duckdb Relation with %d columns", len(self._columns))
             return
 
+        # Empty payloads are valid: they mean "no rows" (and, for an empty
+        # list, no schema).  The table is cleared instead of raising a
+        # misleading TypeError.
+        if isinstance(data, list) and not data:
+            self._columns = []
+            self._rows = []
+            logger.debug("Detected empty list (no rows, no columns)")
+            return
+
         # Try list[dict]
-        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+        if isinstance(data, list) and isinstance(data[0], dict):
             columns = [str(col) for col in data[0]]
             self._columns = columns
             self._rows = [[row.get(col) for col in columns] for row in data]
@@ -95,16 +129,21 @@ class TabularAdapter:
 
         # Try dict[str, column] — column values may be lists, tuples, numpy
         # arrays, pandas/polars Series, or anything else sequence-like.
-        if isinstance(data, dict) and len(data) > 0:
+        if isinstance(data, dict) and not data:
+            self._columns = []
+            self._rows = []
+            logger.debug("Detected empty dict (no rows, no columns)")
+            return
+
+        if isinstance(data, dict):
             first_value: Any = next(iter(data.values()))
             if _is_column_values(first_value):
                 keys = list(data)
                 self._columns = [str(key) for key in keys]
                 # Materialise each column positionally: list(Series) ignores
                 # a non-default index, and this also handles arrays/tuples.
-                # ``strict=True`` reports ragged columns instead of silently
-                # truncating them.
                 column_values = [list(data[key]) for key in keys]
+                _check_column_lengths(keys, column_values)
                 self._rows = [list(row) for row in zip(*column_values, strict=True)]
                 logger.debug("Detected dict[str, column] with %d columns", len(keys))
                 return
@@ -158,11 +197,12 @@ class TabularAdapter:
             True if data is likely tabular, False otherwise
 
         """
-        # Quick check without importing heavy dependencies
+        # Quick check without importing heavy dependencies.  Empty payloads
+        # are valid tabular data — they clear a table.
         if isinstance(data, list):
-            return len(data) > 0 and isinstance(data[0], dict)
-        if isinstance(data, dict) and len(data) > 0:
-            return _is_column_values(next(iter(data.values())))
+            return not data or isinstance(data[0], dict)
+        if isinstance(data, dict):
+            return not data or _is_column_values(next(iter(data.values())))
 
         # Check for known DataFrame types by class name to avoid imports
         return type(data).__name__ in ("DataFrame", "DuckDBPyRelation")

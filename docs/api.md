@@ -55,7 +55,7 @@ from fillxl import FillXLConfig
 
 config = FillXLConfig(
     column_validation_strategy="strict",
-    escape_formulas=True,
+    escape_formulas=False,  # only for trusted input that may contain formulas
     active_sheet="Report",
     delete_sheets=["RawData"],
 )
@@ -66,7 +66,7 @@ config = FillXLConfig(
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `column_validation_strategy` | `str` | `"all_but_formulas"` | Strategy for mismatched columns (see below). |
-| `escape_formulas` | `bool` | `False` | Write strings starting with `=` as literal text instead of formulas. Enable this for untrusted data. |
+| `escape_formulas` | `bool` | `True` | Write strings starting with `=` as literal text instead of formulas. Disable only for trusted data that is meant to contain formulas. |
 | `refresh_pivot_tables` | `bool` | `True` | Refresh pivot caches after filling. |
 | `extend_conditional_formatting` | `bool` | `True` | Resize conditional formatting ranges with the table. |
 | `copy_table_styles` | `bool` | `True` | Copy the first data row's styles to new rows. |
@@ -101,9 +101,9 @@ number `123` and `"1/2"` becomes a date. Both backends store such strings as
 text" marker. Error-like strings (`"#N/A"`, `"#DIV/0!"`, …) are stored as
 text as well, not as Excel errors.
 
-Strings that start with `=` do become formulas — that is Excel's behaviour and
-both engines share it. Set `escape_formulas=True` to keep them as literal
-text instead.
+Strings that start with `=` are kept as literal text by default, so untrusted
+data cannot inject formulas. Set `escape_formulas=False` when the data is
+trusted and is meant to create formulas.
 
 Empty strings (`""`) become empty cells in both engines, because openpyxl
 cannot represent an empty text cell distinctly (it reads back as `None`).

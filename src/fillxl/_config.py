@@ -69,9 +69,10 @@ class FillXLConfig:
         column_validation_strategy: How to handle column mismatches between
             data and Excel tables.
         escape_formulas: Whether to write strings starting with ``=`` as
-            literal text instead of formulas.  Leave this off for trusted
-            data; enable it when data may come from untrusted sources, where
-            a leading ``=`` would otherwise be executed by Excel.
+            literal text instead of formulas.  Defaults to ``True`` so that
+            data from untrusted sources cannot inject formulas; set it to
+            ``False`` when the input is trusted and is meant to contain
+            formulas.
         refresh_pivot_tables: Whether to mark pivot caches for refresh on open.
         extend_conditional_formatting: Whether to extend conditional
             formatting rules when a table is resized.
@@ -87,7 +88,7 @@ class FillXLConfig:
         default="all_but_formulas",
         validator=_validate_column_strategy,
     )
-    escape_formulas: bool = field(default=False, validator=instance_of(bool))
+    escape_formulas: bool = field(default=True, validator=instance_of(bool))
     refresh_pivot_tables: bool = field(default=True, validator=instance_of(bool))
     extend_conditional_formatting: bool = field(default=True, validator=instance_of(bool))
     copy_table_styles: bool = field(default=True, validator=instance_of(bool))

@@ -5,13 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] — 2026-10-18
 
 ### Added
 
-- `FillXLConfig.escape_formulas` (default `False`): write strings that start
+- `FillXLConfig.escape_formulas` (default `True`): write strings that start
   with `=` as literal text instead of formulas. Formula-like strings from
-  untrusted data are a formula-injection vector, so this is now opt-in-able.
+  untrusted data are a formula-injection vector, so escaping is on by default;
+  pass `escape_formulas=False` when the input is trusted and is meant to
+  contain formulas.
+- Empty tabular payloads (`[]` and `{}`) are accepted and clear the table;
+  they no longer raise a misleading `TypeError` about an unsupported type.
 - Sheet-scoped defined names are now resolved by the openpyxl backend, matching
   win32com, which finds them through `Workbook.Names`.
 - Python 3.15 support: added to the classifiers, the CI test matrix, and the
@@ -37,9 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   becomes a date. openpyxl stores strings as text as well, including
   error-like strings such as `"#N/A"` that it would otherwise turn into Excel
   errors.
-- Empty strings (`""`) become empty cells in both engines. openpyxl cannot
-  round-trip an empty text cell (it reads back as `None`), so writing one
-  would make the two backends disagree.
+- **Behaviour change**: empty strings (`""`) become empty cells in both
+  engines. openpyxl cannot round-trip an empty text cell (it reads back as
+  `None`), so writing one would make the two backends disagree.
 - **Both backends**: table cell styles are applied *before* the value, so
   datetime columns get a date format in the openpyxl output as well. Datetime
   table cells now read back as datetimes from both engines instead of a bare
@@ -49,10 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The tabular adapter accepts any sequence-like column values for
   `dict[str, ...]` data, including NumPy arrays, tuples and pandas Series.
   Columns are read positionally, so a Series with a non-default index (and
-  non-string mapping keys) works, and ragged columns raise instead of being
-  silently truncated.
+  non-string mapping keys) works, and ragged columns raise a `ValueError` that
+  names the offending column instead of being silently truncated.
 - `delete_sheets` is stored as a tuple, so a frozen `FillXLConfig` cannot be
   mutated through a caller's list.
+- CI runs on every branch and includes a Windows job; the release workflow now
+  gates publishing on a passing test run and on the tag matching
+  `pyproject.toml`.
 
 ### Fixed
 
@@ -81,12 +88,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`.xlsb` and `.xls` are supported too; anything else raises `ValueError`).
 - **win32com**: datetimes written to named cells are no longer shifted by the
   local timezone offset (they now get the same UTC marking as table cells).
-- Both backends reject tables that have a totals row with a clear error
-  instead of overwriting the totals and miscounting rows.
+- `fill()` now returns the absolute output path it documents, even when the
+  caller passes a relative `output`.
 - The timezone warning flag is a `ContextVar`, so two concurrent `fill()` calls
   in different threads no longer share it.
 - `__version__` is read from package metadata instead of being hard-coded, so
-  it cannot drift from `pyproject.toml`.
+  it cannot drift from `pyproject.toml`. When the package is not installed
+  (for example, when importing from a source tree) it reports
+  `"0.0.0+unknown"` instead of pretending to be release `0.0.0`.
 
 ### Removed
 
@@ -193,7 +202,8 @@ Initial release, focused on turning an internal tool into a proper package with 
 - Hide/delete sheets, set active sheet, pivot table refresh.
 - Style copying for new table rows.
 
-[unreleased]: https://github.com/hirolau/fillxl/compare/v0.2.0...HEAD
+[unreleased]: https://github.com/hirolau/fillxl/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/hirolau/fillxl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hirolau/fillxl/compare/v0.2.0-beta.1...v0.2.0
 [0.2.0-beta.1]: https://github.com/hirolau/fillxl/releases/tag/v0.2.0-beta.1
 [0.1.0]: https://github.com/hirolau/fillxl/releases/tag/v0.1.0

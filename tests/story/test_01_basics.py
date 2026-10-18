@@ -280,6 +280,20 @@ class TestOutputParameter:
         assert result == output_path.resolve()
         assert result.is_absolute()
 
+    def test_a_relative_output_path_is_still_returned_as_an_absolute_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        simple_table_template: Path,
+    ) -> None:
+        """The returned path is absolute even when the caller passes a relative one."""
+        monkeypatch.chdir(tmp_path)
+
+        result = fill(template=simple_table_template, output=Path("relative_out.xlsx"))
+
+        assert result.is_absolute()
+        assert result == (tmp_path / "relative_out.xlsx").resolve()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1.4 The fill lifecycle

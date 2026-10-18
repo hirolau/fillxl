@@ -81,9 +81,10 @@ through COM; the openpyxl engine uses the text cell type, including for
 error-like strings such as `"#N/A"`. Empty strings become empty cells in both
 engines.
 
-Strings starting with `=` become formulas in both engines. Use
-`FillXLConfig(escape_formulas=True)` when the data may come from an untrusted
-source and a leading `=` must stay literal.
+Strings starting with `=` stay literal in both engines by default, so
+untrusted data cannot inject formulas. Pass
+`FillXLConfig(escape_formulas=False)` when the input is trusted and a leading
+`=` is meant to create a formula.
 
 Excel tables always end up with **at least one body row**: filling zero rows
 clears and keeps a single row, because Excel rejects a table without a body.

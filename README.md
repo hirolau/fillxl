@@ -113,6 +113,7 @@ See the full documentation for `FillXLConfig` options.
 
 - `list[dict]`
 - `dict[str, sequence]` (lists, tuples, NumPy arrays, pandas/polars Series)
+- `[]` or `{}` (empty data — clears the table)
 - `pandas.DataFrame`
 - `polars.DataFrame`
 - `duckdb.DuckDBPyRelation`
@@ -123,8 +124,9 @@ See the full documentation for `FillXLConfig` options.
 
 Non-empty strings are always stored as text — `"00123"` stays `"00123"`
 rather than becoming the number `123`, in both engines. Strings starting with
-`=` become formulas, exactly as Excel treats them; set
-`FillXLConfig(escape_formulas=True)` to keep untrusted data literal.
+`=` are kept as literal text by default, so untrusted data cannot inject
+formulas; pass `FillXLConfig(escape_formulas=False)` when the input is trusted
+and is meant to contain formulas.
 
 | Python value | Written to Excel as |
 |--------------|---------------------|
@@ -135,7 +137,7 @@ rather than becoming the number `123`, in both engines. Strings starting with
 | `date`, `time`, `datetime` | date/time serial (timezone stripped) |
 | `timedelta` | fraction of a day |
 | `None`, `NaN`, `pd.NA`, `pd.NaT` | empty cell |
-| `"=SUM(A1:A2)"` | formula (literal text with `escape_formulas=True`) |
+| `"=SUM(A1:A2)"` | literal text (formula with `escape_formulas=False`) |
 
 ---
 
@@ -170,7 +172,7 @@ Benchmark: **5,000 rows × 20 columns** (list[dict] data).
 - `win32com` requires Windows + Excel.
 - Timezone-aware datetimes are converted to naive (wall-clock preserved).
 - Tables with a totals row are supported: the totals row stays directly below the data body, keeping its labels, functions and styling. Totals formulas written as explicit ranges (e.g. `SUM(B2:B5)`) are not rewritten.
-- Strings starting with `=` are written as formulas; pass `FillXLConfig(escape_formulas=True)` for untrusted data.
+- Strings starting with `=` are written as literal text by default; pass `FillXLConfig(escape_formulas=False)` only when the data is trusted and meant to contain formulas.
 
 ---
 

@@ -60,6 +60,11 @@ def validate_columns(
     if strategy == "none":
         return
 
+    # An empty payload has no schema to validate.  It is an explicit request
+    # to clear the table, not a column mismatch.
+    if not data_columns:
+        return
+
     formula_set = set(formula_columns or [])
 
     # For "all_but_formulas" modes, exclude formula columns from the table

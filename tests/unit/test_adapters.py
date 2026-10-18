@@ -94,12 +94,23 @@ class TestTabularAdapter:
         adapter = TabularAdapter(rel)
         assert adapter.columns == ["a", "b"]
 
-    def test_adapter_raises_typeerror_for_empty_list(self) -> None:
-        """An empty list cannot be detected as tabular — TypeError should be raised."""
+    def test_adapter_accepts_empty_list_as_zero_rows(self) -> None:
+        """An empty list is valid, schema-less data that clears a table."""
         from fillxl._adapters import TabularAdapter
 
-        with pytest.raises(TypeError, match="Unsupported data type"):
-            TabularAdapter([])
+        adapter = TabularAdapter([])
+        assert adapter.columns == []
+        assert adapter.rows == []
+        assert TabularAdapter.is_tabular([])
+
+    def test_adapter_accepts_empty_dict_as_zero_rows(self) -> None:
+        """An empty dict is valid, schema-less data that clears a table."""
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter({})
+        assert adapter.columns == []
+        assert adapter.rows == []
+        assert TabularAdapter.is_tabular({})
 
     def test_adapter_raises_typeerror_for_dict_with_non_list_values(self) -> None:
         """A dict with non-list values should raise TypeError."""
@@ -183,7 +194,7 @@ class TestTabularAdapter:
         """Columns of different lengths are an error, not a silent truncation."""
         from fillxl._adapters import TabularAdapter
 
-        with pytest.raises(ValueError, match="zip"):
+        with pytest.raises(ValueError, match=r"Ragged column data.*'b'.*expected 2"):
             TabularAdapter({"a": [1, 2], "b": [3]})
 
     def test_is_tabular_recognises_a_dict_of_arrays(self) -> None:

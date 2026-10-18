@@ -130,4 +130,4 @@ def fill(
         finally:
             backend.close()
 
-    return output_path
+    return output_path.resolve()

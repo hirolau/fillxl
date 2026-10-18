@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
-import sys
 from decimal import Decimal
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -107,9 +106,6 @@ def _win32com_available() -> bool:
     Excel or win32com.  Checking up front turns those runs into skips
     instead of failures.
     """
-    if sys.platform != "win32":
-        return False
-
     try:
         import win32com.client
 

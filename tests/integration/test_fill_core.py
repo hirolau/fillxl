@@ -10,12 +10,40 @@ from copy import deepcopy
 from typing import TYPE_CHECKING
 
 import openpyxl
+from openpyxl.workbook.defined_name import DefinedName
 
 from fillxl import fill
 from tests.conftest import TEMPLATE
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class TestNamedCellScope:
+    """Defined names are resolved the same way in both engines."""
+
+    def test_a_sheet_scoped_defined_name_can_be_filled(self, output_path: Path) -> None:
+        """Sheet-scoped names live on the worksheet, not on the workbook.
+
+        win32com resolves them through ``Workbook.Names``; the openpyxl
+        backend has to look at ``worksheet.defined_names`` as well.
+        """
+        template = output_path.with_name("sheet_scoped.xlsx")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws["B2"] = "old"
+        ws.defined_names.add(DefinedName("scoped_title", attr_text="Data!$B$2"))
+        wb.save(template)
+        wb.close()
+
+        fill(template=template, output=output_path, values={"scoped_title": "Scoped"})
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            assert wb["Data"]["B2"].value == "Scoped"
+        finally:
+            wb.close()
 
 
 def test_fill_is_idempotent_when_applied_twice(output_path: Path) -> None:

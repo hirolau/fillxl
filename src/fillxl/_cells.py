@@ -5,12 +5,42 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from openpyxl.worksheet.worksheet import Worksheet
+
 from fillxl._normalize import is_text_cell_value, prepare_cell_value
 
 if TYPE_CHECKING:
+    from openpyxl.workbook.defined_name import DefinedName
     from openpyxl.workbook.workbook import Workbook
 
 logger = logging.getLogger(__name__)
+
+
+def find_defined_name(workbook: Workbook, name: str) -> DefinedName | None:
+    """Find a defined name, including names scoped to a single sheet.
+
+    ``Workbook.defined_names`` only holds workbook-global names; names scoped
+    to a sheet live on that sheet (``Worksheet.defined_names``).  Looking in
+    both keeps the openpyxl backend in step with win32com, which resolves
+    sheet-scoped names through ``Workbook.Names``.
+
+    Args:
+        workbook: openpyxl Workbook instance
+        name: Defined name to look up
+
+    Returns:
+        The :class:`~openpyxl.workbook.defined_name.DefinedName`, or ``None``.
+
+    """
+    if name in workbook.defined_names:
+        return workbook.defined_names[name]
+
+    for worksheet in workbook.worksheets:
+        scoped_names = worksheet.defined_names
+        if name in scoped_names:
+            return scoped_names[name]
+
+    return None
 
 
 def populate_named_cells(
@@ -34,7 +64,8 @@ def populate_named_cells(
 
     """
     for name, value in cells.items():
-        if name not in workbook.defined_names:
+        defined_name = find_defined_name(workbook, name)
+        if defined_name is None:
             if allow_missing:
                 logger.warning("Named cell '%s' not found in workbook, skipping", name)
                 continue
@@ -45,7 +76,7 @@ def populate_named_cells(
         normalised_value = prepare_cell_value(value)
 
         # Get the cell destinations for this defined name
-        destinations = list(workbook.defined_names[name].destinations)
+        destinations = list(defined_name.destinations)
         if not destinations:
             logger.warning("Named cell '%s' has no destinations, skipping", name)
             continue
@@ -67,7 +98,7 @@ def populate_named_cells(
             )
 
         worksheet = workbook[worksheet_name]
-        if not isinstance(worksheet, type(workbook.active)):
+        if not isinstance(worksheet, Worksheet):
             logger.warning("Worksheet '%s' is not a regular worksheet, skipping", worksheet_name)
             continue
         cell = worksheet[cell_address]

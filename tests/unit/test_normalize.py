@@ -163,6 +163,33 @@ class TestValueNormalisation:
         assert normalize_value(Greeting()) == "Hello!"
 
 
+class TestTimezoneHandling:
+    """tz-aware datetimes lose their offset, keeping the wall-clock time."""
+
+    def test_an_aware_datetime_loses_its_timezone(self) -> None:
+        reset_tz_warning_state()
+        aware = dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.timezone(dt.timedelta(hours=2)))
+        with pytest.warns(UserWarning, match="Timezone-aware datetimes"):
+            result = normalize_value(aware)
+        assert result == dt.datetime(2025, 6, 15, 14, 30)
+        assert result.tzinfo is None
+
+    def test_the_warning_is_issued_once_per_fill_session(self) -> None:
+        """Each fill session warns once; a new session starts over."""
+        reset_tz_warning_state()
+        aware = dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.UTC)
+        with pytest.warns(UserWarning):
+            normalize_value(aware)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            normalize_value(aware)  # already warned in this session
+
+        reset_tz_warning_state()
+        with pytest.warns(UserWarning):
+            normalize_value(aware)  # a new session warns again
+
+
 class TestComValuePreparation:
     """COM reinterprets values the way typed input is interpreted.
 
@@ -197,16 +224,16 @@ class TestComValuePreparation:
     def test_a_formula_string_is_escaped_when_requested(self) -> None:
         assert prepare_com_value("=1+1", escape_formulas=True) == "'=1+1"
 
-    def test_datetimes_are_marked_as_utc(self) -> None:
-        """COM would otherwise shift the serial number by the local offset."""
-        prepared = prepare_com_value(dt.datetime(2025, 6, 15, 14, 30))
-        assert prepared == dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.UTC)
-
     def test_numbers_none_and_booleans_are_left_alone(self) -> None:
         assert prepare_com_value(42) == 42
         assert prepare_com_value(3.5) == 3.5
         assert prepare_com_value(True) is True
         assert prepare_com_value(None) is None
+
+    def test_datetimes_are_marked_as_utc(self) -> None:
+        """COM would otherwise shift the serial number by the local offset."""
+        prepared = prepare_com_value(dt.datetime(2025, 6, 15, 14, 30))
+        assert prepared == dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.UTC)
 
     def test_the_openpyxl_preparation_leaves_text_and_datetimes_alone(self) -> None:
         """openpyxl stores text as text; no prefix or tz marking is needed."""
@@ -232,30 +259,3 @@ class TestFormulaDetection:
         assert not is_formula_string("a=b")
         assert not is_formula_string(123)
         assert not is_formula_string(None)
-
-
-class TestTimezoneHandling:
-    """tz-aware datetimes lose their offset, keeping the wall-clock time."""
-
-    def test_an_aware_datetime_loses_its_timezone(self) -> None:
-        reset_tz_warning_state()
-        aware = dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.timezone(dt.timedelta(hours=2)))
-        with pytest.warns(UserWarning, match="Timezone-aware datetimes"):
-            result = normalize_value(aware)
-        assert result == dt.datetime(2025, 6, 15, 14, 30)
-        assert result.tzinfo is None
-
-    def test_the_warning_is_issued_once_per_fill_session(self) -> None:
-        """Each fill session warns once; a new session starts over."""
-        reset_tz_warning_state()
-        aware = dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.UTC)
-        with pytest.warns(UserWarning):
-            normalize_value(aware)
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            normalize_value(aware)  # already warned in this session
-
-        reset_tz_warning_state()
-        with pytest.warns(UserWarning):
-            normalize_value(aware)  # a new session warns again

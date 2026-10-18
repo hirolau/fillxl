@@ -474,11 +474,18 @@ class Win32ComBackend:
                         series.Formula = updated
 
     def set_pivot_refresh(self) -> None:
-        """Mark all pivot caches for refresh on load."""
+        """Mark all pivot caches for refresh, and refresh them now.
+
+        The openpyxl backend can only mark caches for refresh on open; this
+        backend does the same *and* recalculates the caches, so the saved
+        workbook is up to date whichever engine produced it.
+        """
         self._ensure_workbook()
         for pcache in self._workbook.PivotCaches():
             try:
                 pcache.Refresh()
+                # Keep the on-open flag in step with the openpyxl backend.
+                pcache.RefreshOnLoad = True
             except Exception:
                 logger.exception("Failed to refresh pivot cache")
         logger.debug("Refreshed all pivot caches")

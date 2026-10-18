@@ -124,9 +124,12 @@ def populate_table(
                         msg,
                     )
 
-    # Update table reference
+    # Update table reference — the autoFilter must stay in step with the table,
+    # otherwise Excel reports the workbook as repaired on open.
     new_table_ref = table_start + ":" + table_end_column_letter + str(table_start_row + len(rows))
     table.ref = new_table_ref
+    if table.autoFilter is not None:
+        table.autoFilter.ref = new_table_ref
     logger.debug("Table '%s' resized: %s -> %s", table_name, original_table_ref, new_table_ref)
 
     # Get the first cell of the table

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import openpyxl
 import pytest
+from openpyxl.worksheet.table import Table, TableColumn
 
 from fillxl import FillXLConfig, fill
 from tests.conftest import TEMPLATE
@@ -166,3 +167,126 @@ def test_conditional_formatting_preserves_multi_column_rules_during_extension(
             assert end_row_num <= 9, f"CF sqref {sqref} extends beyond row 9"
     finally:
         wb.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Range parsing: rules are matched by geometry, never by string prefix
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _build_row_12_table_template(path: Path, *, extra_rule_range: str) -> None:
+    """Build a 3-column table whose data rows start at row 13.
+
+    Row 13 is what makes a rule on row 130 a realistic near-miss for
+    prefix-based matching.
+
+    Args:
+        path: Where to save the template.
+        extra_rule_range: Second CF rule range to add.
+
+    """
+    from openpyxl.formatting.rule import CellIsRule
+    from openpyxl.styles import PatternFill
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for col_idx, name in enumerate(["Category", "Value", "Other"], 1):
+        ws.cell(row=12, column=col_idx, value=name)
+    for row in (13, 14):
+        ws.cell(row=row, column=1, value=f"sample{row}")
+        ws.cell(row=row, column=2, value=row)
+        ws.cell(row=row, column=3, value=row)
+
+    ws.conditional_formatting.add(
+        "B13:B14",
+        CellIsRule(operator="greaterThan", formula=["0"], fill=PatternFill()),
+    )
+    ws.conditional_formatting.add(
+        extra_rule_range,
+        CellIsRule(operator="lessThan", formula=["0"], fill=PatternFill()),
+    )
+
+    ws.add_table(
+        Table(
+            displayName="RowTwelve",
+            ref="A12:C14",
+            tableColumns=[
+                TableColumn(id=1, name="Category"),
+                TableColumn(id=2, name="Value"),
+                TableColumn(id=3, name="Other"),
+            ],
+        ),
+    )
+    wb.save(path)
+    wb.close()
+
+
+def _cf_sqref_text(path: Path) -> str:
+    """All CF sqref strings of the Data sheet, joined for containment checks."""
+    wb = openpyxl.load_workbook(path)
+    try:
+        return " ".join(sorted(str(cf.sqref) for cf in wb["Data"].conditional_formatting))
+    finally:
+        wb.close()
+
+
+def test_conditional_formatting_on_B130_is_not_mistaken_for_B13(  # noqa: N802
+    output_path: Path,
+) -> None:
+    """A rule on B130:B200 must survive a fill of a table starting at B13."""
+    template = output_path.with_name("cf_b130_template.xlsx")
+    _build_row_12_table_template(template, extra_rule_range="B130:B200")
+
+    fill(
+        template=template,
+        output=output_path,
+        tables={
+            "RowTwelve": [{"Category": f"c{i}", "Value": i, "Other": i} for i in range(1, 6)],
+        },
+    )
+
+    sqref_text = _cf_sqref_text(output_path)
+    assert "B13:B17" in sqref_text, sqref_text
+    assert "B130:B200" in sqref_text, sqref_text
+    assert "B130:B17" not in sqref_text, sqref_text
+
+
+def test_a_multi_area_conditional_formatting_range_is_resized_per_area(
+    output_path: Path,
+) -> None:
+    """Every area of a multi-area sqref is resized independently."""
+    template = output_path.with_name("cf_multi_area_template.xlsx")
+    _build_row_12_table_template(template, extra_rule_range="B13 C13")
+
+    fill(
+        template=template,
+        output=output_path,
+        tables={
+            "RowTwelve": [{"Category": f"c{i}", "Value": i, "Other": i} for i in range(1, 6)],
+        },
+    )
+
+    sqref_text = _cf_sqref_text(output_path)
+    assert "B13:B17" in sqref_text, sqref_text
+    assert "C13:C17" in sqref_text, sqref_text
+
+
+def test_conditional_formatting_below_the_table_is_left_alone(
+    output_path: Path,
+) -> None:
+    """A rule that does not start on the first data row is not resized."""
+    template = output_path.with_name("cf_below_template.xlsx")
+    _build_row_12_table_template(template, extra_rule_range="C20:C40")
+
+    fill(
+        template=template,
+        output=output_path,
+        tables={
+            "RowTwelve": [{"Category": f"c{i}", "Value": i, "Other": i} for i in range(1, 6)],
+        },
+    )
+
+    sqref_text = _cf_sqref_text(output_path)
+    assert "C20:C40" in sqref_text, sqref_text
+    assert "B13:B17" in sqref_text, sqref_text

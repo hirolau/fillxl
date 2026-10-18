@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from openpyxl.cell.cell import Cell
-from openpyxl.utils import column_index_from_string
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.cell_range import CellRange
 
 from ._adapters import TabularAdapter
 from ._charts import TableChangeSpecs
 from ._normalize import is_text_cell_value, prepare_cell_value
-from ._utils import col_to_excel, find_worksheet_and_table
+from ._utils import find_worksheet_and_table
 
 if TYPE_CHECKING:
     from openpyxl.workbook.workbook import Workbook
@@ -68,11 +69,12 @@ def populate_table(
             literal text instead of becoming formulas.
 
     Returns:
-        TableChangeSpecs describing the old and new table references
+        TableChangeSpecs describing the old and new table dimensions
 
     Raises:
         KeyError: If table is not found
-        ValueError: If table structure is invalid
+        ValueError: If the table has a totals row, or the table cannot expand
+            into non-empty cells.
 
     """
     columns = adapter.columns
@@ -93,33 +95,33 @@ def populate_table(
             msg,
         )
 
-    # Parse original table reference (e.g., 'B12:M13')
+    # Parse the original table reference (e.g. 'B12:M13')
     original_table_ref: str = table.ref
-    table_start, table_end = original_table_ref.split(":")
+    original_cell_range = CellRange(original_table_ref)
 
-    # Calculate dimensions
-    table_start_row = int("".join(x for x in table_start if x.isdigit()))
-    table_old_end_row = int("".join(x for x in table_end if x.isdigit()))
-    table_start_column_letter = "".join(x for x in table_start if not x.isdigit())
-    table_start_column = column_index_from_string(table_start_column_letter)
-    table_end_column_letter = "".join(x for x in table_end if not x.isdigit())
+    table_start_row = original_cell_range.min_row
+    table_old_last_row = original_cell_range.max_row
+    table_start_column = original_cell_range.min_col
+    table_end_column = original_cell_range.max_col
     first_data_row = table_start_row + 1
-    worksheet_title: str = str(worksheet.title)
 
     # An Excel table needs at least one body row, so empty data keeps a single
     # (cleared) row — the same thing the win32com backend does.
     new_table_last_row = table_start_row + max(num_data_rows, 1)
-    new_table_ref = table_start + ":" + table_end_column_letter + str(new_table_last_row)
+    new_table_ref = (
+        f"{get_column_letter(table_start_column)}{table_start_row}:"
+        f"{get_column_letter(table_end_column)}{new_table_last_row}"
+    )
+    worksheet_title: str = str(worksheet.title)
 
     # Check for overflow: if the table is growing, ensure no existing content
     # is overwritten
-    if new_table_last_row > table_old_end_row:
-        end_col = column_index_from_string(table_end_column_letter)
-        for check_row in range(table_old_end_row + 1, new_table_last_row + 1):
-            for check_col in range(table_start_column, end_col + 1):
+    if new_table_last_row > table_old_last_row:
+        for check_row in range(table_old_last_row + 1, new_table_last_row + 1):
+            for check_col in range(table_start_column, table_end_column + 1):
                 existing = worksheet.cell(row=check_row, column=check_col).value
                 if existing is not None:
-                    cell_ref = f"{col_to_excel(check_col)}{check_row}"
+                    cell_ref = f"{get_column_letter(check_col)}{check_row}"
                     msg = (
                         f"Table '{table_name}' cannot expand to {new_table_last_row} rows: "
                         f"cell {cell_ref} already contains data ({existing!r}). "
@@ -145,22 +147,20 @@ def populate_table(
     # Clear any leftover rows the new data does not cover (this also clears the
     # single body row that empty data leaves behind).
     first_unused_row = first_data_row + num_data_rows
-    for clear_row in range(first_unused_row, table_old_end_row + 1):
-        end_col = column_index_from_string(table_end_column_letter)
-        for clear_col in range(table_start_column, end_col + 1):
+    for clear_row in range(first_unused_row, table_old_last_row + 1):
+        for clear_col in range(table_start_column, table_end_column + 1):
             stale_cell = worksheet.cell(row=clear_row, column=clear_col)
             if is_single_cell(stale_cell):
                 stale_cell.value = None
 
     # Create a mapping of data column names to column indices
-    data_column_map = {col_name: idx for idx, col_name in enumerate(columns)}
+    data_column_map = {str(col_name): idx for idx, col_name in enumerate(columns)}
 
     # Populate each table column
     for col_ix, column in enumerate(table.tableColumns):
         first_row_cell = table_first_cell.offset(column=col_ix, row=1)
         first_row_style = first_row_cell._style
 
-        # Check if this column exists in the data
         if column.name in data_column_map:
             data_col_idx = data_column_map[column.name]
 
@@ -168,9 +168,10 @@ def populate_table(
             for row_ix, row_values in enumerate(rows):
                 cell_to_fill = table_first_cell.offset(column=col_ix, row=row_ix + 1)
 
-                # Copy the style first: openpyxl applies a number format when
-                # the value is assigned, so a datetime written before the style
-                # copy would lose its date format.
+                # Copy the style from the first data row *before* assigning the
+                # value: a date format is what tells Excel (and openpyxl on
+                # read-back) that a datetime column holds dates rather than
+                # serial numbers.
                 if copy_style_in_tables:
                     cell_to_fill._style = first_row_style
 
@@ -205,18 +206,18 @@ def populate_table(
     if extend_conditional_formatting and first_data_row <= new_table_last_row:
         _extend_conditional_formatting(
             worksheet=worksheet,
-            table_start_column_letter=table_start_column_letter,
-            table_end_column_letter=table_end_column_letter,
+            table_start_column=table_start_column,
+            table_end_column=table_end_column,
             first_data_row=first_data_row,
-            table_end_row=new_table_last_row,
+            table_last_row=new_table_last_row,
         )
 
     return TableChangeSpecs(
         worksheet_title=worksheet_title,
         header_row=table_start_row,
         first_col=table_start_column,
-        last_col=column_index_from_string(table_end_column_letter),
-        old_last_row=table_old_end_row,
+        last_col=table_end_column,
+        old_last_row=table_old_last_row,
         new_last_row=new_table_last_row,
     )
 
@@ -236,54 +237,102 @@ def _has_totals_row(table: Table) -> bool:
 
 def _extend_conditional_formatting(
     worksheet: Worksheet,
-    table_start_column_letter: str,
-    table_end_column_letter: str,
+    table_start_column: int,
+    table_end_column: int,
     first_data_row: int,
-    table_end_row: int,
+    table_last_row: int,
 ) -> None:
     """Extend conditional formatting rules from first data row to all rows in the table.
 
+    A rule that tracks the table's height — one of its ranges starts on the
+    first data row and lies inside the table's columns — is resized to the
+    table's last row.  Ranges are parsed (never compared as strings), so a
+    rule on ``B130:B200`` is not mistaken for one on ``B13``, and multi-area
+    ranges such as ``B13:B20 D13:D20`` are handled per area.
+
     Args:
         worksheet: The worksheet containing the table
-        table_start_column_letter: Starting column letter (e.g., 'B')
-        table_end_column_letter: Ending column letter (e.g., 'M')
+        table_start_column: 1-based index of the table's first column
+        table_end_column: 1-based index of the table's last column
         first_data_row: Row number of the first data row
-        table_end_row: Row number of the last row in the table
+        table_last_row: Row number of the last row in the table
 
     """
-    conditional_formattings = [str(c.sqref) for c in worksheet.conditional_formatting]
-    start_col_idx = column_index_from_string(table_start_column_letter)
-    end_col_idx = column_index_from_string(table_end_column_letter)
+    entries: list[Any] = list(worksheet.conditional_formatting)
+    for conditional_formatting in entries:
+        new_ranges: list[str] = []
+        extended = False
 
-    for col_idx in range(start_col_idx, end_col_idx + 1):
-        # Check each column (B13, C13, ...)
-        range_to_check = f"{col_to_excel(col_idx)}{first_data_row}"
-
-        for conditional_formatting in conditional_formattings:
-            if conditional_formatting.startswith(range_to_check):
-                # Parse the current range
-                if ":" not in conditional_formatting:
-                    current_end = conditional_formatting
-                else:
-                    _, current_end = conditional_formatting.split(":")
-
-                end_letter = "".join(x for x in current_end if not x.isdigit())
-
-                # Get the rules for this range
-                rules = worksheet.conditional_formatting[conditional_formatting]
-                del worksheet.conditional_formatting[conditional_formatting]
-
-                # Create new extended range
-                new_range = (
-                    conditional_formatting.split(":")[0] + ":" + f"{end_letter}{table_end_row}"
+        cell_ranges: list[Any] = sorted(conditional_formatting.sqref.ranges, key=str)
+        for cell_range in cell_ranges:
+            if _cf_range_tracks_table(
+                cell_range,
+                table_start_column=table_start_column,
+                table_end_column=table_end_column,
+                first_data_row=first_data_row,
+                table_last_row=table_last_row,
+            ):
+                new_ranges.append(
+                    CellRange(
+                        min_col=cell_range.min_col,
+                        min_row=cell_range.min_row,
+                        max_col=cell_range.max_col,
+                        max_row=table_last_row,
+                    ).coord,
                 )
+                extended = True
+            else:
+                new_ranges.append(cell_range.coord)
 
-                # Re-add all rules with the new range
-                for rule in rules:
-                    worksheet.conditional_formatting.add(new_range, rule)
+        if not extended:
+            continue
 
-                logger.debug(
-                    "Extended conditional formatting: %s -> %s",
-                    conditional_formatting,
-                    new_range,
-                )
+        # The rules are re-added under the new sqref instead of mutating
+        # ``sqref`` in place: ConditionalFormattingList keys its entries by
+        # the object, whose hash includes the range.
+        old_sqref = str(conditional_formatting.sqref)
+        new_sqref = " ".join(new_ranges)
+        rules = list(conditional_formatting.rules)
+        del worksheet.conditional_formatting[old_sqref]
+        for rule in rules:
+            worksheet.conditional_formatting.add(new_sqref, rule)
+
+        logger.debug("Extended conditional formatting: %s -> %s", old_sqref, new_sqref)
+
+
+def _cf_range_tracks_table(
+    cell_range: CellRange,
+    *,
+    table_start_column: int,
+    table_end_column: int,
+    first_data_row: int,
+    table_last_row: int,
+) -> bool:
+    """Whether *cell_range* should be resized to the table's last row.
+
+    Such a range starts on the first data row and lies inside the table's
+    columns, so it grows and shrinks with the table.
+
+    Examples:
+        >>> def tracks(area, last_row):
+        ...     return _cf_range_tracks_table(
+        ...         CellRange(area),
+        ...         table_start_column=2,
+        ...         table_end_column=13,
+        ...         first_data_row=13,
+        ...         table_last_row=last_row,
+        ...     )
+        >>> tracks("B13:B20", 30)
+        True
+        >>> tracks("B13:B20", 20)
+        False
+        >>> tracks("B130:B200", 30)
+        False
+
+    """
+    return (
+        cell_range.min_row == first_data_row
+        and cell_range.max_row != table_last_row
+        and cell_range.min_col >= table_start_column
+        and cell_range.max_col <= table_end_column
+    )

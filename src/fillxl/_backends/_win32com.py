@@ -204,7 +204,7 @@ class Win32ComBackend:
 
         adapter = TabularAdapter(data)
         data_columns = adapter.columns
-        rows = list(adapter.rows)
+        rows = adapter.rows
         num_data_rows = len(rows)
 
         # ── Get table metadata ────────────────────────────────────────────
@@ -213,12 +213,11 @@ class Win32ComBackend:
         header_row = header_range.Row
         start_col = header_range.Column
         num_cols = header_range.Columns.Count
-        end_col = start_col + num_cols - 1
 
         from fillxl._utils import col_to_excel
 
         start_col_letter = col_to_excel(start_col)
-        end_col_letter = col_to_excel(end_col)
+        end_col_letter = col_to_excel(start_col + num_cols - 1)
 
         # Column names from the table — read all at once (single COM call)
         header_values = header_range.Value
@@ -347,8 +346,11 @@ class Win32ComBackend:
         values_matrix: list[list[Any]] = []
         for row in rows:
             row_values: list[Any] = []
-            for _col_idx, col_name in enumerate(table_columns):
+            for col_name in table_columns:
                 if col_name in data_col_index and col_name not in formula_columns:
+                    # Central normalisation — guarantees identical results
+                    # with the openpyxl backend (apostrophe-prefixed strings
+                    # and the UTC marking for datetimes).
                     val = prepare_com_value(
                         row[data_col_index[col_name]],
                         escape_formulas=config.escape_formulas,

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Python 3.15 support: added to the classifiers, the CI test matrix, and the
+  nox `PYTHONS` list (the `requires-python` floor stays at 3.11).
+- polars 2 support: the dev/test environment and `uv.lock` use polars 2, and
+  the nox matrix has an explicit `tests_polars-2` session. The supported
+  release lines are now documented as pandas 2–3, polars 0.20–2, and duckdb
+  1.x.
+- The `duckdb` extra is limited to Python ≤3.14: duckdb currently publishes no
+  cp315 wheels. Its tests skip on 3.15 until upstream provides them.
+
 ## [0.2.0] — 2026-07-19
 
 ### Added

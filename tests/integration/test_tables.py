@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import openpyxl
+import pytest
 
 from fillxl import FillXLConfig, fill
 from tests.conftest import TEMPLATE
@@ -83,3 +84,44 @@ def test_new_rows_do_not_inherit_styles_when_copy_table_styles_is_false(output_p
         )
     finally:
         wb.close()
+
+
+def test_a_table_with_a_totals_row_is_rejected(output_path: Path) -> None:
+    """Totals rows are not supported: they would be overwritten and miscounted.
+
+    The error message has to say so, rather than silently producing a
+    workbook where the totals row contains a data row.
+    """
+    from openpyxl.worksheet.table import Table, TableColumn
+
+    template = output_path.with_name("totals.xlsx")
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws["A1"] = "Name"
+    ws["B1"] = "Value"
+    ws["A2"] = "a"
+    ws["B2"] = 1
+    ws["A3"] = "Total"
+    ws["B3"] = "=SUBTOTAL(109,B2:B2)"
+    ws.add_table(
+        Table(
+            displayName="Totals",
+            ref="A1:B3",
+            tableColumns=[
+                TableColumn(id=1, name="Name", totalsRowLabel="Total"),
+                TableColumn(id=2, name="Value", totalsRowFunction="sum"),
+            ],
+            totalsRowCount=1,
+            totalsRowShown=True,
+        ),
+    )
+    wb.save(template)
+    wb.close()
+
+    with pytest.raises(ValueError, match="totals row"):
+        fill(
+            template=template,
+            output=output_path,
+            tables={"Totals": [{"Name": "b", "Value": 2}]},
+        )

@@ -82,6 +82,16 @@ def populate_table(
     table: Table
     worksheet, table = find_worksheet_and_table(workbook, table_name)
 
+    if _has_totals_row(table):
+        msg = (
+            f"Table '{table_name}' has a totals row, which fillxl does not "
+            f"support: writing the data would overwrite the totals and "
+            f"miscount the rows. Remove the totals row from the template."
+        )
+        raise ValueError(
+            msg,
+        )
+
     # Parse original table reference (e.g., 'B12:M13')
     original_table_ref: str = table.ref
     table_start, table_end = original_table_ref.split(":")
@@ -192,6 +202,19 @@ def populate_table(
         old_last_row=table_old_end_row,
         new_last_row=table_end_row,
     )
+
+
+def _has_totals_row(table: Table) -> bool:
+    """Whether *table* is configured with a totals row.
+
+    Examples:
+        >>> from openpyxl.worksheet.table import Table, TableColumn
+        >>> columns = [TableColumn(id=1, name="a"), TableColumn(id=2, name="b")]
+        >>> _has_totals_row(Table(displayName="T", ref="A1:B2", tableColumns=columns))
+        False
+
+    """
+    return bool(getattr(table, "totalsRowCount", 0)) or bool(table.totalsRowShown)
 
 
 def _extend_conditional_formatting(

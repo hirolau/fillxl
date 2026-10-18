@@ -6,8 +6,10 @@ win32com backend.  These do not require Excel and can run in CI.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
+import openpyxl
 import pytest
 
 from fillxl import FillXLConfig
@@ -88,3 +90,63 @@ class TestWin32ComPlatformGuard:
         backend = _win32com.Win32ComBackend()
         with pytest.raises(RuntimeError, match="win32com"):
             backend.load(tmp_path / "fake.xlsx")
+
+
+def _skip_without_excel() -> None:
+    """Skip the calling test when this machine cannot drive Excel."""
+    if sys.platform != "win32":
+        pytest.skip("win32com backend requires Windows")
+
+    try:
+        import win32com.client
+
+        app = win32com.client.DispatchEx("Excel.Application")
+    except Exception as exc:
+        pytest.skip(f"Excel COM is not available: {exc}")
+    else:
+        app.Quit()
+
+
+class TestWin32ComTotalsRows:
+    """Tables with totals rows are rejected with a clear message."""
+
+    def test_a_table_with_a_totals_row_is_rejected(self, tmp_path: Path) -> None:
+        """Totals rows are not supported — the error says so instead of corrupting them."""
+        from openpyxl.worksheet.table import Table, TableColumn
+
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = tmp_path / "totals_template.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Data"
+        ws["A1"] = "Name"
+        ws["B1"] = "Value"
+        ws["A2"] = "a"
+        ws["B2"] = 1
+        ws["A3"] = "Total"
+        ws["B3"] = "=SUBTOTAL(109,B2:B2)"
+        table = Table(
+            displayName="Totals",
+            ref="A1:B3",
+            tableColumns=[
+                TableColumn(id=1, name="Name", totalsRowLabel="Total"),
+                TableColumn(id=2, name="Value", totalsRowFunction="sum"),
+            ],
+            totalsRowCount=1,
+            totalsRowShown=True,
+        )
+        ws.add_table(table)
+        wb.save(template)
+        wb.close()
+
+        # Excel only exposes ShowTotals for real list objects, so this case is
+        # exercised through the win32com backend as well as openpyxl.
+        with pytest.raises(ValueError, match="totals row"):
+            fill(
+                template=template,
+                output=tmp_path / "out.xlsx",
+                tables={"Totals": [{"Name": "b", "Value": 2}]},
+                engine="win32com",
+            )

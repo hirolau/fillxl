@@ -191,6 +191,14 @@ class Win32ComBackend:
             msg = f"Table '{name}' not found in workbook"
             raise KeyError(msg)
 
+        if _com_has_totals_row(list_obj):
+            msg = (
+                f"Table '{name}' has a totals row, which fillxl does not "
+                f"support: writing the data would overwrite the totals and "
+                f"miscount the rows. Remove the totals row from the template."
+            )
+            raise ValueError(msg)
+
         # ── Normalise data ────────────────────────────────────────────────
         from fillxl._adapters import TabularAdapter
 
@@ -542,6 +550,11 @@ class Win32ComBackend:
 
 
 # ── Standalone helpers ──────────────────────────────────────────────────────
+
+
+def _com_has_totals_row(list_obj: Any) -> bool:  # noqa: ANN401
+    """Whether a COM ``ListObject`` is configured with a totals row."""
+    return bool(getattr(list_obj, "ShowTotals", False))
 
 
 def _prepare_formula_for_com(formula: str) -> str:

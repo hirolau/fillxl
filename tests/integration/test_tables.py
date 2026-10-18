@@ -250,6 +250,106 @@ def test_empty_data_keeps_one_body_row_and_the_totals_row(output_path: Path) -> 
         wb.close()
 
 
+def _build_headerless_template(path: Path, *, data_rows: int) -> None:
+    """A table with its header row hidden, so Excel names columns Column1/2."""
+    from openpyxl.worksheet.table import Table, TableColumn
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    for offset in range(data_rows):
+        ws.cell(row=3 + offset, column=2, value=100 + offset)
+        ws.cell(row=3 + offset, column=3, value=offset)
+    ws.add_table(
+        Table(
+            displayName="NoHeaders",
+            ref=f"B3:C{2 + data_rows}",
+            tableColumns=[
+                TableColumn(id=1, name="Column1"),
+                TableColumn(id=2, name="Column2"),
+            ],
+            headerRowCount=0,
+        ),
+    )
+    wb.save(path)
+    wb.close()
+
+
+def test_a_table_without_a_header_row_is_filled_by_column_name(output_path: Path) -> None:
+    """A headerless table is addressed as Column1/Column2 and grows from row 1."""
+    template = output_path.with_name("headerless.xlsx")
+    _build_headerless_template(template, data_rows=2)
+
+    fill(
+        template=template,
+        output=output_path,
+        tables={
+            "NoHeaders": [
+                {"Column1": 10, "Column2": 60},
+                {"Column1": 20, "Column2": 70},
+                {"Column1": 30, "Column2": 80},
+            ],
+        },
+    )
+
+    wb = openpyxl.load_workbook(output_path)
+    try:
+        ws = wb["Data"]
+        table = ws.tables["NoHeaders"]
+
+        assert table.headerRowCount == 0
+        assert table.ref == "B3:C5"
+        assert [ws.cell(row=r, column=2).value for r in (3, 4, 5)] == [10, 20, 30]
+        assert [ws.cell(row=r, column=3).value for r in (3, 4, 5)] == [60, 70, 80]
+    finally:
+        wb.close()
+
+
+def test_a_headerless_table_writes_the_first_row_into_the_table(output_path: Path) -> None:
+    """The old first row is data, not a header, so it must not survive."""
+    template = output_path.with_name("headerless_shrink.xlsx")
+    _build_headerless_template(template, data_rows=3)
+
+    fill(
+        template=template,
+        output=output_path,
+        tables={"NoHeaders": [{"Column1": 7, "Column2": 8}]},
+    )
+
+    wb = openpyxl.load_workbook(output_path)
+    try:
+        ws = wb["Data"]
+        table = ws.tables["NoHeaders"]
+
+        assert table.ref == "B3:C3"
+        assert ws.cell(row=3, column=2).value == 7
+        assert ws.cell(row=3, column=3).value == 8
+        assert ws.cell(row=4, column=2).value is None
+        assert ws.cell(row=5, column=2).value is None
+    finally:
+        wb.close()
+
+
+def test_empty_data_leaves_one_blank_row_in_a_headerless_table(output_path: Path) -> None:
+    """Empty data keeps a single cleared row so the table stays valid."""
+    template = output_path.with_name("headerless_empty.xlsx")
+    _build_headerless_template(template, data_rows=2)
+
+    fill(template=template, output=output_path, tables={"NoHeaders": []})
+
+    wb = openpyxl.load_workbook(output_path)
+    try:
+        ws = wb["Data"]
+        table = ws.tables["NoHeaders"]
+
+        assert table.headerRowCount == 0
+        assert table.ref == "B3:C3"
+        assert ws.cell(row=3, column=2).value is None
+        assert ws.cell(row=3, column=3).value is None
+    finally:
+        wb.close()
+
+
 def test_an_empty_dataframe_leaves_one_cleared_body_row(output_path: Path) -> None:
     """Empty data keeps a single empty row so the table stays valid."""
     import pandas as pd

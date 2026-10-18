@@ -87,6 +87,9 @@ def populate_table(
 
     # A totals row is part of the table's reference but not of its data body.
     totals_rows = _totals_row_count(table)
+    # A table can be shown without a header row; Excel names its columns
+    # Column1, Column2, … and the reference starts at the first data row.
+    header_rows = 0 if table.headerRowCount == 0 else 1
 
     # Parse the original table reference (e.g. 'B12:M13')
     original_table_ref: str = table.ref
@@ -97,7 +100,7 @@ def populate_table(
     table_old_body_last_row = table_old_last_row - totals_rows
     table_start_column = original_cell_range.min_col
     table_end_column = original_cell_range.max_col
-    first_data_row = table_start_row + 1
+    first_data_row = table_start_row + header_rows
 
     # Snapshot the totals row before any clearing: openpyxl writes cells in
     # place, so the row has to be recreated at its new position below.
@@ -109,7 +112,7 @@ def populate_table(
 
     # An Excel table needs at least one body row, so empty data keeps a single
     # (cleared) row — the same thing the win32com backend does.
-    new_table_body_last_row = table_start_row + max(num_data_rows, 1)
+    new_table_body_last_row = first_data_row + max(num_data_rows, 1) - 1
     new_table_last_row = new_table_body_last_row + totals_rows
     new_table_ref = (
         f"{get_column_letter(table_start_column)}{table_start_row}:"
@@ -171,7 +174,7 @@ def populate_table(
 
     # Populate each table column
     for col_ix, column in enumerate(table.tableColumns):
-        first_row_cell = table_first_cell.offset(column=col_ix, row=1)
+        first_row_cell = table_first_cell.offset(column=col_ix, row=header_rows)
         first_row_style = first_row_cell._style
 
         if column.name in data_column_map:
@@ -179,7 +182,7 @@ def populate_table(
 
             # Write each row value
             for row_ix, row_values in enumerate(rows):
-                cell_to_fill = table_first_cell.offset(column=col_ix, row=row_ix + 1)
+                cell_to_fill = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
 
                 # Copy style from the first data row *before* assigning the
                 # value: a date format is what tells Excel (and openpyxl on
@@ -200,7 +203,7 @@ def populate_table(
         elif column.calculatedColumnFormula:
             formula = column.calculatedColumnFormula.attr_text or ""
             for row_ix in range(num_data_rows):
-                cell_to_fill = table_first_cell.offset(column=col_ix, row=row_ix + 1)
+                cell_to_fill = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
                 if copy_style_in_tables:
                     cell_to_fill._style = first_row_style
                 cell_to_fill.value = "=" + formula
@@ -237,6 +240,7 @@ def populate_table(
         last_col=table_end_column,
         old_last_row=table_old_body_last_row,
         new_last_row=new_table_body_last_row,
+        header_rows=header_rows,
     )
 
 

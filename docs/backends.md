@@ -98,6 +98,22 @@ totals row is moved to remain directly below it, keeping its values, labels,
 functions and styling. The table reference includes the totals row while the
 auto-filter range stops at the last data row, matching what Excel writes.
 
+Tables **without a header row** (the table's "Header Row" option is off) are
+supported too. Excel names their columns `Column1`, `Column2`, …, so that is
+how the data is addressed:
+
+```python
+fill(
+    template="test.xlsx",
+    output="TestFilled.xlsx",
+    tables={"Table1": [{"Column1": 1, "Column2": 6}]},
+)
+```
+
+The data starts in the table's first row (there is no header to skip). The
+win32com engine writes these tables row by row, because Excel removes the
+table when a whole headerless body is assigned in a single call.
+
 !!! note "Totals-row formulas"
     Totals formulas that use structured references — for example
     `SUBTOTAL(109,Table1[Value])`, which is what Excel writes for its built-in

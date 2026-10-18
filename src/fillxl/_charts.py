@@ -28,21 +28,24 @@ class TableChangeSpecs(NamedTuple):
     """Specification for a table range change.
 
     All row and column numbers are absolute worksheet coordinates and
-    ``header_row`` is the row that holds the column headers, so the first
-    data row is always ``header_row + 1``.  ``old_last_row`` and
+    ``header_row`` is the first row of the table reference, so the first data
+    row is ``header_row + header_rows``.  ``old_last_row`` and
     ``new_last_row`` are the last rows of the table's *data body*, which is
     what chart data ranges are compared against.  A totals row, if the table
     has one, sits below ``new_last_row`` and is not included.  Empty data
     still leaves one blank body row (Excel requires it), so a table with no
-    data rows has ``new_last_row == header_row + 1``.
+    data rows has ``new_last_row == first_data_row``.
 
     Attributes:
         worksheet_title: Title of the worksheet containing the table.
-        header_row: Row number of the table header.
+        header_row: First row of the table reference (the header row when the
+            table has one, otherwise the first data row).
         first_col: 1-based index of the table's first column.
         last_col: 1-based index of the table's last column.
         old_last_row: Last data row of the table before the fill.
         new_last_row: Last data row of the table after the fill.
+        header_rows: 1 when the table has a header row, 0 when headers are
+            hidden (Excel names those columns ``Column1``, ``Column2``, …).
 
     Examples:
         >>> spec = TableChangeSpecs("Sheet1", 12, 2, 13, 13, 20)
@@ -52,6 +55,11 @@ class TableChangeSpecs(NamedTuple):
         'B12:M13'
         >>> spec.new_ref
         'B12:M20'
+        >>> headerless = TableChangeSpecs("Sheet1", 12, 2, 13, 13, 20, header_rows=0)
+        >>> headerless.first_data_row
+        12
+        >>> headerless.old_ref
+        'B12:M13'
 
     """
 
@@ -61,11 +69,12 @@ class TableChangeSpecs(NamedTuple):
     last_col: int
     old_last_row: int
     new_last_row: int
+    header_rows: int = 1
 
     @property
     def first_data_row(self) -> int:
-        """Row number of the first data row (the row below the header)."""
-        return self.header_row + 1
+        """Row number of the first data row (below the header, if any)."""
+        return self.header_row + self.header_rows
 
     @property
     def old_ref(self) -> str:
@@ -149,8 +158,8 @@ def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None
     data ranges updated to match the new table dimensions.
 
     Only references that point at the table's *data body* — that is, ranges
-    starting one row below the header, ending at the table's last data row,
-    and within the table's columns — are updated.
+    starting at the table's first data row, ending at its last data row, and
+    within the table's columns — are updated.
 
     Args:
         spec: TableChangeSpecs describing the old and new table dimensions

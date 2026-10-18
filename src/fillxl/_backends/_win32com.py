@@ -243,23 +243,32 @@ class Win32ComBackend:
 
         # ── Get table metadata ────────────────────────────────────────────
         t_meta = time.perf_counter()
-        header_range = list_obj.HeaderRowRange
-        header_row = header_range.Row
-        start_col = header_range.Column
-        num_cols = header_range.Columns.Count
+        # A table can be displayed without a header row.  Excel then names its
+        # columns Column1, Column2, … and ``HeaderRowRange`` is empty, so the
+        # column names have to come from the list columns instead.
+        show_headers = bool(list_obj.ShowHeaders)
+        header_rows = 1 if show_headers else 0
+        table_range = list_obj.Range
+        table_start_row = table_range.Row
+        first_data_row = table_start_row + header_rows
+        start_col = table_range.Column
+        num_cols = table_range.Columns.Count
 
         from fillxl._utils import col_to_excel
 
         start_col_letter = col_to_excel(start_col)
         end_col_letter = col_to_excel(start_col + num_cols - 1)
 
-        # Column names from the table — read all at once (single COM call)
-        header_values = header_range.Value
-        if isinstance(header_values, tuple) and len(header_values) > 0:
-            row_tuple = header_values[0]
-            table_columns = [str(row_tuple[i]) for i in range(num_cols)]
+        if show_headers:
+            # Column names from the table — read all at once (single COM call)
+            header_values = list_obj.HeaderRowRange.Value
+            if isinstance(header_values, tuple) and len(header_values) > 0:
+                row_tuple = header_values[0]
+                table_columns = [str(row_tuple[i]) for i in range(num_cols)]
+            else:
+                table_columns = [str(header_values)]
         else:
-            table_columns = [str(header_values)]
+            table_columns = [str(list_obj.ListColumns(i + 1).Name) for i in range(num_cols)]
         logger.info("[win32com] table metadata took %.3fs", time.perf_counter() - t_meta)
 
         # ── Column validation (must happen before resize so we know what to write) ──
@@ -277,11 +286,9 @@ class Win32ComBackend:
         # ── Measure the existing table ────────────────────────────────────
         data_body_range = list_obj.DataBodyRange
         if data_body_range is not None:
-            old_data_row = data_body_range.Row
-            old_last_row = old_data_row + data_body_range.Rows.Count - 1
+            old_last_row = data_body_range.Row + data_body_range.Rows.Count - 1
         else:
-            old_data_row = header_row + 1
-            old_last_row = header_row
+            old_last_row = first_data_row - 1
 
         worksheet_title = str(worksheet.Name)
         old_table_last_row = old_last_row + totals_rows
@@ -290,8 +297,21 @@ class Win32ComBackend:
         # (openpyxl does the same; an Excel table needs at least one body row.)
         if num_data_rows == 0:
             if data_body_range is not None:
-                data_body_range.ClearContents()
-            new_last_row = header_row + 1
+                if header_rows:
+                    data_body_range.ClearContents()
+                else:
+                    # Clearing the whole body of a headerless table in one
+                    # call drops the ListObject.  Sub-ranges are safe, so
+                    # clear row by row, and cell by cell when the body is a
+                    # single row.
+                    body_rows = data_body_range.Rows.Count
+                    if body_rows == 1:
+                        for col_index in range(1, data_body_range.Columns.Count + 1):
+                            data_body_range.Cells(1, col_index).ClearContents()
+                    else:
+                        for row_index in range(1, body_rows + 1):
+                            data_body_range.Rows(row_index).ClearContents()
+            new_last_row = first_data_row
             new_table_last_row = new_last_row + totals_rows
             if new_table_last_row != old_table_last_row:
                 resize_last_row = _resize_target_row(
@@ -301,7 +321,7 @@ class Win32ComBackend:
                 )
                 list_obj.Resize(
                     self._app.Range(
-                        f"{start_col_letter}{header_row}:{end_col_letter}{resize_last_row}",
+                        f"{start_col_letter}{table_start_row}:{end_col_letter}{resize_last_row}",
                     ),
                 )
             if new_table_last_row < old_table_last_row:
@@ -309,26 +329,31 @@ class Win32ComBackend:
                     f"{start_col_letter}{new_table_last_row + 1}:"
                     f"{end_col_letter}{old_table_last_row}",
                 ).ClearContents()
-            worksheet.Range(
-                f"{start_col_letter}{new_last_row}:{end_col_letter}{new_last_row}",
-            ).ClearContents()
+            # Clearing the whole body of a headerless table (which is exactly
+            # this row once the table has shrunk) drops the ListObject, and
+            # the body rows were already cleared above.
+            if header_rows:
+                worksheet.Range(
+                    f"{start_col_letter}{new_last_row}:{end_col_letter}{new_last_row}",
+                ).ClearContents()
             return TableChangeSpecs(
                 worksheet_title=worksheet_title,
-                header_row=header_row,
+                header_row=table_start_row,
                 first_col=start_col,
                 last_col=start_col + num_cols - 1,
                 old_last_row=old_last_row,
                 new_last_row=new_last_row,
+                header_rows=header_rows,
             )
 
-        new_end_row = header_row + num_data_rows
+        new_end_row = first_data_row + num_data_rows - 1
         new_table_last_row = new_end_row + totals_rows
 
         # Check for overflow — cells below the table should be empty.
         # Read the entire overflow range in a single COM call (batch read)
         # instead of cell-by-cell (which is ~100x slower for large expansions).
         t_overflow = time.perf_counter()
-        if num_data_rows > (old_last_row - header_row):
+        if num_data_rows > (old_last_row - first_data_row + 1):
             # Start below the existing totals row (if any) and check through
             # the last row the resized table will occupy.
             overflow_start = old_last_row + 1 + totals_rows
@@ -384,7 +409,7 @@ class Win32ComBackend:
             )
             list_obj.Resize(
                 self._app.Range(
-                    f"{start_col_letter}{header_row}:{end_col_letter}{resize_last_row}",
+                    f"{start_col_letter}{table_start_row}:{end_col_letter}{resize_last_row}",
                 ),
             )
         logger.info("[win32com] resize took %.3fs", time.perf_counter() - t_resize)
@@ -423,9 +448,19 @@ class Win32ComBackend:
                     row_values.append(None)
             values_matrix.append(row_values)
 
-        # Write the entire matrix at once (much faster than cell-by-cell)
+        # Write the entire matrix at once (much faster than cell-by-cell).
+        # Excel drops the ListObject when a *whole* headerless body is written
+        # in one assignment, so those tables are written row by row, and cell
+        # by cell when the body is a single row.
         if values_matrix:
-            new_data_body.Value = values_matrix
+            if header_rows:
+                new_data_body.Value = values_matrix
+            elif len(values_matrix) == 1:
+                for col_index, val in enumerate(values_matrix[0], start=1):
+                    new_data_body.Cells(1, col_index).Value = val
+            else:
+                for row_index, row_values in enumerate(values_matrix, start=1):
+                    new_data_body.Rows(row_index).Value = [row_values]
         logger.info("[win32com] write data took %.3fs", time.perf_counter() - t_write)
 
         # Re-apply calculated column formulas.  Writing ``None`` above clears
@@ -463,7 +498,7 @@ class Win32ComBackend:
             first_data_row_range = new_data_body.Rows(1)
             first_data_row_range.Copy()
             dest_range = worksheet.Range(
-                f"{start_col_letter}{header_row + 2}:{end_col_letter}{new_end_row}",
+                f"{start_col_letter}{first_data_row + 1}:{end_col_letter}{new_end_row}",
             )
             dest_range.PasteSpecial(Paste=_XL_PASTE_FORMATS)
             # Clear the clipboard (copy mode)
@@ -477,18 +512,19 @@ class Win32ComBackend:
                 worksheet=worksheet,
                 start_col_letter=start_col_letter,
                 end_col_letter=end_col_letter,
-                first_data_row=header_row + 1,
+                first_data_row=first_data_row,
                 last_data_row=new_end_row,
             )
         logger.info("[win32com] conditional formatting took %.3fs", time.perf_counter() - t_cf)
 
         return TableChangeSpecs(
             worksheet_title=worksheet_title,
-            header_row=header_row,
+            header_row=table_start_row,
             first_col=start_col,
             last_col=start_col + num_cols - 1,
             old_last_row=old_last_row,
             new_last_row=new_end_row,
+            header_rows=header_rows,
         )
 
     def update_charts(self, spec: TableChangeSpecs) -> None:

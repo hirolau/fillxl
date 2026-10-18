@@ -10,8 +10,11 @@ runners), so the same suite protects local runs and CI pipelines with Excel.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import sys
 from decimal import Decimal
+from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -95,6 +98,30 @@ class FilledWorkbook:
         self.table = next(iter(worksheet.tables.values()))
 
 
+@cache
+def _win32com_available() -> bool:
+    """Whether this machine can actually start Excel via COM.
+
+    pywin32 can be installed on Windows CI runners that have no Excel, in
+    which case ``DispatchEx`` raises a COM error that says nothing about
+    Excel or win32com.  Checking up front turns those runs into skips
+    instead of failures.
+    """
+    if sys.platform != "win32":
+        return False
+
+    try:
+        import win32com.client
+
+        app = win32com.client.DispatchEx("Excel.Application")
+    except Exception:
+        return False
+
+    with contextlib.suppress(Exception):
+        app.Quit()
+    return True
+
+
 def _fill_and_read(
     template: Path,
     output_path: Path,
@@ -105,6 +132,9 @@ def _fill_and_read(
     config: FillXLConfig | None = None,
 ) -> FilledWorkbook:
     """Fill *template* with *engine* and return the openpyxl read-back."""
+    if engine == "win32com" and not _win32com_available():
+        pytest.skip("win32com backend requires Windows and Excel")
+
     output = output_path.with_name(f"{output_path.stem}_{engine}{output_path.suffix}")
     try:
         fill(

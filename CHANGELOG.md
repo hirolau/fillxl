@@ -57,9 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the offending column instead of being silently truncated.
 - `delete_sheets` is stored as a tuple, so a frozen `FillXLConfig` cannot be
   mutated through a caller's list.
-- CI runs on every branch and includes a Windows job; the release workflow now
-  gates publishing on a passing test run and on the tag matching
-  `pyproject.toml`.
+- CI runs on every branch; the release workflow now gates publishing on a
+  passing test run and on the tag matching `pyproject.toml`.
 
 ### Fixed
 

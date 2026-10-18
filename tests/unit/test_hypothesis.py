@@ -8,8 +8,9 @@ from __future__ import annotations
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from openpyxl.utils import column_index_from_string
 
-from fillxl._utils import col2num, col_to_excel
+from fillxl._utils import col_to_excel
 from fillxl._validation import validate_columns
 
 # ── Column conversion round-trip ─────────────────────────────────────────────
@@ -17,8 +18,8 @@ from fillxl._validation import validate_columns
 
 @given(col=st.integers(min_value=1, max_value=16384))  # XFD = col 16384
 def test_col_to_excel_round_trips(col: int) -> None:
-    """col_to_excel(n) → col2num(result) should give back n for all valid Excel columns."""
-    assert col2num(col_to_excel(col)) == col
+    """col_to_excel(n) → column_index_from_string(result) gives back n."""
+    assert column_index_from_string(col_to_excel(col)) == col
 
 
 # ── Column validation strategy invariants ────────────────────────────────────

@@ -107,6 +107,38 @@ def _skip_without_excel() -> None:
         app.Quit()
 
 
+class TestWin32ComCleanup:
+    """Excel must not be left running when something fails."""
+
+    def test_excel_is_not_left_running_when_the_template_cannot_be_opened(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failed load() is still followed by close(), so Excel quits."""
+        from fillxl import fill
+        from fillxl._backends._win32com import Win32ComBackend
+
+        _skip_without_excel()
+        closed: list[bool] = []
+        original_close = Win32ComBackend.close
+
+        def _recording_close(self: Win32ComBackend) -> None:
+            closed.append(True)
+            original_close(self)
+
+        monkeypatch.setattr(Win32ComBackend, "close", _recording_close)
+
+        # A file with a .xlsx suffix that is not a workbook at all.
+        broken = tmp_path / "broken.xlsx"
+        broken.write_text("this is not a workbook")
+
+        with pytest.raises(Exception):  # noqa: B017
+            fill(template=broken, output=tmp_path / "out.xlsx", engine="win32com")
+
+        assert closed == [True], "close() must run even when load() fails"
+
+
 class TestWin32ComTotalsRows:
     """Tables with totals rows are rejected with a clear message."""
 

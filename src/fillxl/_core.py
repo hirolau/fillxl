@@ -82,9 +82,14 @@ def fill(
         shutil.copy2(template_path, temp_template_path)
 
         backend = get_backend(engine)
-        backend.load(temp_template_path)
 
         try:
+            # Loading happens inside the try block: if opening the template
+            # fails (missing file, locked file, password prompt), the finally
+            # clause still closes the backend.  Otherwise a hidden EXCEL.EXE
+            # would be left running.
+            backend.load(temp_template_path)
+
             # 1. Fill named cells with scalar values
             if values:
                 for name, value in values.items():

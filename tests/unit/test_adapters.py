@@ -144,6 +144,56 @@ class TestTabularAdapter:
         with pytest.raises(RuntimeError, match="Rows not initialized"):
             _ = adapter.rows
 
+    def test_adapter_accepts_a_dict_of_numpy_arrays(self) -> None:
+        """dict[str, np.ndarray] is column-oriented data like dict[str, list]."""
+        numpy = pytest.importorskip("numpy")
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter({"a": numpy.arange(3), "b": numpy.array([4.5, 5.5, 6.5])})
+        assert adapter.columns == ["a", "b"]
+        assert len(adapter.rows) == 3
+        assert adapter.rows[1][0] == 1
+
+    def test_adapter_accepts_a_dict_of_tuples_and_series(self) -> None:
+        """Tuples and pandas Series are column data too."""
+        pd = pytest.importorskip("pandas")
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter({"a": (1, 2), "b": pd.Series([3, 4])})
+        assert adapter.columns == ["a", "b"]
+        assert adapter.rows == [[1, 3], [2, 4]]
+
+    def test_a_series_with_a_non_default_index_is_read_positionally(self) -> None:
+        """Series values are positional; their index labels must not be used."""
+        pd = pytest.importorskip("pandas")
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter({"a": pd.Series([10, 20], index=["x", "y"])})
+        assert adapter.rows == [[10], [20]]
+
+    def test_non_string_mapping_keys_are_supported(self) -> None:
+        """Column keys may be any type; only the output names are stringified."""
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter({1: [10, 20], 2: [30, 40]})
+        assert adapter.columns == ["1", "2"]
+        assert adapter.rows == [[10, 30], [20, 40]]
+
+    def test_ragged_columns_raise_instead_of_truncating(self) -> None:
+        """Columns of different lengths are an error, not a silent truncation."""
+        from fillxl._adapters import TabularAdapter
+
+        with pytest.raises(ValueError, match="zip"):
+            TabularAdapter({"a": [1, 2], "b": [3]})
+
+    def test_is_tabular_recognises_a_dict_of_arrays(self) -> None:
+        """is_tabular agrees with the adapter about dict[str, array]."""
+        numpy = pytest.importorskip("numpy")
+        from fillxl._adapters import TabularAdapter
+
+        assert TabularAdapter.is_tabular({"a": numpy.arange(2)})
+        assert not TabularAdapter.is_tabular({"a": "not a column"})
+
     def test_rows_can_be_read_more_than_once(self) -> None:
         """Rows are materialised, so a second access is not empty."""
         from fillxl._adapters import TabularAdapter

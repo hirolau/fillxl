@@ -157,8 +157,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"
-# Tests intentionally pass invalid engines / poke private attrs.
-disable_error_code = ["arg-type"]
+# Tests intentionally pass invalid engines, table payloads, and poke private attrs.
+disable_error_code = ["arg-type", "dict-item"]
 
 [[tool.mypy.overrides]]
 module = "tests.integration.test_win32com"

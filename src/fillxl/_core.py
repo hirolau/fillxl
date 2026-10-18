@@ -13,7 +13,7 @@ from fillxl._config import FillXLConfig
 from fillxl._normalize import reset_tz_warning_state
 
 if TYPE_CHECKING:
-    from fillxl._types import Engine, PathLike
+    from fillxl._types import Engine, PathLike, TabularData
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def fill(
     template: PathLike,
     output: PathLike,
     values: dict[str, Any] | None = None,
-    tables: dict[str, Any] | None = None,
+    tables: dict[str, TabularData] | None = None,
     *,
     engine: Engine = "auto",
     config: FillXLConfig | None = None,
@@ -31,7 +31,8 @@ def fill(
 
     Accepts separate mappings for table data (``tables``) and named-cell
     values (``values``).  Tabular data can be any of the supported formats
-    (pandas/polars/duckdb DataFrames, ``list[dict]``, or ``dict[str, list]``).
+    (pandas/polars/duckdb DataFrames, ``list[dict]``, or
+    ``dict[str, sequence]``).
 
     Args:
         template: Path to the Excel template file.

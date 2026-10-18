@@ -98,9 +98,9 @@ fill(
     template: str | Path,
     output: str | Path,
     values: dict[str, Any] | None = None,
-    tables: dict[str, list[dict] | DataFrame | ...] | None = None,
+    tables: dict[str, TabularData] | None = None,
     *,
-    engine: str = "auto",      # "openpyxl", "win32com"
+    engine: Engine = "auto",   # "auto", "openpyxl", "win32com"
     config: FillXLConfig | None = None
 ) -> Path
 ```

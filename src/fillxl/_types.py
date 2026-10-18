@@ -11,11 +11,11 @@ if TYPE_CHECKING:
     from pandas import DataFrame
     from polars import DataFrame as PolarsDataFrame
 
-# Tabular data types that can be used to fill Excel tables
-# Use string annotations at runtime to avoid import overhead
-if TYPE_CHECKING:
+    # Tabular data types that can be used to fill Excel tables.  The
+    # column-oriented mapping accepts any sequence-like column values (list,
+    # tuple, numpy array, pandas/polars Series, …).
     TabularData: TypeAlias = (
-        DataFrame | PolarsDataFrame | DuckDBPyRelation | list[dict[str, Any]] | dict[str, list[Any]]
+        DataFrame | PolarsDataFrame | DuckDBPyRelation | list[dict[str, Any]] | dict[str, Any]
     )
 else:
     TabularData: TypeAlias = Any

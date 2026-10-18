@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 # Optional dependencies are looked up in ``sys.modules`` instead of imported:
@@ -11,9 +12,34 @@ from typing import TYPE_CHECKING, Any
 # been imported, and a per-call ``import`` is both slow and repeatedly fails
 # to find packages that are not installed.
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
+
+
+def _is_column_values(values: Any) -> bool:  # noqa: ANN401
+    """Whether *values* is a column of data (list, tuple, array, Series, …).
+
+    Strings and mappings are excluded: ``{"a": "hello"}`` is a single value,
+    not a column.
+
+    Examples:
+        >>> _is_column_values([1, 2, 3])
+        True
+        >>> _is_column_values((1, 2))
+        True
+        >>> _is_column_values("abc")
+        False
+        >>> _is_column_values({"a": 1})
+        False
+
+    """
+    if isinstance(values, (str, bytes, bytearray, dict)):
+        return False
+    if isinstance(values, Sequence):
+        return True
+    # NumPy arrays and pandas/polars Series are not ``Sequence`` instances.
+    return hasattr(values, "tolist") and hasattr(values, "__len__")
 
 
 class TabularAdapter:
@@ -67,22 +93,27 @@ class TabularAdapter:
             logger.debug("Detected list[dict] with %d columns", len(columns))
             return
 
-        # Try dict[str, list]
+        # Try dict[str, column] — column values may be lists, tuples, numpy
+        # arrays, pandas/polars Series, or anything else sequence-like.
         if isinstance(data, dict) and len(data) > 0:
-            first_value = next(iter(data.values()))
-            if isinstance(first_value, list):
-                self._columns = list(data.keys())
-                # Transpose: dict of columns -> list of rows
-                num_rows = len(first_value)
-                self._rows = [[data[col][i] for col in self._columns] for i in range(num_rows)]
-                logger.debug("Detected dict[str, list] with %d columns", len(self._columns))
+            first_value: Any = next(iter(data.values()))
+            if _is_column_values(first_value):
+                keys = list(data)
+                self._columns = [str(key) for key in keys]
+                # Materialise each column positionally: list(Series) ignores
+                # a non-default index, and this also handles arrays/tuples.
+                # ``strict=True`` reports ragged columns instead of silently
+                # truncating them.
+                column_values = [list(data[key]) for key in keys]
+                self._rows = [list(row) for row in zip(*column_values, strict=True)]
+                logger.debug("Detected dict[str, column] with %d columns", len(keys))
                 return
 
         # If we get here, it's not tabular data
         msg = (
             f"Unsupported data type: {type(data).__name__}. "
             "Expected pandas.DataFrame, polars.DataFrame, duckdb.DuckDBPyRelation, "
-            "list[dict], or dict[str, list]. "
+            "list[dict], or dict[str, sequence]. "
             "Install the appropriate optional dependency (pandas, polars, or duckdb) "
             "if you're trying to use one of those backends."
         )
@@ -128,13 +159,10 @@ class TabularAdapter:
 
         """
         # Quick check without importing heavy dependencies
-        if isinstance(data, (list, dict)):
-            if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-                return True
-            if isinstance(data, dict) and len(data) > 0:
-                first_value = next(iter(data.values()))
-                if isinstance(first_value, list):
-                    return True
+        if isinstance(data, list):
+            return len(data) > 0 and isinstance(data[0], dict)
+        if isinstance(data, dict) and len(data) > 0:
+            return _is_column_values(next(iter(data.values())))
 
         # Check for known DataFrame types by class name to avoid imports
         return type(data).__name__ in ("DataFrame", "DuckDBPyRelation")

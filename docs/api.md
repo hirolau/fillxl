@@ -26,7 +26,7 @@ fill(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `template` | `str \| Path` | Path to the Excel template file (`.xlsx`). |
+| `template` | `str \| Path` | Path to the Excel template file. |
 | `output` | `str \| Path` | Path where the filled workbook will be saved. |
 | `values` | `dict[str, Any] \| None` | Map of named cell → value to fill. |
 | `tables` | `dict[str, TabularData] \| None` | Map of table name → data to fill. |

@@ -124,7 +124,7 @@ See the full documentation for `FillXLConfig` options.
 | Engine     | Cross-platform | Requires Excel | Best for                     |
 |------------|----------------|----------------|------------------------------|
 | `openpyxl` | Yes            | No             | Most use cases, Linux/macOS  |
-| `win32com` | Windows only   | Yes            | Modern charts, full fidelity |
+| `win32com` | Windows only   | Yes            | `.xlsm`/`.xlsb`, modern charts |
 
 ---
 

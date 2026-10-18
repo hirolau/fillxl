@@ -15,6 +15,11 @@ import pytest
 from fillxl import FillXLConfig
 
 
+def assets_dir() -> Path:
+    """Directory holding the test template assets."""
+    return Path(__file__).resolve().parents[2] / "assets"
+
+
 class TestWin32ComBackendNoWorkbook:
     """Backend method calls without loading a workbook (CI-safe)."""
 
@@ -92,6 +97,11 @@ class TestWin32ComPlatformGuard:
             backend.load(tmp_path / "fake.xlsx")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Excel-backed behaviours (skipped without Excel)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
 def _skip_without_excel() -> None:
     """Skip the calling test when this machine cannot drive Excel."""
     if sys.platform != "win32":
@@ -105,6 +115,71 @@ def _skip_without_excel() -> None:
         pytest.skip(f"Excel COM is not available: {exc}")
     else:
         app.Quit()
+
+
+class TestWin32ComSaveFormats:
+    """The output format follows the requested suffix."""
+
+    def test_filling_an_xlsm_template_keeps_its_macros(self, tmp_path: Path) -> None:
+        """An .xlsm template keeps its vbaProject when filled to .xlsm."""
+        import zipfile
+
+        from fillxl import fill
+
+        _skip_without_excel()
+        template = assets_dir() / "test_template_1_slsm.xlsm"
+        output = tmp_path / "macros_kept.xlsm"
+
+        fill(
+            template=template,
+            output=output,
+            values={"single_cell": "Macro Friendly"},
+            engine="win32com",
+        )
+
+        with zipfile.ZipFile(output) as archive:
+            names = archive.namelist()
+        assert "xl/vbaProject.bin" in names, names
+
+        wb = openpyxl.load_workbook(output, keep_vba=True)
+        try:
+            assert wb["TestSingleCell"]["A1"].value == "Macro Friendly"
+        finally:
+            wb.close()
+
+    def test_filling_to_xlsb_writes_the_binary_format(self, tmp_path: Path) -> None:
+        """The .xlsb suffix selects the binary workbook format."""
+        import zipfile
+
+        from fillxl import fill
+
+        _skip_without_excel()
+        output = tmp_path / "binary.xlsb"
+
+        fill(
+            template=assets_dir() / "test_template_1.xlsx",
+            output=output,
+            values={"single_cell": "Binary"},
+            engine="win32com",
+        )
+
+        with zipfile.ZipFile(output) as archive:
+            names = archive.namelist()
+        assert "xl/workbook.bin" in names, names
+        assert "xl/workbook.xml" not in names, names
+
+    def test_an_unknown_output_suffix_raises_value_error(self, tmp_path: Path) -> None:
+        """A non-Excel suffix is rejected instead of silently writing .xlsx."""
+        from fillxl import fill
+
+        _skip_without_excel()
+        with pytest.raises(ValueError, match="Supported output formats"):
+            fill(
+                template=assets_dir() / "test_template_1.xlsx",
+                output=tmp_path / "output.csv",
+                values={"single_cell": "nope"},
+                engine="win32com",
+            )
 
 
 class TestWin32ComCleanup:

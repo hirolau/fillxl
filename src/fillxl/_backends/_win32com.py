@@ -30,17 +30,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# A chart series formula contains references such as 'Sheet 1'!$B$13:$B$13.
-_SERIES_RANGE_RE = re.compile(
-    r"(?:'[^']+'|[A-Za-z0-9_.]+)!\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?",
-)
-
 _is_windows = sys.platform == "win32"
 
 # COM constants (fallback if early binding is unavailable)
 _XL_SHEET_HIDDEN = 0
-_XL_OPEN_XML_WORKBOOK = 51
 _XL_PASTE_FORMATS = -4122
+
+# SaveAs file formats, keyed by output suffix.  Saving an .xlsm template with
+# the .xlsx format silently strips its macros, so the format is inferred from
+# the requested output path instead of being hard-coded.
+_FILE_FORMATS: dict[str, int] = {
+    ".xlsx": 51,  # xlOpenXMLWorkbook
+    ".xlsm": 52,  # xlOpenXMLWorkbookMacroEnabled
+    ".xlsb": 50,  # xlExcel12
+    ".xls": 56,  # xlExcel8
+}
+
+# A chart series formula contains references such as 'Sheet 1'!$B$13:$B$13.
+_SERIES_RANGE_RE = re.compile(
+    r"(?:'[^']+'|[A-Za-z0-9_.]+)!\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?",
+)
 
 
 class Win32ComBackend:
@@ -525,18 +534,35 @@ class Win32ComBackend:
     def save(self, path: Path) -> None:
         """Save the workbook to *path*.
 
+        The file format is inferred from the output suffix, so filling an
+        ``.xlsm`` template keeps its macros instead of silently saving the
+        workbook as macro-free ``.xlsx``.
+
         Args:
             path: Destination path.
+
+        Raises:
+            ValueError: If the output suffix is not a supported Excel format.
 
         """
         self._ensure_workbook()
         t0 = time.perf_counter()
+        suffix = path.suffix.lower()
+        file_format = _FILE_FORMATS.get(suffix)
+        if file_format is None:
+            supported = ", ".join(sorted(_FILE_FORMATS))
+            msg = (
+                f"Cannot save '{suffix}' files. Supported output formats "
+                f"for the win32com backend: {supported}."
+            )
+            raise ValueError(msg)
+
         # Resolve to absolute path — COM/Excel resolves relative paths
         # from the Excel process working directory, not the Python CWD.
         abs_path = path.resolve()
         abs_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.debug("Saving workbook to %s", abs_path)
-        self._workbook.SaveAs(str(abs_path), FileFormat=_XL_OPEN_XML_WORKBOOK)
+        logger.debug("Saving workbook to %s (format %d)", abs_path, file_format)
+        self._workbook.SaveAs(str(abs_path), FileFormat=file_format)
         logger.info("[win32com] save took %.3fs", time.perf_counter() - t0)
 
     def close(self) -> None:

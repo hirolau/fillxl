@@ -5,6 +5,7 @@ Tests invariants of pure functions under random inputs.
 
 from __future__ import annotations
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -27,37 +28,49 @@ def test_col_to_excel_round_trips(col: int) -> None:
     table_cols=st.lists(st.text(min_size=1), min_size=1, max_size=10, unique=True),
     data_cols=st.lists(st.text(min_size=1), min_size=0, max_size=15, unique=True),
 )
-def test_validate_columns_none_returns_data_unchanged(
+def test_validate_columns_none_accepts_any_column_combination(
     table_cols: list[str],
     data_cols: list[str],
 ) -> None:
-    """The 'none' strategy should always return data_columns exactly as provided."""
-    result = validate_columns(table_cols, data_cols, strategy="none")
-    assert result == data_cols
+    """The 'none' strategy accepts any combination of table and data columns."""
+    validate_columns(table_cols, data_cols, strategy="none")
 
 
 @given(
     table_cols=st.lists(st.text(min_size=1), min_size=1, max_size=10, unique=True),
     data_cols=st.lists(st.text(min_size=1), min_size=1, max_size=15, unique=True),
 )
-def test_validate_columns_drop_returns_subset_of_data(
+def test_validate_columns_drop_accepts_any_column_combination(
     table_cols: list[str],
     data_cols: list[str],
 ) -> None:
-    """The 'drop' strategy should only return columns present in both table and data."""
-    result = validate_columns(table_cols, data_cols, strategy="drop")
-    assert set(result) <= set(data_cols)
-    assert set(result) <= set(table_cols)
+    """The 'drop' strategy never raises; backends simply skip unmatched columns."""
+    validate_columns(table_cols, data_cols, strategy="drop")
 
 
 @given(
     table_cols=st.lists(st.text(min_size=1), min_size=1, max_size=10, unique=True),
     data_cols=st.lists(st.text(min_size=1), min_size=1, max_size=15, unique=True),
 )
-def test_validate_columns_warn_returns_all_original_columns(
+def test_validate_columns_warn_accepts_any_column_combination(
     table_cols: list[str],
     data_cols: list[str],
 ) -> None:
-    """The 'warn' strategy should always return data_columns unchanged."""
-    result = validate_columns(table_cols, data_cols, strategy="warn")
-    assert result == data_cols
+    """The 'warn' strategy never raises, whatever the column mismatch."""
+    validate_columns(table_cols, data_cols, strategy="warn")
+
+
+@given(
+    table_cols=st.lists(st.text(min_size=1), min_size=1, max_size=10, unique=True),
+    data_cols=st.lists(st.text(min_size=1), min_size=1, max_size=15, unique=True),
+)
+def test_validate_columns_strict_raises_exactly_on_mismatch(
+    table_cols: list[str],
+    data_cols: list[str],
+) -> None:
+    """The 'strict' strategy only raises when the column sets differ."""
+    if set(table_cols) == set(data_cols):
+        validate_columns(table_cols, data_cols, strategy="strict")
+    else:
+        with pytest.raises(ValueError, match="Column mismatch"):
+            validate_columns(table_cols, data_cols, strategy="strict")

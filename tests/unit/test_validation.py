@@ -11,10 +11,14 @@ import pytest
 from fillxl._validation import validate_columns
 
 
-def test_validate_columns_returns_all_columns_on_exact_match() -> None:
-    """Exact column match returns all columns unchanged."""
-    result = validate_columns(["A", "B"], ["A", "B"], "strict")
-    assert result == ["A", "B"]
+def test_validate_columns_accepts_exact_match() -> None:
+    """Exact column match passes validation."""
+    validate_columns(["A", "B"], ["A", "B"], "strict")  # does not raise
+
+
+def test_validate_columns_reports_without_returning_a_column_list() -> None:
+    """The function only validates; backends match columns themselves."""
+    assert validate_columns(["A"], ["A"], "strict") is None  # type: ignore[func-returns-value]
 
 
 def test_validate_columns_strict_raises_on_mismatch() -> None:
@@ -23,27 +27,24 @@ def test_validate_columns_strict_raises_on_mismatch() -> None:
         validate_columns(["A", "B"], ["A", "C"], "strict")
 
 
-def test_validate_columns_drop_filters_to_intersection() -> None:
-    """Drop strategy filters to intersection."""
-    result = validate_columns(["A", "B"], ["A", "C", "D"], "drop")
-    assert result == ["A"]
+def test_validate_columns_drop_accepts_extra_and_missing_columns() -> None:
+    """Drop strategy accepts extra and missing columns without raising."""
+    validate_columns(["A", "B"], ["A", "C", "D"], "drop")
 
 
-def test_validate_columns_warn_returns_all_original_columns() -> None:
-    """Warn strategy returns all original columns."""
-    result = validate_columns(["A", "B"], ["A", "C"], "warn")
-    assert result == ["A", "C"]
+def test_validate_columns_warn_accepts_extra_and_missing_columns() -> None:
+    """Warn strategy accepts extra and missing columns without raising."""
+    validate_columns(["A", "B"], ["A", "C"], "warn")
 
 
 def test_validate_columns_all_but_formulas_allows_extra_and_omits_formula() -> None:
     """Non-formula columns all present, extra allowed, formula omitted."""
-    result = validate_columns(
+    validate_columns(
         ["A", "B", "FormulaCol"],
         ["A", "B", "Extra"],
         "all_but_formulas",
         formula_columns=["FormulaCol"],
     )
-    assert result == ["A", "B", "Extra"]
 
 
 def test_validate_columns_all_but_formulas_raises_when_non_formula_column_missing() -> None:
@@ -54,13 +55,12 @@ def test_validate_columns_all_but_formulas_raises_when_non_formula_column_missin
 
 def test_validate_columns_all_but_formulas_strict_passes_with_exact_non_formula() -> None:
     """Exact non-formula columns passes."""
-    result = validate_columns(
+    validate_columns(
         ["A", "B", "FormulaCol"],
         ["A", "B"],
         "all_but_formulas_strict",
         formula_columns=["FormulaCol"],
     )
-    assert result == ["A", "B"]
 
 
 def test_validate_columns_all_but_formulas_strict_raises_for_extra_column() -> None:
@@ -85,10 +85,9 @@ def test_validate_columns_all_but_formulas_strict_raises_for_missing_column() ->
         )
 
 
-def test_validate_columns_none_returns_data_columns_unchanged() -> None:
-    """'none' returns data columns unchanged regardless of mismatch."""
-    result = validate_columns(["A", "B"], ["X", "Y", "Z"], "none")
-    assert result == ["X", "Y", "Z"]
+def test_validate_columns_none_skips_validation_entirely() -> None:
+    """'none' skips validation regardless of mismatch."""
+    validate_columns(["A", "B"], ["X", "Y", "Z"], "none")
 
 
 def test_validate_columns_drop_logs_info_about_dropped_columns(

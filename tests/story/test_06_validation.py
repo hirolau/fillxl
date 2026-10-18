@@ -279,34 +279,35 @@ class TestDropAndWarnStrategies:
 
 
 class TestValidateColumnsFunction:
-    """Unit tests for the validate_columns internal function."""
+    """Unit tests for the validate_columns internal function.
 
-    def test_none_strategy_returns_data_columns_unchanged(self) -> None:
-        """'none' always returns whatever you pass in."""
-        result = validate_columns(
+    The function validates and reports; it returns ``None`` because the
+    backends match columns by name and never need a filtered list.
+    """
+
+    def test_none_strategy_accepts_any_column_combination(self) -> None:
+        """'none' accepts whatever you pass in."""
+        validate_columns(
             table_columns=["A", "B"],
             data_columns=["X", "Y", "Z"],
             strategy="none",
         )
-        assert result == ["X", "Y", "Z"]
 
-    def test_warn_strategy_returns_all_data_columns(self) -> None:
-        """'warn' returns all data columns regardless of match."""
-        result = validate_columns(
+    def test_warn_strategy_accepts_mismatched_columns(self) -> None:
+        """'warn' accepts extra data columns."""
+        validate_columns(
             table_columns=["A"],
             data_columns=["A", "B", "C"],
             strategy="warn",
         )
-        assert result == ["A", "B", "C"]
 
-    def test_drop_strategy_returns_only_columns_in_both(self) -> None:
-        """'drop' returns the intersection of table and data columns."""
-        result = validate_columns(
+    def test_drop_strategy_accepts_extra_and_missing_columns(self) -> None:
+        """'drop' accepts both extra data columns and missing table columns."""
+        validate_columns(
             table_columns=["A", "B"],
             data_columns=["B", "C"],
             strategy="drop",
         )
-        assert result == ["B"]
 
     def test_strict_raises_when_columns_differ(self) -> None:
         """'strict' raises ValueError on any mismatch."""
@@ -321,13 +322,12 @@ class TestValidateColumnsFunction:
         """Formula columns are excluded from the comparison."""
         # 'B' is a formula column — it's OK if missing from data
         # No error expected since all non-formula cols match
-        result = validate_columns(
+        validate_columns(
             table_columns=["A", "B", "C"],
             data_columns=["A", "C"],
             strategy="all_but_formulas",
             formula_columns=["B"],
         )
-        assert result == ["A", "C"]
 
     def test_all_but_formulas_strict_rejects_extra_data_columns(self) -> None:
         """Extra data columns not in the table → error in strict mode."""

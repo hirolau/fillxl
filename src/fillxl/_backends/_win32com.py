@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from fillxl._charts import TableChangeSpecs
+from openpyxl.worksheet.cell_range import CellRange
+
+from fillxl._charts import TableChangeSpecs, _unquote_sheet_name
 from fillxl._normalize import prepare_com_value
 
 if TYPE_CHECKING:
@@ -26,6 +29,11 @@ if TYPE_CHECKING:
     from fillxl._config import FillXLConfig
 
 logger = logging.getLogger(__name__)
+
+# A chart series formula contains references such as 'Sheet 1'!$B$13:$B$13.
+_SERIES_RANGE_RE = re.compile(
+    r"(?:'[^']+'|[A-Za-z0-9_.]+)!\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?",
+)
 
 _is_windows = sys.platform == "win32"
 
@@ -413,11 +421,6 @@ class Win32ComBackend:
         """
         self._ensure_workbook()
 
-        # Parse old/new row counts from the spec
-        old_ref_end = int("".join(ch for ch in spec.old_ref.split(":")[1] if ch.isdigit()))
-        new_ref_end = int("".join(ch for ch in spec.new_ref.split(":")[1] if ch.isdigit()))
-        old_start = int("".join(ch for ch in spec.old_ref.split(":")[0] if ch.isdigit()))
-
         for sheet in self._workbook.Sheets:
             try:
                 chart_objects = sheet.ChartObjects()
@@ -434,19 +437,10 @@ class Win32ComBackend:
                     except Exception:
                         continue
 
-                    # Check if this series references the table's worksheet
-                    if spec.worksheet_title not in formula:
-                        continue
-
                     # Parse the formula to find end row references
                     # Formula format: =SERIES(name, x_values, y_values, plot_order)
                     # Each range is like: 'Sheet'!$A$2:$A$N
-                    updated = _update_series_formula(
-                        formula=formula,
-                        old_end_row=old_ref_end,
-                        new_end_row=new_ref_end,
-                        table_start_row=old_start,
-                    )
+                    updated = _update_series_formula(formula, spec)
                     if updated:
                         logger.debug("Updated chart series formula: %s -> %s", formula, updated)
                         series.Formula = updated
@@ -689,65 +683,49 @@ def _extend_conditional_formatting_com(
         logger.exception("Failed to extend conditional formatting")
 
 
-def _update_series_formula(
-    formula: str,
-    old_end_row: int,
-    new_end_row: int,
-    table_start_row: int,
-) -> str | None:
-    """Update a chart series formula to reflect a new end row.
+def _update_series_formula(formula: str, spec: TableChangeSpecs) -> str | None:
+    """Update a chart series formula to reflect the table's new last row.
 
-    Only updates references that start exactly one row below the table header
-    (i.e., the data body start).
+    Only references that point at the table's data body — starting one row
+    below the header, ending at the table's last row, and within the table's
+    columns — are updated.  The sheet name is compared exactly, so a chart on
+    ``Data2`` is left alone while ``Data`` is filled.
 
     Args:
         formula: The original series formula (e.g., ``=SERIES(...)``).
-        old_end_row: The old end row of the table data body.
-        new_end_row: The new end row of the table data body.
-        table_start_row: The row of the table header.
+        spec: The table change to apply.
 
     Returns:
         The updated formula string, or ``None`` if no update was needed.
 
+    Examples:
+        >>> spec = TableChangeSpecs("Data", 12, 2, 13, 13, 20)
+        >>> _update_series_formula("=SERIES(T,'Data'!$B$13:$B$13,1)", spec)
+        "=SERIES(T,'Data'!$B$13:$B$20,1)"
+        >>> _update_series_formula("=SERIES(T,'Data2'!$B$13:$B$13,1)", spec) is None
+        True
+
     """
-    import re
+    updated_any = False
 
-    original = formula
+    def _replace_reference(match: re.Match[str]) -> str:
+        nonlocal updated_any
+        reference = match.group(0)
+        sheet_part, separator, cell_part = reference.rpartition("!")
+        if not separator or _unquote_sheet_name(sheet_part) != spec.worksheet_title:
+            return reference
+        try:
+            cell_range = CellRange(cell_part)
+        except ValueError:
+            return reference
+        if cell_range.min_row != spec.first_data_row or cell_range.max_row != spec.old_last_row:
+            return reference
+        if cell_range.min_col < spec.first_col or cell_range.max_col > spec.last_col:
+            return reference
+        updated_any = True
+        # Replace only the trailing row number, preserving "$" prefixes.
+        new_cell_part = re.sub(r"\d+$", str(spec.new_last_row), cell_part)
+        return f"{sheet_part}!{new_cell_part}"
 
-    def _replace_end_row(match: re.Match[str]) -> str:
-        full = str(match.group(0))
-        parts = full.split(":")
-        if len(parts) != 2:
-            return full
-
-        # Parse start part: e.g., $A$2 or A2
-        start = parts[0]
-        start_row_match = re.search(r"\$?(\d+)$", start)
-        if not start_row_match:
-            return full
-        start_row = int(str(start_row_match.group(1)))
-
-        # Only update if this range starts at the data body start
-        if start_row != table_start_row + 1:
-            return full
-
-        # Parse end part: e.g., $A$5 or A5
-        end = parts[1]
-        end_row_match = re.search(r"\$?(\d+)$", end)
-        if not end_row_match:
-            return full
-        end_row = int(str(end_row_match.group(1)))
-
-        # Only update if end row matches the old end row
-        if end_row != old_end_row:
-            return full
-
-        # Replace end row number
-        new_end = end[: int(end_row_match.start(1))] + str(new_end_row)
-        return start + ":" + new_end
-
-    # Match range references like $A$2:$A$5 or 'Sheet'!$A$2:$A$5
-    pattern = r"(?:'[^']*'!)?\$?[A-Z]+\$?\d+:\$?[A-Z]+\$?\d+"
-    updated = str(re.sub(pattern, _replace_end_row, formula))
-
-    return updated if updated != original else None
+    updated = str(_SERIES_RANGE_RE.sub(_replace_reference, formula))
+    return updated if updated_any else None

@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from openpyxl.worksheet.table import Table
+
     from fillxl._config import FillXLConfig
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,10 @@ class Win32ComBackend:
         self._app: Any = None
         self._workbook: Any = None
         self._load_path: Path | None = None
+        # Calculated-column formulas for every table, read once per load.
+        # Reading them opens the workbook with openpyxl, which must not
+        # happen once per table in a fill.
+        self._formula_cache: dict[str, tuple[list[str], dict[str, str]]] | None = None
 
     # ── Internal helpers ───────────────────────────────────────────────────
 
@@ -116,6 +122,27 @@ class Win32ComBackend:
             msg = "No workbook loaded — call load() first"
             raise RuntimeError(msg)
 
+    def _read_calculated_column_formulas(
+        self,
+        table_name: str,
+    ) -> tuple[list[str], dict[str, str]]:
+        """Return the calculated column names and formulas for *table_name*.
+
+        The formulas for **all** tables are read in a single openpyxl load and
+        cached for the lifetime of the loaded workbook, so filling many tables
+        does not reopen the file for each one.
+
+        Args:
+            table_name: Name of the table to inspect.
+
+        Returns:
+            A tuple of (formula_column_names, formula_map).
+
+        """
+        if self._formula_cache is None:
+            self._formula_cache = _read_all_calculated_column_formulas(self._load_path)
+        return self._formula_cache.get(table_name, ([], {}))
+
     # ── Backend protocol ───────────────────────────────────────────────────
 
     def load(self, path: Path) -> None:
@@ -130,6 +157,7 @@ class Win32ComBackend:
         abs_path = path.resolve()
         logger.debug("Loading workbook from %s", abs_path)
         self._load_path = abs_path
+        self._formula_cache = None
         self._workbook = self._app.Workbooks.Open(str(abs_path))
         logger.info("[win32com] load took %.3fs", time.perf_counter() - t0)
 
@@ -240,7 +268,7 @@ class Win32ComBackend:
         # ── Column validation (must happen before resize so we know what to write) ──
         from fillxl._validation import validate_columns
 
-        formula_columns, formula_map = _read_calculated_column_formulas(self._load_path, name)
+        formula_columns, formula_map = self._read_calculated_column_formulas(name)
 
         validate_columns(
             table_columns=table_columns,
@@ -634,23 +662,98 @@ def _prepare_formula_for_com(formula: str) -> str:
     )
 
 
+def _formula_columns_from_table(table: Table) -> tuple[list[str], dict[str, str]]:
+    """Extract calculated-column names and formulas from an openpyxl table.
+
+    openpyxl sets ``calculatedColumnFormula`` for any non-empty default
+    value, not just real formulas, so plain numbers and booleans are skipped.
+
+    Args:
+        table: The openpyxl table definition.
+
+    Returns:
+        A tuple of (formula_column_names, formula_map) where *formula_map*
+        maps column names to their formula strings (with ``=`` prefix).
+
+    """
+    formula_columns: list[str] = []
+    formula_map: dict[str, str] = {}
+
+    for col in table.tableColumns:
+        if not col.calculatedColumnFormula:
+            continue
+        attr_text = col.calculatedColumnFormula.attr_text
+        if not attr_text:
+            continue
+        text = str(attr_text)
+        if text in ("TRUE", "FALSE", "true", "false"):
+            continue
+        try:
+            float(text)
+            continue
+        except ValueError:
+            pass
+        name = str(col.name)
+        formula_str = "=" + text
+        formula_columns.append(name)
+        formula_map[name] = formula_str
+        logger.debug("Detected calculated column '%s' formula=%s", name, formula_str)
+
+    return formula_columns, formula_map
+
+
+def _read_all_calculated_column_formulas(
+    path: Path | None,
+) -> dict[str, tuple[list[str], dict[str, str]]]:
+    """Read every table's calculated-column formulas with a single load.
+
+    COM does not reliably expose ``calculatedColumnFormula`` for tables
+    created by openpyxl, so the table definitions are read from the ``.xlsx``
+    file.  Loading the whole workbook is expensive; doing it once for all
+    tables keeps a fill with many tables cheap.
+
+    Args:
+        path: Path to the workbook file.
+
+    Returns:
+        A mapping of table name to (formula_column_names, formula_map).
+
+    """
+    if path is None or not path.exists():
+        return {}
+
+    try:
+        import openpyxl as _op
+
+        wb = _op.load_workbook(str(path))
+        try:
+            return {
+                str(table.name): _formula_columns_from_table(table)
+                for worksheet in wb.worksheets
+                for table in worksheet.tables.values()
+            }
+        finally:
+            wb.close()
+    except Exception:
+        logger.exception("Failed to read calculated column formulas from %s", path)
+        return {}
+
+
 def _read_calculated_column_formulas(
     path: Path | None,
     table_name: str,
 ) -> tuple[list[str], dict[str, str]]:
-    """Read calculated column formulas from the template using openpyxl.
+    """Read the calculated column formulas of one table using openpyxl.
 
-    COM does not reliably expose ``calculatedColumnFormula`` for tables
-    created by openpyxl.  This helper reads the table definition directly
-    from the ``.xlsx`` file to detect formula columns.
+    Prefer :meth:`Win32ComBackend._read_calculated_column_formulas`, which
+    reads the formulas of all tables in one load and caches them.
 
     Args:
         path: Path to the workbook file.
         table_name: Name of the table to inspect.
 
     Returns:
-        A tuple of (formula_column_names, formula_map) where *formula_map*
-        maps column names to their formula strings (with ``=`` prefix).
+        A tuple of (formula_column_names, formula_map).
 
     """
     if path is None or not path.exists():
@@ -664,37 +767,7 @@ def _read_calculated_column_formulas(
             from fillxl._utils import find_worksheet_and_table
 
             _, table = find_worksheet_and_table(wb, table_name)
-
-            formula_columns: list[str] = []
-            formula_map: dict[str, str] = {}
-
-            for col in table.tableColumns:
-                if col.calculatedColumnFormula:
-                    name = str(col.name)
-                    attr_text = col.calculatedColumnFormula.attr_text
-                    if attr_text:
-                        # openpyxl sets calculatedColumnFormula for any
-                        # non-empty default value, not just real formulas.
-                        # Skip plain numbers, booleans, and simple strings
-                        # — they are default values, not formulas.
-                        text = str(attr_text)
-                        if text.isdigit() or text in ("TRUE", "FALSE", "true", "false"):
-                            continue
-                        try:
-                            float(text)
-                            continue
-                        except ValueError:
-                            pass
-                        formula_str = "=" + text
-                        formula_columns.append(name)
-                        formula_map[name] = formula_str
-                        logger.debug(
-                            "Detected calculated column '%s' formula=%s",
-                            name,
-                            formula_str,
-                        )
-
-            return formula_columns, formula_map
+            return _formula_columns_from_table(table)
         finally:
             wb.close()
     except Exception:

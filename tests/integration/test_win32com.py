@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 import openpyxl
 import pytest
@@ -667,6 +668,58 @@ class TestReadCalculatedColumnFormulas:
 
         cols, _ = _read_calculated_column_formulas(p, "TestTable")
         assert "Price" not in cols
+
+    def test_all_tables_are_read_with_one_workbook_load(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Filling many tables must not reload the workbook once per table."""
+        from fillxl._backends._win32com import Win32ComBackend
+
+        p = tmp_path / "two_tables.xlsx"
+        wb = openpyxl.Workbook()
+        table_defs = (
+            ("First", "TableA", "Col1+1"),
+            ("Second", "TableB", 'Col1&"!"'),
+        )
+        for sheet_name, table_name, formula in table_defs:
+            ws = wb.create_sheet(sheet_name)
+            ws["A1"] = "Col1"
+            ws["A2"] = 0
+            ws.add_table(
+                Table(
+                    displayName=table_name,
+                    ref="A1:A2",
+                    tableColumns=[
+                        TableColumn(
+                            id=1,
+                            name="Col1",
+                            calculatedColumnFormula=TableFormula(attr_text=formula),
+                        ),
+                    ],
+                ),
+            )
+        wb.save(p)
+        wb.close()
+
+        backend = Win32ComBackend()
+        backend._load_path = p
+
+        with mock.patch.object(
+            openpyxl,
+            "load_workbook",
+            wraps=openpyxl.load_workbook,
+        ) as load_workbook:
+            assert backend._read_calculated_column_formulas("TableA") == (
+                ["Col1"],
+                {"Col1": "=Col1+1"},
+            )
+            assert backend._read_calculated_column_formulas("TableB") == (
+                ["Col1"],
+                {"Col1": '=Col1&"!"'},
+            )
+
+        assert load_workbook.call_count == 1
 
     def test_formula_with_newlines_preserved_on_read(self, tmp_path: Path) -> None:
         r"""A formula with embedded newlines is returned with those newlines.

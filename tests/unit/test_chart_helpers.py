@@ -6,9 +6,11 @@ detect_unsupported_chart_sheets, _fix_chart_axes) in isolation — no fill() cal
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import openpyxl
+
+T = TypeVar("T")
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -517,3 +519,76 @@ class TestFixChartAxes:
             assert found_text_axis, "No TextAxis found in charts_template"
         finally:
             wb.close()
+
+    @staticmethod
+    def _fixed_chart(chart: T) -> T:
+        from fillxl._backends._openpyxl import _fix_chart_axes
+
+        wb = openpyxl.Workbook()
+        try:
+            wb.active.add_chart(chart, "A1")
+            _fix_chart_axes(wb)
+        finally:
+            wb.close()
+        return chart
+
+    def test_fix_chart_axes_puts_the_scatter_x_axis_at_the_bottom(self) -> None:
+        from openpyxl.chart import ScatterChart
+
+        chart = self._fixed_chart(ScatterChart())
+
+        assert chart.x_axis.axPos == "b"
+        assert chart.y_axis.axPos == "l"
+
+    def test_fix_chart_axes_keeps_a_right_hand_value_axis(self) -> None:
+        from openpyxl.chart import LineChart
+
+        chart = LineChart()
+        chart.y_axis.axPos = "r"
+
+        self._fixed_chart(chart)
+
+        assert chart.y_axis.axPos == "r"
+
+    def test_fix_chart_axes_keeps_a_secondary_axis(self) -> None:
+        from openpyxl.chart import LineChart
+
+        chart = LineChart()
+        chart.y_axis.crosses = "max"
+        chart.y_axis.axPos = "r"
+
+        self._fixed_chart(chart)
+
+        assert chart.y_axis.axPos == "r"
+
+    def test_fix_chart_axes_keeps_a_top_category_axis(self) -> None:
+        from openpyxl.chart import LineChart
+
+        chart = LineChart()
+        chart.x_axis.axPos = "t"
+
+        self._fixed_chart(chart)
+
+        assert chart.x_axis.axPos == "t"
+
+    def test_fix_chart_axes_still_repairs_a_defaulted_line_chart(self) -> None:
+        from openpyxl.chart import LineChart
+
+        chart = LineChart()
+        chart.x_axis.axPos = "l"
+
+        self._fixed_chart(chart)
+
+        assert chart.x_axis.axPos == "b"
+        assert chart.y_axis.axPos == "l"
+
+    def test_fix_chart_axes_horizontal_bar_chart(self) -> None:
+        from openpyxl.chart import BarChart
+
+        chart = BarChart()
+        chart.barDir = "bar"
+
+        self._fixed_chart(chart)
+
+        assert chart.x_axis.axPos == "l"
+        assert chart.y_axis.axPos == "b"

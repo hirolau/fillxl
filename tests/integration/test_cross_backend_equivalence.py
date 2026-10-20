@@ -10,10 +10,9 @@ runners), so the same suite protects local runs and CI pipelines with Excel.
 
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
+import logging
 from decimal import Decimal
-from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -21,9 +20,11 @@ import openpyxl
 import pandas as pd
 import pytest
 from openpyxl.workbook.defined_name import DefinedName
-from openpyxl.worksheet.table import Table, TableColumn
+from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
-from fillxl import Engine, FillXLConfig, fill
+from fillxl import CellValueError, Engine, FillXLConfig, fill
+from tests._assets import TEMPLATE
+from tests._engines import ENGINES, _fill_output, _win32com_available
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -56,8 +57,6 @@ VALUES = [
     pytest.param("", id="empty_string"),
 ]
 
-ENGINES = [pytest.param("openpyxl", id="openpyxl"), pytest.param("win32com", id="win32com")]
-
 
 @pytest.fixture(scope="module")
 def equivalence_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
@@ -74,6 +73,7 @@ def equivalence_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     ws.cell(row=2, column=2, value=0)
     ws.cell(row=2, column=3, value="template note")
     wb.defined_names.add(DefinedName("probe_cell", attr_text="Data!$E$1"))
+    wb.defined_names.add(DefinedName("probe_block", attr_text="Data!$E$2:$F$3"))
     ws.add_table(
         Table(
             displayName="Items",
@@ -97,27 +97,6 @@ class FilledWorkbook:
         self.table = next(iter(worksheet.tables.values()))
 
 
-@cache
-def _win32com_available() -> bool:
-    """Whether this machine can actually start Excel via COM.
-
-    pywin32 can be installed on Windows CI runners that have no Excel, in
-    which case ``DispatchEx`` raises a COM error that says nothing about
-    Excel or win32com.  Checking up front turns those runs into skips
-    instead of failures.
-    """
-    try:
-        import win32com.client
-
-        app = win32com.client.DispatchEx("Excel.Application")
-    except Exception:
-        return False
-
-    with contextlib.suppress(Exception):
-        app.Quit()
-    return True
-
-
 def _fill_and_read(
     template: Path,
     output_path: Path,
@@ -128,17 +107,13 @@ def _fill_and_read(
     config: FillXLConfig | None = None,
 ) -> FilledWorkbook:
     """Fill *template* with *engine* and return the openpyxl read-back."""
-    if engine == "win32com" and not _win32com_available():
-        pytest.skip("win32com backend requires Windows and Excel")
-
-    output = output_path.with_name(f"{output_path.stem}_{engine}{output_path.suffix}")
     try:
-        fill(
-            template=template,
-            output=output,
+        output = _fill_output(
+            template,
+            output_path,
+            engine,
             values=values,
             tables=tables,
-            engine=engine,
             config=config,
         )
     except Exception as exc:
@@ -344,6 +319,161 @@ def test_a_column_missing_from_the_data_does_not_leak_template_values(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Styles and conditional formatting
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _cf_ranges(path: Path, sheet: str) -> set[str]:
+    wb = openpyxl.load_workbook(path)
+    try:
+        return {str(cf.sqref) for cf in wb[sheet].conditional_formatting}
+    finally:
+        wb.close()
+
+
+def _cf_rule_count(path: Path, sheet: str) -> int:
+    wb = openpyxl.load_workbook(path)
+    try:
+        return sum(len(list(cf.rules)) for cf in wb[sheet].conditional_formatting)
+    finally:
+        wb.close()
+
+
+def test_both_engines_extend_conditional_formatting_to_the_same_ranges(
+    output_path: Path,
+) -> None:
+    """The COM path uses the same range rule as the openpyxl path."""
+    rows = [
+        {"Col1": f"row{i}", "Col2": i, "ColNotFilled": "n", "TestFormattedPct": 0.1}
+        for i in range(5)
+    ]
+    opened = _fill_output(
+        TEMPLATE,
+        output_path.with_name("cf_openpyxl.xlsx"),
+        "openpyxl",
+        tables={"TableTest": rows},
+    )
+    closed = _fill_output(
+        TEMPLATE,
+        output_path.with_name("cf_win32com.xlsx"),
+        "win32com",
+        tables={"TableTest": rows},
+    )
+
+    assert _cf_ranges(closed, "TestTable") == _cf_ranges(opened, "TestTable")
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_conditional_formatting_rule_count_is_unchanged_after_fill(
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Extending a range must not fragment or duplicate rules."""
+    rows = [
+        {"Col1": f"row{i}", "Col2": i, "ColNotFilled": "n", "TestFormattedPct": 0.1}
+        for i in range(5)
+    ]
+    output = _fill_output(TEMPLATE, output_path, engine, tables={"TableTest": rows})
+
+    assert _cf_rule_count(output, "TestTable") == _cf_rule_count(TEMPLATE, "TestTable")
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_new_rows_get_the_first_row_number_format(
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """New rows copy the first data row's number formats."""
+    rows = [
+        {"Col1": f"row{i}", "Col2": i, "ColNotFilled": "n", "TestFormattedPct": 0.1}
+        for i in range(6)
+    ]
+    output = _fill_output(
+        TEMPLATE,
+        output_path,
+        engine,
+        tables={"TableTest": rows},
+        config=FillXLConfig(copy_table_styles=True),
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        ws = wb["TestTable"]
+        assert ws["E7"].number_format == ws["E2"].number_format
+        assert ws["E2"].number_format != "General"
+    finally:
+        wb.close()
+
+
+@pytest.mark.parametrize(
+    "engine",
+    [
+        pytest.param("openpyxl", id="openpyxl"),
+        pytest.param(
+            "win32com",
+            id="win32com",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="Excel applies the table column format to new rows itself",
+            ),
+        ),
+    ],
+)
+def test_copy_table_styles_false_does_not_copy_number_formats(
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Without style copying the new rows keep their own (default) format."""
+    rows = [
+        {"Col1": f"row{i}", "Col2": i, "ColNotFilled": "n", "TestFormattedPct": 0.1}
+        for i in range(6)
+    ]
+    output = _fill_output(
+        TEMPLATE,
+        output_path,
+        engine,
+        tables={"TableTest": rows},
+        config=FillXLConfig(copy_table_styles=False),
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        assert wb["TestTable"]["E7"].number_format == "General"
+    finally:
+        wb.close()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_mixed_type_column_keeps_number_formats_per_cell(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A date in the middle of a numeric column formats only its own cell."""
+    output = _fill_output(
+        equivalence_template,
+        output_path,
+        engine,
+        tables={
+            "Items": [
+                {"Name": "a", "Value": 1, "Notes": "n"},
+                {"Name": "b", "Value": dt.datetime(2025, 1, 1), "Notes": "n"},
+                {"Name": "c", "Value": 3, "Notes": "n"},
+            ]
+        },
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        ws = wb["Data"]
+        assert ws["B2"].number_format == "General"
+        assert ws["B4"].number_format == "General"
+        assert ws["B3"].number_format != "General"
+    finally:
+        wb.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Formula escaping
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -435,3 +565,436 @@ def test_error_looking_strings_are_stored_as_text_not_errors(
     assert filled.worksheet["E1"].data_type == "s"
     assert filled.first_row[1] == "#N/A"
     assert filled.worksheet["B2"].data_type == "s"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Excel cell limits
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_overlong_text_raises_with_table_row_and_column(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A cell holds at most 32,767 characters."""
+    rows = [{"Name": "a", "Value": 1, "Notes": "x" * 32_768}]
+
+    with pytest.raises(CellValueError, match=r"Table 'Items', data row 1, column 'Notes'"):
+        _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_control_character_raises_with_context(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Excel rejects control characters in text."""
+    rows = [{"Name": "a", "Value": 1, "Notes": "bell\x07"}]
+
+    with pytest.raises(CellValueError, match="control character"):
+        _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_pre_1900_date_raises(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Excel cannot store dates before 1900-01-01."""
+    rows = [{"Name": "a", "Value": dt.datetime(1899, 12, 31), "Notes": "n"}]
+
+    with pytest.raises(CellValueError, match="before 1900-01-01"):
+        _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_large_integer_warns_once_per_column(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Excel rounds integers above 15 significant digits; say so once."""
+    rows = [{"Name": f"r{i}", "Value": 1234567890123456, "Notes": "n"} for i in range(3)]
+
+    with caplog.at_level(logging.WARNING, logger="fillxl._normalize"):
+        _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
+
+    warnings = [record for record in caplog.records if "significant digits" in record.getMessage()]
+    assert len(warnings) == 1
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_named_cell_error_names_the_cell(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A named-cell error says which name failed."""
+    with pytest.raises(CellValueError, match="Named cell 'probe_cell'"):
+        _fill_output(
+            equivalence_template,
+            output_path,
+            engine,
+            values={"probe_cell": "x" * 32_768},
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Duplicate column names
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_duplicate_normalized_column_names_are_rejected_by_both_engines(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """The adapter rejects the ambiguity before either engine maps names."""
+    with pytest.raises(ValueError, match=r"Duplicate column names.*'1'"):
+        _fill_output(
+            equivalence_template,
+            output_path,
+            engine,
+            tables={"Items": {1: ["a"], "1": ["b"]}},
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Atomic output
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _engine_output(output_path: Path, engine: Engine) -> Path:
+    return output_path.with_name(f"{output_path.stem}_{engine}{output_path.suffix}")
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_failed_fill_leaves_the_previous_output_untouched(
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A failure must never replace an existing output."""
+    target = _engine_output(output_path, engine)
+    target.write_bytes(b"old")
+
+    with pytest.raises(KeyError):
+        _fill_output(TEMPLATE, output_path, engine, tables={"NoSuchTable": []})
+
+    assert target.read_bytes() == b"old"
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_failed_fill_leaves_no_staging_file(output_path: Path, engine: Engine) -> None:
+    """The staging file is removed when the fill fails."""
+    with pytest.raises(KeyError):
+        _fill_output(TEMPLATE, output_path, engine, tables={"NoSuchTable": []})
+
+    assert list(output_path.parent.glob(".*.fillxl*")) == []
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_successful_fill_leaves_no_staging_file(output_path: Path, engine: Engine) -> None:
+    """The staging file is renamed into place."""
+    _fill_output(TEMPLATE, output_path, engine, values={"single_cell": "x"})
+
+    assert list(output_path.parent.glob(".*.fillxl*")) == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Named cells
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_multi_cell_named_range_is_rejected_by_both_engines(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A scalar cannot be written to a multi-cell name on either engine."""
+    with pytest.raises(ValueError, match="multi-cell range"):
+        _fill_output(
+            equivalence_template,
+            output_path,
+            engine,
+            values={"probe_block": "x"},
+        )
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_multi_destination_name_updates_only_the_first_cell(
+    multi_dest_name_template: Path,
+    output_path: Path,
+    engine: Engine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Both engines write to the first destination and point out the rest."""
+    with caplog.at_level(logging.WARNING, logger="fillxl._cells"):
+        output = _fill_output(
+            multi_dest_name_template,
+            output_path,
+            engine,
+            values={"multi_dest": "new"},
+        )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        assert wb["Sheet1"]["A1"].value == "new"
+        assert wb["Sheet2"]["B2"].value == "Second dest"
+    finally:
+        wb.close()
+    assert "multiple destinations" in caplog.text
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Ragged list[dict] data
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_list_of_dicts_with_keys_first_seen_in_later_rows(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A late key is written instead of being silently dropped."""
+    filled = _fill_and_read(
+        equivalence_template,
+        output_path,
+        engine,
+        tables={
+            "Items": [
+                {"Name": "a", "Value": 1},
+                {"Name": "b", "Value": 2, "Notes": "late"},
+            ]
+        },
+    )
+
+    assert filled.worksheet["C2"].value is None
+    assert filled.worksheet["C3"].value == "late"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Calculated columns
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _build_priced_template(path: Path, body_value: object) -> None:
+    """A one-data-row table whose Price column has the definition ``100``."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws.append(["Name", "Price"])
+    ws.append(["old", body_value])
+    ws.add_table(
+        Table(
+            displayName="Priced",
+            ref="A1:B2",
+            tableColumns=[
+                TableColumn(id=1, name="Name"),
+                TableColumn(
+                    id=2,
+                    name="Price",
+                    calculatedColumnFormula=TableFormula(attr_text="100"),
+                ),
+            ],
+        ),
+    )
+    wb.save(path)
+    wb.close()
+
+
+@pytest.fixture(scope="module")
+def stale_definition_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A table whose calculated-column definition is stale (the body holds a value)."""
+    path = tmp_path_factory.mktemp("stale_definition") / "stale_definition.xlsx"
+    _build_priced_template(path, body_value=5)
+    return path
+
+
+@pytest.fixture(scope="module")
+def constant_formula_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A table whose ``=100`` calculated column holds the formula in the body."""
+    path = tmp_path_factory.mktemp("constant_formula") / "constant_formula.xlsx"
+    _build_priced_template(path, body_value="=100")
+    return path
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_calculated_column_survives_data_that_names_it(
+    calculated_column_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Data that names a formula column (even as None) must not erase the formula."""
+    rows = [
+        {
+            "Col1": "a",
+            "Col2": 1,
+            "ColNotFilled": "x",
+            "ColFormula": None,
+            "TestFormattedPct": 0.1,
+        },
+        {
+            "Col1": "b",
+            "Col2": 2,
+            "ColNotFilled": "y",
+            "ColFormula": None,
+            "TestFormattedPct": 0.2,
+        },
+    ]
+    output = _fill_output(
+        calculated_column_template, output_path, engine, tables={"TableTest": rows}
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        ws = wb["TestTable"]
+        for row in (2, 3):
+            cell = ws.cell(row=row, column=4)
+            assert cell.data_type == "f"
+            assert str(cell.value).startswith("=")
+    finally:
+        wb.close()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_real_data_for_a_calculated_column_is_ignored_with_a_warning(
+    calculated_column_template: Path,
+    output_path: Path,
+    engine: Engine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Real data for a formula column is dropped, and the user is told."""
+    rows = [
+        {
+            "Col1": "a",
+            "Col2": 1,
+            "ColNotFilled": "x",
+            "ColFormula": "oops",
+            "TestFormattedPct": 0.1,
+        },
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="fillxl._formulas"):
+        output = _fill_output(
+            calculated_column_template, output_path, engine, tables={"TableTest": rows}
+        )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        cell = wb["TestTable"].cell(row=2, column=4)
+        assert cell.data_type == "f"
+        assert str(cell.value).startswith("=")
+    finally:
+        wb.close()
+    assert "keep their formulas" in caplog.text
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_stale_definition_over_values_is_filled_as_data(
+    stale_definition_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A definition over constant values describes data, not a formula."""
+    output = _fill_output(
+        stale_definition_template,
+        output_path,
+        engine,
+        tables={"Priced": [{"Name": "new", "Price": 42.5}]},
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        assert wb["Data"]["B2"].value == 42.5
+    finally:
+        wb.close()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_constant_calculated_column_is_kept(
+    constant_formula_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """``=100`` is a valid calculated column and survives a data fill."""
+    output = _fill_output(
+        constant_formula_template,
+        output_path,
+        engine,
+        tables={"Priced": [{"Name": "a"}, {"Name": "b"}]},
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        ws = wb["Data"]
+        for row in (2, 3):
+            cell = ws.cell(row=row, column=2)
+            assert cell.data_type == "f"
+            assert cell.value == "=100"
+    finally:
+        wb.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Totals rows
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_totals_row_shown_without_a_count_is_not_a_totals_row(
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """``totalsRowShown`` alone does not make the last row a totals row."""
+    template = tmp_path / "totals_shown.xlsx"
+    output = tmp_path / f"totals_shown_{engine}.xlsx"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws.append(["Name", "Value"])
+    ws.append(["old", 0])
+    ws.append(["old", 1])
+    ws.add_table(
+        Table(
+            displayName="Shown",
+            ref="A1:B3",
+            tableColumns=[TableColumn(id=1, name="Name"), TableColumn(id=2, name="Value")],
+            totalsRowShown=True,
+        ),
+    )
+    wb.save(template)
+    wb.close()
+
+    if engine == "win32com" and not _win32com_available():
+        pytest.skip("win32com backend requires Windows and Excel")
+
+    fill(
+        template=template,
+        output=output,
+        engine=engine,
+        tables={
+            "Shown": [
+                {"Name": "a", "Value": 1},
+                {"Name": "b", "Value": 2},
+                {"Name": "c", "Value": 3},
+            ]
+        },
+    )
+
+    result = openpyxl.load_workbook(output)
+    try:
+        sheet = result["Data"]
+        table = sheet.tables["Shown"]
+        assert table.ref == "A1:B4"
+        assert [sheet.cell(row=row, column=1).value for row in (2, 3, 4)] == ["a", "b", "c"]
+    finally:
+        result.close()

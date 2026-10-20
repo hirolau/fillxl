@@ -197,12 +197,10 @@ class TestTableEdgeCases:
         simple_table_template: Path,
     ) -> None:
         """An empty dataset clears all data rows but keeps the header."""
-        # Empty data must use dict[str, list] format — a plain [] is not
-        # recognised as tabular data by the adapter.
         fill(
             template=simple_table_template,
             output=output_path,
-            tables={"SimpleTable": {"Name": [], "Value": []}},
+            tables={"SimpleTable": []},
         )
 
         wb = openpyxl.load_workbook(output_path)

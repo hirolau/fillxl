@@ -12,7 +12,7 @@ import openpyxl
 import pytest
 
 from fillxl import FillXLConfig, fill
-from tests.conftest import TEMPLATE
+from tests._assets import TEMPLATE
 
 if TYPE_CHECKING:
     from pathlib import Path

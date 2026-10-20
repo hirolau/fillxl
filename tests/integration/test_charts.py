@@ -14,7 +14,7 @@ from openpyxl.chart import BarChart, Reference
 from openpyxl.worksheet.table import Table, TableColumn
 
 from fillxl import Engine, fill
-from tests.conftest import CHARTS_TEMPLATE_2
+from tests._assets import CHARTS_TEMPLATE_2
 
 if TYPE_CHECKING:
     from pathlib import Path

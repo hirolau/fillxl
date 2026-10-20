@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_OPENPYXL_SUFFIXES = (".xlsx", ".xlsm")
+
 _CHARTEX_WARNING = (
     "Sheet(s) {sheets} contain chartEx charts (waterfall, treemap, "
     "sunburst, histogram, boxwhisker, funnel, etc.) that openpyxl "
@@ -47,6 +49,7 @@ class OpenpyxlBackend:
     def __init__(self) -> None:
         self._workbook: openpyxl.Workbook | None = None
         self._unsupported_chart_sheets: list[str] = []
+        self._source_suffix: str | None = None
 
     def _require_workbook(self) -> openpyxl.Workbook:
         """Return the loaded workbook or raise.
@@ -72,11 +75,10 @@ class OpenpyxlBackend:
         logger.debug("Loading workbook from %s", path)
 
         ext = path.suffix.lower()
-        if ext != ".xlsx":
+        if ext not in _OPENPYXL_SUFFIXES:
             msg = (
-                f"File type '{ext}' is not supported by the openpyxl backend. "
-                f"Only .xlsx files are supported. "
-                f"Use engine='win32com' to fill other formats (.xlsm, .xlsb, .xls, etc.) instead."
+                f"File type '{ext}' is not supported by the openpyxl backend "
+                "(supported: .xlsx, .xlsm). Use engine='win32com' for .xlsb and .xls."
             )
             raise ValueError(msg)
 
@@ -89,7 +91,8 @@ class OpenpyxlBackend:
             )
             logger.warning(msg)
             warnings.warn(msg, stacklevel=2)
-        self._workbook = openpyxl.load_workbook(path)
+        self._source_suffix = ext
+        self._workbook = openpyxl.load_workbook(path, keep_vba=ext == ".xlsm")
         _fix_chart_axes(self._workbook)
 
     def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
@@ -219,13 +222,23 @@ class OpenpyxlBackend:
 
         """
         workbook = self._require_workbook()
-        if self._unsupported_chart_sheets:
-            msg = _CHARTEX_WARNING.format(
-                sheets=", ".join(repr(s) for s in self._unsupported_chart_sheets),
+        suffix = path.suffix.lower()
+        if suffix != self._source_suffix:
+            msg = (
+                f"The openpyxl backend cannot turn a '{self._source_suffix}' template "
+                f"into a '{suffix}' file. Save to a '{self._source_suffix}' path, or use "
+                "engine='win32com' to convert between formats."
             )
-            logger.warning(msg)
-            warnings.warn(msg, stacklevel=2)
+            raise ValueError(msg)
         _fix_chart_axes(workbook)
+        # openpyxl writes no cached formula results, so ask Excel to recalculate on open.
+        from openpyxl.workbook.properties import CalcProperties
+
+        calculation = workbook.calculation
+        if calculation is None:
+            calculation = CalcProperties()
+            workbook.calculation = calculation
+        calculation.fullCalcOnLoad = True
         logger.debug("Saving workbook to %s", path)
         workbook.save(path)
 
@@ -254,11 +267,16 @@ def _validate_table_columns(
         ValueError: If the strategy requires exact match and columns don't align.
 
     """
+    from fillxl._formulas import openpyxl_formula_columns
+    from fillxl._tables import table_body_rows
     from fillxl._utils import find_worksheet_and_table
 
-    _, table = find_worksheet_and_table(workbook, table_name)
-    table_columns = [col.name for col in table.tableColumns]
-    formula_columns = [col.name for col in table.tableColumns if col.calculatedColumnFormula]
+    worksheet, table = find_worksheet_and_table(workbook, table_name)
+    first_body_row, last_body_row = table_body_rows(table)
+    table_columns = [str(col.name) for col in table.tableColumns]
+    formula_columns = list(
+        openpyxl_formula_columns(worksheet, table, first_body_row, last_body_row)
+    )
 
     validate_columns(
         table_columns=table_columns,
@@ -269,31 +287,11 @@ def _validate_table_columns(
 
 
 def _fix_chart_axes(workbook: openpyxl.Workbook) -> None:
-    """Fix chart axis definitions that openpyxl fails to load correctly.
+    """Repair chart axes that openpyxl loaded with default values.
 
-    openpyxl has a bug where it creates default axis objects with wrong
-    ``axPos`` values for certain chart types (e.g., :class:`~openpyxl.chart.AreaChart`,
-    :class:`~openpyxl.chart.LineChart`) instead of parsing the actual axis
-    definitions from the XML.  This results in the category axis being
-    placed on the left instead of at the bottom, and missing critical
-    elements like ``delete``, ``crosses``, ``auto``, ``lblAlgn``, and
-    ``noMultiLvlLbl``, causing x-axis labels to disappear in Excel.
-
-    The fix inspects each chart and ensures:
-    * The category axis (``TextAxis``) is positioned at the bottom (``axPos='b'``)
-      for vertical chart types, or on the left (``axPos='l'``) for horizontal
-      bar charts.
-    * The value axis (``NumericAxis``) is positioned on the left (``axPos='l'``)
-      for vertical charts, or at the bottom (``axPos='b'``) for horizontal bars.
-    * ``delete`` is set to ``False`` (axis visible).
-    * ``tickLblPos`` is set to ``'nextTo'`` if not already set.
-    * ``crosses`` is set to ``'autoZero'`` if not already set.
-    * TextAxis-specific: ``auto``, ``lblAlgn``, ``noMultiLvlLbl`` are set.
-    * NumericAxis-specific: ``crossBetween`` is set to ``'midCat'``.
-
-    Args:
-        workbook: The openpyxl Workbook to fix.
-
+    Axes are fixed by role (``x_axis``/``y_axis``), not by class, so scatter
+    charts (two value axes) are handled.  Positions openpyxl never defaults to
+    (``"r"``, ``"t"``) and secondary axes (``crosses="max"``) are left alone.
     """
     from openpyxl.chart import BarChart
     from openpyxl.chart.axis import NumericAxis, TextAxis
@@ -302,24 +300,24 @@ def _fix_chart_axes(workbook: openpyxl.Workbook) -> None:
     for sheet_name in workbook.sheetnames:
         ws = workbook[sheet_name]
         for chart in getattr(ws, "_charts", []):
-            axes = chart._axes
-            if not axes:
-                continue
-
-            is_horizontal_bar = isinstance(chart, BarChart) and chart.barDir == "bar"
-
-            for ax in axes.values():
-                # Common fixes for both axis types
+            horizontal = isinstance(chart, BarChart) and chart.barDir == "bar"
+            roles = (
+                (getattr(chart, "x_axis", None), "l" if horizontal else "b"),
+                (getattr(chart, "y_axis", None), "b" if horizontal else "l"),
+            )
+            for ax, expected_pos in roles:
+                if ax is None:
+                    continue
+                secondary = ax.crosses == "max"
                 if ax.delete is None:
                     ax.delete = False
                 if ax.tickLblPos is None:
                     ax.tickLblPos = "nextTo"
                 if ax.crosses is None:
                     ax.crosses = "autoZero"
-
+                if not secondary and ax.axPos in (None, "l", "b"):
+                    ax.axPos = expected_pos
                 if isinstance(ax, TextAxis):
-                    # Category axis
-                    ax.axPos = "l" if is_horizontal_bar else "b"
                     if ax.numFmt is None:
                         ax.numFmt = NumFmt(formatCode="General", sourceLinked=True)
                     if ax.auto is None:
@@ -328,8 +326,5 @@ def _fix_chart_axes(workbook: openpyxl.Workbook) -> None:
                         ax.lblAlgn = "ctr"
                     if ax.noMultiLvlLbl is None:
                         ax.noMultiLvlLbl = False
-                elif isinstance(ax, NumericAxis):
-                    # Value axis
-                    ax.axPos = "b" if is_horizontal_bar else "l"
-                    if ax.crossBetween is None:
-                        ax.crossBetween = "midCat"
+                elif isinstance(ax, NumericAxis) and ax.crossBetween is None:
+                    ax.crossBetween = "midCat"

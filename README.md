@@ -146,7 +146,7 @@ and is meant to contain formulas.
 | Engine     | Cross-platform | Requires Excel | Best for                     |
 |------------|----------------|----------------|------------------------------|
 | `openpyxl` | Yes            | No             | Most use cases, Linux/macOS  |
-| `win32com` | Windows only   | Yes            | `.xlsm`/`.xlsb`, modern charts |
+| `win32com` | Windows only   | Yes            | `.xlsb`/`.xls`, modern charts |
 
 Both engines write the same values for the same input; the test suite enforces
 this with a cross-backend equivalence suite. See [Backends](backends.md) for the
@@ -168,7 +168,7 @@ Benchmark: **5,000 rows × 20 columns** (list[dict] data).
 
 ## Known Limitations
 
-- `openpyxl` does not support dynamic arrays, `.xlsm`, or `.xlsb` files and drops some modern chart types.
+- `openpyxl` does not support dynamic arrays, `.xlsb`, or `.xls` files and drops some modern chart types (reported by `on_lossy`).
 - `win32com` requires Windows + Excel.
 - Timezone-aware datetimes are converted to naive (wall-clock preserved).
 - Tables with a totals row are supported: the totals row stays directly below the data body, keeping its labels, functions and styling. Totals formulas written as explicit ranges (e.g. `SUM(B2:B5)`) are not rewritten.

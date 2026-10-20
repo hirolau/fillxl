@@ -1,4 +1,4 @@
-"""Win32com backend unit tests — CI-safe guards (no Excel required).
+"""Win32com CI-safe guard tests (no Excel required).
 
 Tests the no-workbook guard, factory, and platform checks for the
 win32com backend.  These do not require Excel and can run in CI.
@@ -58,6 +58,21 @@ class TestWin32ComBackendNoWorkbook:
         backend = Win32ComBackend()
         backend.close()
 
+    def test_close_without_load_does_not_touch_com(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """close() must not import or call pythoncom when no Excel was started."""
+        from fillxl._backends._win32com import Win32ComBackend
+
+        class ForbiddenCom:
+            def __getattr__(self, name: str) -> object:
+                raise AssertionError(f"pythoncom.{name} was accessed")
+
+        monkeypatch.setitem(sys.modules, "pythoncom", ForbiddenCom())
+
+        Win32ComBackend().close()
+
 
 class TestWin32ComBackendFactory:
     """Factory tests for the win32com engine (CI-safe)."""
@@ -98,6 +113,63 @@ class TestWin32ComPlatformGuard:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Overflow guard (CI-safe, fake COM)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class _FakeRange:
+    def __init__(self, value: object, *, fail: bool = False) -> None:
+        self._value, self._fail = value, fail
+
+    @property
+    def Value(self) -> object:  # noqa: N802
+        if self._fail:
+            raise OSError("COM read failed")
+        return self._value
+
+
+class _FakeSheet:
+    def __init__(self, rng: _FakeRange) -> None:
+        self._rng = rng
+
+    def Range(self, address: str) -> _FakeRange:  # noqa: N802
+        return self._rng
+
+
+def _guard(cells: object, *, fail: bool = False) -> None:
+    from fillxl._backends._win32com import _check_overflow_com
+
+    _check_overflow_com(
+        _FakeSheet(_FakeRange(cells, fail=fail)),
+        table_name="T",
+        start_col=2,
+        start_col_letter="B",
+        end_col_letter="C",
+        first_row=5,
+        last_row=6,
+        num_data_rows=4,
+    )
+
+
+def test_overflow_guard_refuses_to_grow_when_cells_cannot_be_read() -> None:
+    """An unreadable range must fail closed, not silently overwrite."""
+    with pytest.raises(RuntimeError, match="could not be read"):
+        _guard(None, fail=True)
+
+
+def test_overflow_guard_reports_the_first_blocking_cell() -> None:
+    """The error names the cell whose content blocks the resize."""
+    with pytest.raises(ValueError, match="C6"):
+        _guard(((None, None), (None, "x")))
+
+
+def test_overflow_guard_accepts_an_empty_range() -> None:
+    """``None`` and a grid of ``None`` cells both mean "empty"."""
+    _guard(None)
+    _guard(((None, None), (None, None)))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Excel-backed behaviours (skipped without Excel)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -108,8 +180,11 @@ def _skip_without_excel() -> None:
         pytest.skip("win32com backend requires Windows")
 
     try:
+        import pythoncom
         import win32com.client
 
+        # A backend fill releases COM on its thread, so direct COM use must init it.
+        pythoncom.CoInitialize()
         app = win32com.client.DispatchEx("Excel.Application")
     except Exception as exc:
         pytest.skip(f"Excel COM is not available: {exc}")

@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fillxl._backend import get_backend
 from fillxl._config import FillXLConfig
+from fillxl._lossy import check_lossy
 from fillxl._normalize import reset_tz_warning_state
 
 if TYPE_CHECKING:
@@ -43,7 +45,7 @@ def fill(
             ``"win32com"``).  Defaults to ``"auto"``, which selects the
             openpyxl backend.  Pass ``engine="win32com"`` explicitly to drive
             Microsoft Excel through COM (Windows only, needed for
-            ``.xlsm``/``.xlsb`` templates and for modern chart types).
+            ``.xlsb``/``.xls`` templates and for modern chart types).
         config: Configuration options.  Uses :class:`FillXLConfig` defaults
             if not provided.
 
@@ -78,56 +80,65 @@ def fill(
         msg = f"Template file not found: {template_path}"
         raise FileNotFoundError(msg)
 
-    # Work on a copy to preserve the original template
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_template_path = Path(temp_dir) / template_path.name
-        shutil.copy2(template_path, temp_template_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # A sibling path keeps the final rename on one volume, so the swap is atomic.
+    staging_path = output_path.with_name(
+        f".{output_path.stem}.{uuid.uuid4().hex[:12]}.fillxl{output_path.suffix}",
+    )
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_template_path = Path(temp_dir) / template_path.name
+            shutil.copy2(template_path, temp_template_path)
 
-        backend = get_backend(engine)
+            backend = get_backend(engine)
 
-        try:
-            # Loading happens inside the try block: if opening the template
-            # fails (missing file, locked file, password prompt), the finally
-            # clause still closes the backend.  Otherwise a hidden EXCEL.EXE
-            # would be left running.
-            backend.load(temp_template_path)
+            try:
+                # Loading happens inside the try block: if opening the template
+                # fails (missing file, locked file, password prompt), the finally
+                # clause still closes the backend.  Otherwise a hidden EXCEL.EXE
+                # would be left running.
+                backend.load(temp_template_path)
 
-            # 1. Fill named cells with scalar values
-            if values:
-                for name, value in values.items():
-                    backend.fill_named_cell(name, value, cfg)
-                logger.debug("Filled %d named cell(s)", len(values))
+                # 1. Fill named cells with scalar values
+                if values:
+                    for name, value in values.items():
+                        backend.fill_named_cell(name, value, cfg)
+                    logger.debug("Filled %d named cell(s)", len(values))
 
-            # 2. Fill tables and update chart references
-            if tables:
-                for table_name, table_data in tables.items():
-                    spec = backend.fill_table(table_name, table_data, cfg)
-                    backend.update_charts(spec)
-                logger.debug("Filled %d table(s)", len(tables))
+                # 2. Fill tables and update chart references
+                if tables:
+                    for table_name, table_data in tables.items():
+                        spec = backend.fill_table(table_name, table_data, cfg)
+                        backend.update_charts(spec)
+                    logger.debug("Filled %d table(s)", len(tables))
 
-            # 3. Pivot cache refresh
-            if cfg.refresh_pivot_tables:
-                backend.set_pivot_refresh()
+                # 3. Pivot cache refresh
+                if cfg.refresh_pivot_tables:
+                    backend.set_pivot_refresh()
 
-            # 4. Hide sheets starting with underscore
-            if cfg.hide_underscore_sheets:
-                backend.hide_sheets("_")
+                # 4. Hide sheets starting with underscore
+                if cfg.hide_underscore_sheets:
+                    backend.hide_sheets("_")
 
-            # 5. Delete specified sheets
-            if cfg.delete_sheets:
-                backend.delete_sheets(cfg.delete_sheets)
+                # 5. Delete specified sheets
+                if cfg.delete_sheets:
+                    backend.delete_sheets(cfg.delete_sheets)
 
-            # 6. Set active sheet
-            if cfg.active_sheet:
-                backend.set_active_sheet(cfg.active_sheet)
+                # 6. Set active sheet
+                if cfg.active_sheet:
+                    backend.set_active_sheet(cfg.active_sheet)
 
-            # 7. Ensure output directory exists
-            output_path.parent.mkdir(parents=True, exist_ok=True)
+                # 7. Save to the staging file
+                backend.save(staging_path)
 
-            # 8. Save and close
-            backend.save(output_path)
+            finally:
+                backend.close()
 
-        finally:
-            backend.close()
+        if engine in ("auto", "openpyxl"):
+            check_lossy(template_path, staging_path, cfg.on_lossy)
+        staging_path.replace(output_path)
+    except BaseException:
+        staging_path.unlink(missing_ok=True)
+        raise
 
     return output_path.resolve()

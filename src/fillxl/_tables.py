@@ -12,7 +12,8 @@ from openpyxl.worksheet.cell_range import CellRange
 
 from ._adapters import TabularAdapter
 from ._charts import TableChangeSpecs
-from ._normalize import is_text_cell_value, prepare_cell_value
+from ._formulas import openpyxl_formula_columns, warn_about_ignored_formula_data
+from ._normalize import check_cell_value, is_text_cell_value, prepare_cell_value
 from ._utils import find_worksheet_and_table
 
 if TYPE_CHECKING:
@@ -44,6 +45,13 @@ def is_single_cell(cell: object) -> bool:
 
     """
     return isinstance(cell, Cell)
+
+
+def table_body_rows(table: Table) -> tuple[int, int]:
+    """First and last body row of *table* (header and totals rows excluded)."""
+    ref = CellRange(table.ref)
+    header_rows = 0 if table.headerRowCount == 0 else 1
+    return ref.min_row + header_rows, ref.max_row - _totals_row_count(table)
 
 
 def populate_table(
@@ -101,6 +109,12 @@ def populate_table(
     table_start_column = original_cell_range.min_col
     table_end_column = original_cell_range.max_col
     first_data_row = table_start_row + header_rows
+
+    # Calculated columns must be detected before any body cell is cleared.
+    formula_columns = openpyxl_formula_columns(
+        worksheet, table, first_data_row, table_old_body_last_row
+    )
+    warn_about_ignored_formula_data(table_name, columns, rows, formula_columns)
 
     # Snapshot the totals row before any clearing: openpyxl writes cells in
     # place, so the row has to be recreated at its new position below.
@@ -172,13 +186,24 @@ def populate_table(
     # Create a mapping of data column names to column indices
     data_column_map = {str(col_name): idx for idx, col_name in enumerate(columns)}
 
+    warned: set[tuple[str | None, str | None]] = set()
+
     # Populate each table column
     for col_ix, column in enumerate(table.tableColumns):
         first_row_cell = table_first_cell.offset(column=col_ix, row=header_rows)
         first_row_style = first_row_cell._style
+        column_name = str(column.name)
 
-        if column.name in data_column_map:
-            data_col_idx = data_column_map[str(column.name)]
+        if column_name in formula_columns:
+            formula = formula_columns[column_name]
+            for row_ix in range(num_data_rows):
+                cell_to_fill = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
+                if copy_style_in_tables:
+                    cell_to_fill._style = copy(first_row_style)
+                cell_to_fill.value = formula
+
+        elif column_name in data_column_map:
+            data_col_idx = data_column_map[column_name]
 
             # Write each row value
             for row_ix, row_values in enumerate(rows):
@@ -189,24 +214,22 @@ def populate_table(
                 # read-back) that a datetime column holds dates rather than
                 # serial numbers.
                 if copy_style_in_tables:
-                    cell_to_fill._style = first_row_style
+                    cell_to_fill._style = copy(first_row_style)
 
                 value = prepare_cell_value(row_values[data_col_idx])
+                check_cell_value(
+                    value,
+                    table=table_name,
+                    row=row_ix + 1,
+                    column=column_name,
+                    warned=warned,
+                )
                 cell_to_fill.value = value
 
                 # Force text for strings openpyxl would reinterpret: error
                 # values such as "#N/A", and formulas when escaping is on.
                 if is_text_cell_value(value, escape_formulas=escape_formulas):
                     cell_to_fill.data_type = "s"
-
-        # Handle calculated columns (formulas)
-        elif column.calculatedColumnFormula:
-            formula = column.calculatedColumnFormula.attr_text or ""
-            for row_ix in range(num_data_rows):
-                cell_to_fill = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
-                if copy_style_in_tables:
-                    cell_to_fill._style = first_row_style
-                cell_to_fill.value = "=" + formula
 
         else:
             # The column is missing from the data: clear whatever sample values
@@ -247,9 +270,8 @@ def populate_table(
 def _totals_row_count(table: Table) -> int:
     """Number of totals rows in *table* (zero or one).
 
-    ``totalsRowCount`` is authoritative.  Excel writes
-    ``totalsRowShown="0"`` on ordinary tables, so ``totalsRowShown`` alone
-    would report a totals row for every table.
+    Only ``totalsRowCount`` counts: ``totalsRowShown`` means "was shown at some
+    point", not "is shown" (ECMA-376), matching COM's ``ShowTotals``.
 
     Examples:
         >>> from openpyxl.worksheet.table import Table, TableColumn
@@ -257,21 +279,17 @@ def _totals_row_count(table: Table) -> int:
         >>> _totals_row_count(Table(displayName="T", ref="A1:B2", tableColumns=columns))
         0
         >>> _totals_row_count(
-        ...     Table(
-        ...         displayName="T",
-        ...         ref="A1:B3",
-        ...         tableColumns=columns,
-        ...         totalsRowCount=1,
-        ...         totalsRowShown=True,
-        ...     )
+        ...     Table(displayName="T", ref="A1:B3", tableColumns=columns, totalsRowShown=True)
+        ... )
+        0
+        >>> _totals_row_count(
+        ...     Table(displayName="T", ref="A1:B3", tableColumns=columns, totalsRowCount=1)
         ... )
         1
 
     """
     count = getattr(table, "totalsRowCount", None)
-    if count:
-        return int(count)
-    return 1 if getattr(table, "totalsRowShown", False) else 0
+    return int(count) if count else 0
 
 
 class _CellSnapshot(NamedTuple):

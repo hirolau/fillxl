@@ -48,6 +48,7 @@ def _make_dtype_template(path: Path) -> None:
     ws["F1"] = None  # datetime_cell
     ws["G1"] = None  # date_cell
     ws["H1"] = None  # time_cell
+    ws["H1"].number_format = "hh:mm:ss"
     ws["I1"] = 0  # decimal_cell
     ws["J1"] = None  # nan_cell
 

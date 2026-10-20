@@ -27,12 +27,17 @@ fill(template="tpl.xlsx", output="out.xlsx", ..., engine="openpyxl")
 - Works on **Linux, macOS, and Windows**
 - No Excel license needed
 - Fast and lightweight
+- Fills `.xlsx` and macro-enabled `.xlsm` templates (VBA is preserved)
 
 ### Limitations
 
-- Does **not** support `.xlsm`, `.xlsb`, or macro-enabled formats
-- Drops some modern chart types (e.g., sunburst, treemap)
+- Does **not** support `.xlsb` or legacy `.xls`
+- Drops some modern chart types (e.g., sunburst, treemap), slicers and other
+  parts; `on_lossy` reports what was lost
 - No dynamic array formula support
+- Writes no cached formula results: the output sets `fullCalcOnLoad` so Excel
+  recalculates on open. Use `engine="win32com"` when the saved file must
+  already contain computed values.
 
 ---
 
@@ -55,6 +60,16 @@ fill(template="tpl.xlsm", output="out.xlsm", ..., engine="win32com")
 - Windows only
 - Requires a licensed Excel installation
 - Slower per-call overhead (Excel COM startup)
+
+### Security
+
+Before any workbook opens, fillxl sets Excel's `AutomationSecurity` to
+force-disable macros, turns events off (`EnableEvents = False`) and stops link
+updates (`AskToUpdateLinks = False`; workbooks are opened with
+`UpdateLinks=0`). Failing to apply these settings is fatal. The backend also
+never uses the clipboard: styles are copied with `AutoFill(Type=xlFillFormats)`
+and conditional-formatting ranges are resized with `ModifyAppliesToRange`, so
+whatever the user had on the clipboard survives a fill.
 
 ### Output format
 
@@ -97,6 +112,34 @@ Tables with a **totals row** are supported: the data body is replaced and the
 totals row is moved to remain directly below it, keeping its values, labels,
 functions and styling. The table reference includes the totals row while the
 auto-filter range stops at the last data row, matching what Excel writes.
+
+`copy_table_styles=False` leaves new rows unformatted on the openpyxl engine.
+Excel itself extends a table column's number format to new rows when the table
+grows through COM, so a `win32com` fill can still show the column format even
+with style copying disabled. This divergence is intentional.
+
+openpyxl does **not** enforce worksheet protection when it writes a cell;
+Excel does. A named cell on a protected sheet therefore fills with the
+openpyxl engine but raises `RuntimeError` through win32com. This divergence is
+intentional.
+
+### Losing template features (openpyxl)
+
+The openpyxl engine cannot preserve every Excel feature. After saving to the
+staging file (and before the atomic swap) it compares feature counts in the
+template and the output: modern charts, slicers, timelines, shapes, rich data,
+VBA, external links and worksheet extensions. `FillXLConfig.on_lossy` controls
+the result:
+
+| Value | Behaviour |
+|-------|-----------|
+| `"ignore"` | Do nothing. |
+| `"warn"` (default) | Log and issue a `UserWarning` listing the lost features. |
+| `"raise"` | Raise `LossyTemplateError`; because the swap has not happened, the previous output file is left untouched. |
+
+The detector compares **part and element counts**. It catches dropped parts,
+shapes and worksheet extensions, but it cannot prove that a preserved part is
+byte-for-byte unchanged.
 
 Tables **without a header row** (the table's "Header Row" option is off) are
 supported too. Excel names their columns `Column1`, `Column2`, …, so that is

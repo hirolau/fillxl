@@ -14,19 +14,31 @@ import contextlib
 import logging
 import re
 import sys
+import threading
 import time
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from openpyxl.worksheet.cell_range import CellRange
 
+from fillxl._cells import named_cell_target
 from fillxl._charts import TableChangeSpecs, _unquote_sheet_name
-from fillxl._normalize import prepare_com_value
+from fillxl._formulas import (
+    BodyState,
+    ColumnFormulaEvidence,
+    formula_definitions,
+    resolve_formula,
+    warn_about_ignored_formula_data,
+)
+from fillxl._normalize import (
+    check_cell_value,
+    com_value_from_normalized,
+    prepare_cell_value,
+)
+from fillxl._utils import col_to_excel
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from pathlib import Path
-
-    from openpyxl.worksheet.table import Table
 
     from fillxl._config import FillXLConfig
 
@@ -36,7 +48,13 @@ _is_windows = sys.platform == "win32"
 
 # COM constants (fallback if early binding is unavailable)
 _XL_SHEET_HIDDEN = 0
-_XL_PASTE_FORMATS = -4122
+_XL_FILL_FORMATS = 3
+
+_MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
+_RPC_E_CHANGED_MODE = -2147417850
+_XL_CALCULATION_MANUAL = -4135
+
+_OOXML_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xltx", ".xltm"})
 
 # SaveAs file formats, keyed by output suffix.  Saving an .xlsm template with
 # the .xlsx format silently strips its macros, so the format is inferred from
@@ -72,10 +90,13 @@ class Win32ComBackend:
         self._app: Any = None
         self._workbook: Any = None
         self._load_path: Path | None = None
-        # Calculated-column formulas for every table, read once per load.
-        # Reading them opens the workbook with openpyxl, which must not
-        # happen once per table in a fill.
-        self._formula_cache: dict[str, tuple[list[str], dict[str, str]]] | None = None
+        # Calculated-column definitions per table; None = file format cannot be read.
+        self._definitions: dict[str, dict[str, str]] | None = None
+        self._definitions_loaded = False
+        self._com_initialized = False
+        self._com_thread: int | None = None
+        # Excel's calculation mode before this fill; restored before SaveAs.
+        self._previous_calculation: int | None = None
 
     # ── Internal helpers ───────────────────────────────────────────────────
 
@@ -89,32 +110,36 @@ class Win32ComBackend:
             raise RuntimeError(msg)
 
     def _ensure_app(self) -> None:
-        """Lazy-initialise the Excel Application COM object.
-
-        Creates a hidden Excel instance with alerts and screen updating
-        disabled.  Uses ``win32com.client.Dispatch`` directly (rather than
-        ``gencache.EnsureDispatch``) to avoid RPC issues when the type
-        library cache is being built.
-        """
+        """Start a hidden Excel that cannot run macros, fire events or update links."""
         if self._app is not None:
             return
         self._ensure_platform()
-        # Late import so the module is importable on non-Windows (for tests)
-        import pythoncom  # noqa: F401
+        import pythoncom
         import win32com.client
 
-        # Use DispatchEx to always create a new, isolated Excel instance.
-        # Dispatch would reuse a stale/hung instance which can cause
-        # AttributeError on property access.
+        try:
+            pythoncom.CoInitialize()
+        except pythoncom.com_error as exc:
+            # The thread already uses another apartment model; COM is usable as is.
+            # getattr keeps this readable where pywin32 is not installed (Linux CI).
+            if getattr(exc, "hresult", None) != _RPC_E_CHANGED_MODE:
+                raise
+        else:
+            self._com_initialized = True
+            self._com_thread = threading.get_ident()
+
+        # DispatchEx always creates a new, isolated Excel instance.
         self._app = win32com.client.DispatchEx("Excel.Application")
-        # These properties may not be settable depending on the Excel
-        # process state or permissions — non-fatal, just best-effort.
+        # Security settings must hold before any workbook opens; failures propagate.
+        self._app.AutomationSecurity = _MSO_AUTOMATION_SECURITY_FORCE_DISABLE
+        self._app.EnableEvents = False
+        self._app.AskToUpdateLinks = False
         for attr, val in [("Visible", False), ("DisplayAlerts", False), ("ScreenUpdating", False)]:
             try:
                 setattr(self._app, attr, val)
             except AttributeError:
                 logger.warning("Could not set Excel.Application.%s", attr)
-        logger.debug("Excel Application started (hidden)")
+        logger.debug("Excel Application started (hidden, macros disabled)")
 
     def _ensure_workbook(self) -> None:
         """Raise :class:`RuntimeError` if no workbook has been loaded."""
@@ -122,26 +147,14 @@ class Win32ComBackend:
             msg = "No workbook loaded — call load() first"
             raise RuntimeError(msg)
 
-    def _read_calculated_column_formulas(
-        self,
-        table_name: str,
-    ) -> tuple[list[str], dict[str, str]]:
-        """Return the calculated column names and formulas for *table_name*.
-
-        The formulas for **all** tables are read in a single openpyxl load and
-        cached for the lifetime of the loaded workbook, so filling many tables
-        does not reopen the file for each one.
-
-        Args:
-            table_name: Name of the table to inspect.
-
-        Returns:
-            A tuple of (formula_column_names, formula_map).
-
-        """
-        if self._formula_cache is None:
-            self._formula_cache = _read_all_calculated_column_formulas(self._load_path)
-        return self._formula_cache.get(table_name, ([], {}))
+    def _table_formula_definitions(self, table_name: str) -> dict[str, str] | None:
+        """Definitions of *table_name*, or ``None`` when the template format hides them."""
+        if not self._definitions_loaded:
+            self._definitions = _read_table_formula_definitions(self._load_path)
+            self._definitions_loaded = True
+        if self._definitions is None:
+            return None
+        return self._definitions.get(table_name, {})
 
     # ── Backend protocol ───────────────────────────────────────────────────
 
@@ -157,9 +170,20 @@ class Win32ComBackend:
         abs_path = path.resolve()
         logger.debug("Loading workbook from %s", abs_path)
         self._load_path = abs_path
-        self._formula_cache = None
-        self._workbook = self._app.Workbooks.Open(str(abs_path))
-        logger.info("[win32com] load took %.3fs", time.perf_counter() - t0)
+        self._definitions = None
+        self._definitions_loaded = False
+        self._workbook = self._app.Workbooks.Open(
+            str(abs_path),
+            UpdateLinks=0,
+            ReadOnly=False,
+            IgnoreReadOnlyRecommended=True,
+            AddToMru=False,
+        )
+        # Filling recalculates constantly in automatic mode; save() restores this.
+        if self._previous_calculation is None:
+            self._previous_calculation = self._app.Calculation
+        self._app.Calculation = _XL_CALCULATION_MANUAL
+        logger.debug("[win32com] load took %.3fs", time.perf_counter() - t0)
 
     def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.
@@ -174,19 +198,24 @@ class Win32ComBackend:
 
         """
         self._ensure_workbook()
-
-        # Same normalisation as the table path (pandas objects, date/time
-        # promotion, Decimal, tz stripping) plus the apostrophe prefix that
-        # keeps COM from reinterpreting strings, and the UTC marking that
-        # keeps it from shifting datetimes by the local timezone offset.
-        prepared = prepare_com_value(value, escape_formulas=config.escape_formulas)
-
         try:
             name_obj = self._workbook.Names(name)
-            name_obj.RefersToRange.Value = prepared
         except Exception as exc:
             msg = f"Named cell '{name}' not found in workbook"
             raise KeyError(msg) from exc
+
+        target = named_cell_target(name, _com_name_destinations(str(name_obj.RefersTo)))
+        if target is None:
+            return
+        sheet_name, address = target
+        normalized = prepare_cell_value(value)
+        check_cell_value(normalized, name=name)
+        prepared = com_value_from_normalized(normalized, escape_formulas=config.escape_formulas)
+        try:
+            self._workbook.Worksheets(sheet_name).Range(address).Value = prepared
+        except Exception as exc:
+            msg = f"Could not write named cell '{name}' ({sheet_name}!{address}): {exc}"
+            raise RuntimeError(msg) from exc
 
     def fill_table(
         self,
@@ -254,8 +283,6 @@ class Win32ComBackend:
         start_col = table_range.Column
         num_cols = table_range.Columns.Count
 
-        from fillxl._utils import col_to_excel
-
         start_col_letter = col_to_excel(start_col)
         end_col_letter = col_to_excel(start_col + num_cols - 1)
 
@@ -269,19 +296,21 @@ class Win32ComBackend:
                 table_columns = [str(header_values)]
         else:
             table_columns = [str(list_obj.ListColumns(i + 1).Name) for i in range(num_cols)]
-        logger.info("[win32com] table metadata took %.3fs", time.perf_counter() - t_meta)
+        logger.debug("[win32com] table metadata took %.3fs", time.perf_counter() - t_meta)
 
-        # ── Column validation (must happen before resize so we know what to write) ──
+        # ── Column validation (before resize: detection reads the template body) ──
         from fillxl._validation import validate_columns
 
-        formula_columns, formula_map = self._read_calculated_column_formulas(name)
-
+        formulas = _com_formula_columns(
+            self._app, list_obj, table_columns, self._table_formula_definitions(name)
+        )
         validate_columns(
             table_columns=table_columns,
             data_columns=data_columns,
             strategy=config.column_validation_strategy,
-            formula_columns=formula_columns,
+            formula_columns=list(formulas),
         )
+        warn_about_ignored_formula_data(name, data_columns, rows, formulas)
 
         # ── Measure the existing table ────────────────────────────────────
         data_body_range = list_obj.DataBodyRange
@@ -336,6 +365,15 @@ class Win32ComBackend:
                 worksheet.Range(
                     f"{start_col_letter}{new_last_row}:{end_col_letter}{new_last_row}",
                 ).ClearContents()
+            if config.extend_conditional_formatting:
+                _extend_conditional_formatting_com(
+                    self._app,
+                    worksheet,
+                    start_col=start_col,
+                    end_col=start_col + num_cols - 1,
+                    first_data_row=first_data_row,
+                    last_data_row=first_data_row,
+                )
             return TableChangeSpecs(
                 worksheet_title=worksheet_title,
                 header_row=table_start_row,
@@ -354,49 +392,17 @@ class Win32ComBackend:
         # instead of cell-by-cell (which is ~100x slower for large expansions).
         t_overflow = time.perf_counter()
         if num_data_rows > (old_last_row - first_data_row + 1):
-            # Start below the existing totals row (if any) and check through
-            # the last row the resized table will occupy.
-            overflow_start = old_last_row + 1 + totals_rows
-            new_table_end_row = new_end_row + totals_rows
-            overflow_range_str = (
-                f"{start_col_letter}{overflow_start}:{end_col_letter}{new_table_end_row}"
+            _check_overflow_com(
+                worksheet,
+                table_name=name,
+                start_col=start_col,
+                start_col_letter=start_col_letter,
+                end_col_letter=end_col_letter,
+                first_row=old_last_row + 1 + totals_rows,
+                last_row=new_end_row + totals_rows,
+                num_data_rows=num_data_rows,
             )
-            try:
-                overflow_values = worksheet.Range(overflow_range_str).Value
-                if overflow_values is not None:
-                    if isinstance(overflow_values, tuple):
-                        for row_idx, row_tuple in enumerate(overflow_values):
-                            for col_idx, val in enumerate(row_tuple):
-                                if val is not None:
-                                    check_row = overflow_start + row_idx
-                                    check_col = start_col + col_idx
-                                    cell_ref = f"{col_to_excel(check_col)}{check_row}"
-                                    msg = (
-                                        f"Table '{name}' cannot expand to "
-                                        f"{num_data_rows} rows: cell {cell_ref} "
-                                        f"already contains data ({val!r}). "
-                                        "Move or remove the content below the "
-                                        "table first."
-                                    )
-                                    raise ValueError(msg)
-                    elif overflow_values is not None:
-                        # Single cell overflow range
-                        check_row = overflow_start
-                        check_col = start_col
-                        cell_ref = f"{col_to_excel(check_col)}{check_row}"
-                        msg = (
-                            f"Table '{name}' cannot expand to {num_data_rows} "
-                            f"rows: cell {cell_ref} already contains data "
-                            f"({overflow_values!r}). Move or remove the content "
-                            "below the table first."
-                        )
-                        raise ValueError(msg)
-            except ValueError:
-                raise
-            except Exception:
-                # COM errors during overflow check → fall through to resize
-                pass
-        logger.info("[win32com] overflow check took %.3fs", time.perf_counter() - t_overflow)
+        logger.debug("[win32com] overflow check took %.3fs", time.perf_counter() - t_overflow)
 
         # Resize the table first — Excel auto-fills calculated column formulas
         # in new rows when the table is resized.
@@ -412,7 +418,7 @@ class Win32ComBackend:
                     f"{start_col_letter}{table_start_row}:{end_col_letter}{resize_last_row}",
                 ),
             )
-        logger.info("[win32com] resize took %.3fs", time.perf_counter() - t_resize)
+        logger.debug("[win32com] resize took %.3fs", time.perf_counter() - t_resize)
 
         # Clear the rows the table no longer covers — batch clear
         t_clear = time.perf_counter()
@@ -422,100 +428,58 @@ class Win32ComBackend:
             )
             with contextlib.suppress(Exception):
                 worksheet.Range(clear_range_str).ClearContents()
-        logger.info("[win32com] clear took %.3fs", time.perf_counter() - t_clear)
-
-        # ── Write data ────────────────────────────────────────────────────
-        new_data_body = list_obj.DataBodyRange
-        data_col_index = {col: idx for idx, col in enumerate(data_columns)}
-
-        # Build a 2D array (list of lists) matching table column order.
-        # Formula columns get None (Excel already filled them).
-        t_write = time.perf_counter()
-        values_matrix: list[list[Any]] = []
-        for row in rows:
-            row_values: list[Any] = []
-            for col_name in table_columns:
-                if col_name in data_col_index and col_name not in formula_columns:
-                    # Central normalisation — guarantees identical results
-                    # with the openpyxl backend (apostrophe-prefixed strings
-                    # and the UTC marking for datetimes).
-                    val = prepare_com_value(
-                        row[data_col_index[col_name]],
-                        escape_formulas=config.escape_formulas,
-                    )
-                    row_values.append(val)
-                else:
-                    row_values.append(None)
-            values_matrix.append(row_values)
-
-        # Write the entire matrix at once (much faster than cell-by-cell).
-        # Excel drops the ListObject when a *whole* headerless body is written
-        # in one assignment, so those tables are written row by row, and cell
-        # by cell when the body is a single row.
-        if values_matrix:
-            if header_rows:
-                new_data_body.Value = values_matrix
-            elif len(values_matrix) == 1:
-                for col_index, val in enumerate(values_matrix[0], start=1):
-                    new_data_body.Cells(1, col_index).Value = val
-            else:
-                for row_index, row_values in enumerate(values_matrix, start=1):
-                    new_data_body.Rows(row_index).Value = [row_values]
-        logger.info("[win32com] write data took %.3fs", time.perf_counter() - t_write)
-
-        # Re-apply calculated column formulas.  Writing ``None`` above clears
-        # the auto-filled formulas, so we must restore them here.  Preserve
-        # newlines/indentation so user formatting is not destroyed.
-        t_formula = time.perf_counter()
-        for col_idx, col_name in enumerate(table_columns):
-            if col_name in formula_columns:
-                formula = formula_map.get(col_name)
-                if formula:
-                    col_data_range = new_data_body.Columns(col_idx + 1)
-                    formula_str = _prepare_formula_for_com(str(formula))
-                    try:
-                        col_data_range.Formula2 = formula_str
-                    except AttributeError:
-                        # Excel < 2016 — fall back to Formula (255-char limit)
-                        col_data_range.Formula = formula_str
-                    except Exception:
-                        # The formula may contain functions (LET, LAMBDA, SCAN,
-                        # etc.) not available in this Excel version.  Log and
-                        # skip — Excel already auto-filled the column and the
-                        # data rows have been written.
-                        logger.warning(
-                            "[win32com] Could not set formula for column '%s': %s",
-                            col_name,
-                            formula_str[:120],
-                        )
-        logger.info("[win32com] formula columns took %.3fs", time.perf_counter() - t_formula)
+        logger.debug("[win32com] clear took %.3fs", time.perf_counter() - t_clear)
 
         # ── Copy styles from first data row ───────────────────────────────
+        # Formats are applied before the values so Excel can still apply its
+        # own date format to a datetime cell written afterwards.
+        new_data_body = list_obj.DataBodyRange
         t_style = time.perf_counter()
         if config.copy_table_styles and num_data_rows > 1:
-            # Copy only the table data body columns (not the full worksheet
-            # row) to avoid a column shift when pasting.
-            first_data_row_range = new_data_body.Rows(1)
-            first_data_row_range.Copy()
-            dest_range = worksheet.Range(
-                f"{start_col_letter}{first_data_row + 1}:{end_col_letter}{new_end_row}",
-            )
-            dest_range.PasteSpecial(Paste=_XL_PASTE_FORMATS)
-            # Clear the clipboard (copy mode)
-            self._app.CutCopyMode = False
-        logger.info("[win32com] copy styles took %.3fs", time.perf_counter() - t_style)
+            new_data_body.Rows(1).AutoFill(Destination=new_data_body, Type=_XL_FILL_FORMATS)
+        logger.debug("[win32com] copy styles took %.3fs", time.perf_counter() - t_style)
+
+        # ── Write data (calculated columns are never written) ─────────────
+        data_col_index = {col: idx for idx, col in enumerate(data_columns)}
+        writable = [idx for idx, col in enumerate(table_columns) if col not in formulas]
+
+        warned: set[tuple[str | None, str | None]] = set()
+        t_write = time.perf_counter()
+        values_matrix: list[list[Any]] = []
+        for row_number, row in enumerate(rows, start=1):
+            row_values: list[Any] = [None] * len(table_columns)
+            for col_idx in writable:
+                source = data_col_index.get(table_columns[col_idx])
+                if source is not None:
+                    normalized = prepare_cell_value(row[source])
+                    check_cell_value(
+                        normalized,
+                        table=name,
+                        row=row_number,
+                        column=table_columns[col_idx],
+                        warned=warned,
+                    )
+                    row_values[col_idx] = com_value_from_normalized(
+                        normalized, escape_formulas=config.escape_formulas
+                    )
+            values_matrix.append(row_values)
+        _write_body_blocks(new_data_body, values_matrix, writable, headerless=not header_rows)
+        logger.debug("[win32com] write data took %.3fs", time.perf_counter() - t_write)
+
+        _ensure_formula_columns(list_obj, table_columns, formulas, name)
 
         # ── Extend conditional formatting ─────────────────────────────────
         t_cf = time.perf_counter()
         if config.extend_conditional_formatting:
             _extend_conditional_formatting_com(
-                worksheet=worksheet,
-                start_col_letter=start_col_letter,
-                end_col_letter=end_col_letter,
+                self._app,
+                worksheet,
+                start_col=start_col,
+                end_col=start_col + num_cols - 1,
                 first_data_row=first_data_row,
                 last_data_row=new_end_row,
             )
-        logger.info("[win32com] conditional formatting took %.3fs", time.perf_counter() - t_cf)
+        logger.debug("[win32com] conditional formatting took %.3fs", time.perf_counter() - t_cf)
 
         return TableChangeSpecs(
             worksheet_title=worksheet_title,
@@ -663,12 +627,15 @@ class Win32ComBackend:
         # from the Excel process working directory, not the Python CWD.
         abs_path = path.resolve()
         abs_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._previous_calculation is not None:
+            self._app.Calculation = self._previous_calculation
+            self._previous_calculation = None
         logger.debug("Saving workbook to %s (format %d)", abs_path, file_format)
         self._workbook.SaveAs(str(abs_path), FileFormat=file_format)
-        logger.info("[win32com] save took %.3fs", time.perf_counter() - t0)
+        logger.debug("[win32com] save took %.3fs", time.perf_counter() - t0)
 
     def close(self) -> None:
-        """Close the workbook and release the Excel Application."""
+        """Close the workbook, quit Excel and release COM on this thread."""
         try:
             if self._workbook is not None:
                 try:
@@ -678,14 +645,28 @@ class Win32ComBackend:
                 finally:
                     self._workbook = None
         finally:
-            if self._app is not None:
-                try:
-                    self._app.Quit()
-                except Exception:
-                    logger.exception("Error during Excel quit")
-                finally:
-                    self._app = None
-                    logger.debug("Excel Application quit")
+            try:
+                if self._app is not None:
+                    try:
+                        self._app.Quit()
+                    except Exception:
+                        logger.exception("Error during Excel quit")
+                    finally:
+                        self._app = None
+                        logger.debug("Excel Application quit")
+            finally:
+                self._release_com()
+
+    def _release_com(self) -> None:
+        if not self._com_initialized:
+            return
+        self._com_initialized = False
+        if threading.get_ident() != self._com_thread:
+            logger.warning("close() ran on another thread than load(); COM was not released")
+            return
+        import pythoncom
+
+        pythoncom.CoUninitialize()
 
 
 # ── Standalone helpers ──────────────────────────────────────────────────────
@@ -755,155 +736,241 @@ def _prepare_formula_for_com(formula: str) -> str:
     )
 
 
-def _formula_columns_from_table(table: Table) -> tuple[list[str], dict[str, str]]:
-    """Extract calculated-column names and formulas from an openpyxl table.
-
-    openpyxl sets ``calculatedColumnFormula`` for any non-empty default
-    value, not just real formulas, so plain numbers and booleans are skipped.
-
-    Args:
-        table: The openpyxl table definition.
-
-    Returns:
-        A tuple of (formula_column_names, formula_map) where *formula_map*
-        maps column names to their formula strings (with ``=`` prefix).
-
-    """
-    formula_columns: list[str] = []
-    formula_map: dict[str, str] = {}
-
-    for col in table.tableColumns:
-        if not col.calculatedColumnFormula:
-            continue
-        attr_text = col.calculatedColumnFormula.attr_text
-        if not attr_text:
-            continue
-        text = str(attr_text)
-        if text in ("TRUE", "FALSE", "true", "false"):
-            continue
-        try:
-            float(text)
-            continue
-        except ValueError:
-            pass
-        name = str(col.name)
-        formula_str = "=" + text
-        formula_columns.append(name)
-        formula_map[name] = formula_str
-        logger.debug("Detected calculated column '%s' formula=%s", name, formula_str)
-
-    return formula_columns, formula_map
-
-
-def _read_all_calculated_column_formulas(
-    path: Path | None,
-) -> dict[str, tuple[list[str], dict[str, str]]]:
-    """Read every table's calculated-column formulas with a single load.
-
-    COM does not reliably expose ``calculatedColumnFormula`` for tables
-    created by openpyxl, so the table definitions are read from the ``.xlsx``
-    file.  Loading the whole workbook is expensive; doing it once for all
-    tables keeps a fill with many tables cheap.
-
-    Args:
-        path: Path to the workbook file.
-
-    Returns:
-        A mapping of table name to (formula_column_names, formula_map).
-
-    """
-    if path is None or not path.exists():
-        return {}
-
-    try:
-        import openpyxl as _op
-
-        wb = _op.load_workbook(str(path))
-        try:
-            return {
-                str(table.name): _formula_columns_from_table(table)
-                for worksheet in wb.worksheets
-                for table in worksheet.tables.values()
-            }
-        finally:
-            wb.close()
-    except Exception:
-        logger.exception("Failed to read calculated column formulas from %s", path)
-        return {}
-
-
-def _read_calculated_column_formulas(
-    path: Path | None,
+def _check_overflow_com(
+    worksheet: Any,  # noqa: ANN401
+    *,
     table_name: str,
-) -> tuple[list[str], dict[str, str]]:
-    """Read the calculated column formulas of one table using openpyxl.
+    start_col: int,
+    start_col_letter: str,
+    end_col_letter: str,
+    first_row: int,
+    last_row: int,
+    num_data_rows: int,
+) -> None:
+    """Refuse to grow a table over non-empty cells, or when the cells cannot be read."""
+    range_str = f"{start_col_letter}{first_row}:{end_col_letter}{last_row}"
+    try:
+        values = worksheet.Range(range_str).Value
+    except Exception as exc:
+        msg = (
+            f"Table '{table_name}' cannot grow: the cells below it ({range_str}) "
+            "could not be read, so fillxl cannot confirm that they are empty."
+        )
+        raise RuntimeError(msg) from exc
+    if values is None:
+        return
+    grid = values if isinstance(values, tuple) else ((values,),)
+    for row_offset, row_values in enumerate(grid):
+        for col_offset, cell in enumerate(row_values):
+            if cell is not None:
+                cell_ref = f"{col_to_excel(start_col + col_offset)}{first_row + row_offset}"
+                msg = (
+                    f"Table '{table_name}' cannot expand to {num_data_rows} rows: "
+                    f"cell {cell_ref} already contains data ({cell!r}). "
+                    "Move or remove the content below the table first."
+                )
+                raise ValueError(msg)
 
-    Prefer :meth:`Win32ComBackend._read_calculated_column_formulas`, which
-    reads the formulas of all tables in one load and caches them.
 
-    Args:
-        path: Path to the workbook file.
-        table_name: Name of the table to inspect.
+def _com_name_destinations(refers_to: str) -> list[tuple[str, str]]:
+    """Parse ``Name.RefersTo`` exactly the way the openpyxl backend parses names."""
+    from openpyxl.workbook.defined_name import DefinedName
 
-    Returns:
-        A tuple of (formula_column_names, formula_map).
+    probe = DefinedName("fillxl_probe", attr_text=refers_to.removeprefix("="))
+    return list(probe.destinations)
 
-    """
-    if path is None or not path.exists():
-        return [], {}
+
+def _read_table_formula_definitions(
+    path: Path | None,
+) -> dict[str, dict[str, str]] | None:
+    """Every table's calculated-column definition texts, or ``None`` if unreadable."""
+    if path is None or path.suffix.lower() not in _OOXML_SUFFIXES:
+        return None
+    import openpyxl
 
     try:
-        import openpyxl as _op
-
-        wb = _op.load_workbook(str(path))
-        try:
-            from fillxl._utils import find_worksheet_and_table
-
-            _, table = find_worksheet_and_table(wb, table_name)
-            return _formula_columns_from_table(table)
-        finally:
-            wb.close()
+        workbook = openpyxl.load_workbook(path)
     except Exception:
-        logger.exception("Failed to read calculated column formulas from %s", path)
-        return [], {}
+        logger.warning(
+            "Could not read table definitions from %s; calculated columns are "
+            "detected from cell formulas only",
+            path,
+            exc_info=True,
+        )
+        return None
+    try:
+        return {
+            str(table.name): formula_definitions(table)
+            for worksheet in workbook.worksheets
+            for table in worksheet.tables.values()
+        }
+    finally:
+        workbook.close()
+
+
+def _read_formula(cell: Any) -> str:  # noqa: ANN401
+    try:
+        return str(cell.Formula2)
+    except AttributeError:
+        return str(cell.Formula)
+
+
+def _com_body_state(app: Any, body: Any) -> tuple[BodyState, str | None]:  # noqa: ANN401
+    """Classify a column's body range; ``HasFormula`` is ``None`` for a mixed range."""
+    if body is None:
+        return "empty", None
+    has_formula = body.HasFormula
+    if has_formula is False:
+        is_empty = app.WorksheetFunction.CountA(body) == 0
+        return ("empty" if is_empty else "values"), None
+    first = body.Cells(1, 1)
+    first_formula = _read_formula(first) if first.HasFormula else None
+    return ("formula" if has_formula is True else "mixed"), first_formula
+
+
+def _com_formula_columns(
+    app: Any,  # noqa: ANN401
+    list_obj: Any,  # noqa: ANN401
+    table_columns: Sequence[str],
+    definitions: Mapping[str, str] | None,
+) -> dict[str, str]:
+    """Calculated columns of a ListObject, mapped to the formula Excel must keep."""
+    formulas: dict[str, str] = {}
+    for index, name in enumerate(table_columns, start=1):
+        definition = definitions.get(name) if definitions is not None else None
+        if definitions is not None and definition is None:
+            continue
+        state, first_formula = _com_body_state(app, list_obj.ListColumns(index).DataBodyRange)
+        evidence = ColumnFormulaEvidence(
+            name, definition, definitions is not None, state, first_formula
+        )
+        formula = resolve_formula(evidence)
+        if formula is not None:
+            formulas[name] = formula
+    return formulas
+
+
+def _column_blocks(indices: Sequence[int]) -> list[tuple[int, int]]:
+    """Group column indices into inclusive runs of adjacent columns.
+
+    Examples:
+        >>> _column_blocks([0, 1, 2, 4, 6, 7])
+        [(0, 2), (4, 4), (6, 7)]
+        >>> _column_blocks([])
+        []
+
+    """
+    blocks: list[tuple[int, int]] = []
+    for index in sorted(indices):
+        if blocks and index == blocks[-1][1] + 1:
+            blocks[-1] = (blocks[-1][0], index)
+        else:
+            blocks.append((index, index))
+    return blocks
+
+
+def _write_body_blocks(
+    body: Any,  # noqa: ANN401
+    matrix: list[list[Any]],
+    writable: Sequence[int],
+    *,
+    headerless: bool,
+) -> None:
+    """Write *matrix* into *body*, touching only the *writable* (0-based) columns.
+
+    Excel drops a headerless ListObject when its whole body is assigned at once,
+    so headerless tables are written row by row (cell by cell for one row).
+    """
+    if not matrix:
+        return
+    sheet = body.Worksheet
+    row_count = len(matrix)
+    for start, end in _column_blocks(writable):
+        block = [row[start : end + 1] for row in matrix]
+        if not headerless:
+            target = sheet.Range(body.Cells(1, start + 1), body.Cells(row_count, end + 1))
+            target.Value = block
+        elif row_count == 1:
+            for offset, value in enumerate(block[0]):
+                body.Cells(1, start + 1 + offset).Value = value
+        else:
+            for row_number, row_values in enumerate(block, start=1):
+                target = sheet.Range(
+                    body.Cells(row_number, start + 1), body.Cells(row_number, end + 1)
+                )
+                target.Value = [row_values]
+
+
+def _ensure_formula_columns(
+    list_obj: Any,  # noqa: ANN401
+    table_columns: Sequence[str],
+    formulas: Mapping[str, str],
+    table_name: str,
+) -> None:
+    """Write the formula into any calculated column that Excel did not fill itself."""
+    for index, name in enumerate(table_columns, start=1):
+        formula = formulas.get(name)
+        if formula is None:
+            continue
+        body = list_obj.ListColumns(index).DataBodyRange
+        if body is None or body.HasFormula is True:
+            continue
+        prepared = _prepare_formula_for_com(formula)
+        try:
+            try:
+                body.Formula2 = prepared
+            except AttributeError:
+                body.Formula = prepared
+        except Exception as exc:
+            msg = (
+                f"Table '{table_name}': could not write the calculated column "
+                f"'{name}' formula {prepared[:120]!r}: {exc}"
+            )
+            raise RuntimeError(msg) from exc
 
 
 def _extend_conditional_formatting_com(
+    app: Any,  # noqa: ANN401
     worksheet: Any,  # noqa: ANN401
-    start_col_letter: str,
-    end_col_letter: str,
+    *,
+    start_col: int,
+    end_col: int,
     first_data_row: int,
     last_data_row: int,
 ) -> None:
-    """Extend conditional formatting rules to cover all data rows.
+    """Resize CF ranges that start on the first data row to the table's last row."""
+    from fillxl._tables import _cf_range_tracks_table
 
-    Works by copying formatting from the first data row down (which carries
-    CF rules along when pasting formats).
-
-    Args:
-        worksheet: The COM Worksheet object.
-        start_col_letter: Starting column letter (e.g., ``'B'``).
-        end_col_letter: Ending column letter (e.g., ``'M'``).
-        first_data_row: Row number of the first data row.
-        last_data_row: Row number of the last data row.
-
-    """
-    try:
-        # Copy from the entire first data row (not just the first cell) so
-        # that each column's individual NumberFormat is preserved.
-        source_range = worksheet.Range(
-            f"{start_col_letter}{first_data_row}:{end_col_letter}{first_data_row}",
-        )
-        source_range.Copy()
-        dest_range = worksheet.Range(
-            f"{start_col_letter}{first_data_row}:{end_col_letter}{last_data_row}",
-        )
-        dest_range.PasteSpecial(Paste=_XL_PASTE_FORMATS)
-        # Clear clipboard — use the worksheet's own Application reference
-        with contextlib.suppress(Exception):
-            worksheet.Application.CutCopyMode = False
-    except Exception:
-        logger.exception("Failed to extend conditional formatting")
+    conditions = worksheet.Cells.FormatConditions
+    for index in range(1, conditions.Count + 1):
+        condition = conditions.Item(index)
+        applies_to = condition.AppliesTo
+        new_areas: list[Any] = []
+        changed = False
+        for area_index in range(1, applies_to.Areas.Count + 1):
+            area = applies_to.Areas(area_index)
+            bounds = CellRange(
+                min_col=area.Column,
+                min_row=area.Row,
+                max_col=area.Column + area.Columns.Count - 1,
+                max_row=area.Row + area.Rows.Count - 1,
+            )
+            if _cf_range_tracks_table(
+                bounds,
+                table_start_column=start_col,
+                table_end_column=end_col,
+                first_data_row=first_data_row,
+                table_last_row=last_data_row,
+            ):
+                area = area.Resize(last_data_row - first_data_row + 1, area.Columns.Count)
+                changed = True
+            new_areas.append(area)
+        if not changed:
+            continue
+        new_range = new_areas[0]
+        for area in new_areas[1:]:
+            new_range = app.Union(new_range, area)
+        condition.ModifyAppliesToRange(new_range)
 
 
 def _update_series_formula(formula: str, spec: TableChangeSpecs) -> str | None:

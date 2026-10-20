@@ -171,6 +171,7 @@ class TestNamedCellErrors:
     def test_a_warning_is_logged_when_a_named_cell_points_to_multiple_ranges(
         self,
         output_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Only the first destination is updated; the rest are skipped with a warning."""
         wb = openpyxl.Workbook()
@@ -188,13 +189,16 @@ class TestNamedCellErrors:
         wb.save(tmpl)
         wb.close()
 
-        fill(template=tmpl, output=output_path, values={"multi": "UPDATED"})
+        with caplog.at_level("WARNING", logger="fillxl._cells"):
+            fill(template=tmpl, output=output_path, values={"multi": "UPDATED"})
 
         wb2 = openpyxl.load_workbook(output_path)
         try:
             assert wb2["Sheet1"]["A1"].value == "UPDATED"
+            assert wb2["Sheet2"]["B2"].value == "second"
         finally:
             wb2.close()
+        assert "multiple destinations" in caplog.text
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

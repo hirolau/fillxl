@@ -15,7 +15,7 @@ import pytest
 from openpyxl.workbook.defined_name import DefinedName
 
 from fillxl import fill
-from tests.conftest import TEMPLATE
+from tests._assets import TEMPLATE
 
 if TYPE_CHECKING:
     from pathlib import Path

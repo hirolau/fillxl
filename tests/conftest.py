@@ -27,11 +27,7 @@ from openpyxl.worksheet.table import (
     TableFormula,
 )
 
-TEMPLATE = Path(__file__).parent / "assets" / "test_template_1.xlsx"
-CHARTS_TEMPLATE_2 = Path(__file__).parent / "assets" / "test_template_2_charts.xlsx"
-PIVOT_TEMPLATE = Path(__file__).parent / "assets" / "test_template_3_pivot.xlsx"
-CHARTS_TEMPLATE_4 = Path(__file__).parent / "assets" / "test_template_4_charts_edge_cases.xlsx"
-
+from tests._assets import CHARTS_TEMPLATE_2, PIVOT_TEMPLATE
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -518,6 +514,7 @@ def _build_dtype_template(path: Path) -> None:
     ws1["F1"] = "datetime placeholder"
     ws1["G1"] = "date placeholder"
     ws1["H1"] = "time placeholder"
+    ws1["H1"].number_format = "hh:mm:ss"
     ws1["I1"] = "decimal placeholder"
 
     wb.defined_names.add(DefinedName("str_cell", attr_text="DtypeNamedCells!$A$1"))
@@ -554,7 +551,7 @@ def _build_dtype_template(path: Path) -> None:
     ws2.cell(row=2, column=5, value=None)
     ws2.cell(row=2, column=6, value=datetime(2025, 1, 1))
     ws2.cell(row=2, column=7, value=date(2025, 1, 1))
-    ws2.cell(row=2, column=8, value=time(12, 0))
+    ws2.cell(row=2, column=8, value=time(12, 0)).number_format = "hh:mm:ss"
     ws2.cell(row=2, column=9, value=Decimal(0))
 
     table = openpyxl.worksheet.table.Table(
@@ -641,6 +638,7 @@ def _build_cross_backend_dtype_template(path: Path) -> None:
     ws1["F1"] = "datetime placeholder"
     ws1["G1"] = "date placeholder"
     ws1["H1"] = "time placeholder"
+    ws1["H1"].number_format = "hh:mm:ss"
     ws1["I1"] = "decimal placeholder"
     ws1["J1"] = "nan placeholder"
     ws1["K1"] = "timestamp placeholder"
@@ -696,7 +694,7 @@ def _build_cross_backend_dtype_template(path: Path) -> None:
     ws2.cell(row=2, column=5, value=None)
     ws2.cell(row=2, column=6, value=datetime(2025, 1, 1))
     ws2.cell(row=2, column=7, value=date(2025, 1, 1))
-    ws2.cell(row=2, column=8, value=time(12, 0))
+    ws2.cell(row=2, column=8, value=time(12, 0)).number_format = "hh:mm:ss"
     ws2.cell(row=2, column=9, value=Decimal(0))
     ws2.cell(row=2, column=10, value=None)  # FloatNanCol
     ws2.cell(row=2, column=11, value=None)  # NaCol

@@ -174,6 +174,95 @@ class TestTabularAdapter:
         assert adapter.columns == ["a", "b"]
         assert adapter.rows == [[1, 3], [2, 4]]
 
+    def test_list_of_dicts_uses_the_ordered_union_of_keys(self) -> None:
+        """Column order follows first appearance across all rows."""
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter([{"a": 1}, {"b": 2, "a": 3}])
+
+        assert adapter.columns == ["a", "b"]
+        assert adapter.rows == [[1, None], [3, 2]]
+
+    def test_a_key_first_seen_in_a_later_row_is_kept(self) -> None:
+        """A key that appears late is still written, with None above it."""
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter(
+            [{"Name": "a", "Value": 1}, {"Name": "b", "Value": 2, "Notes": "late"}]
+        )
+
+        assert adapter.columns == ["Name", "Value", "Notes"]
+        assert adapter.rows[0] == ["a", 1, None]
+        assert adapter.rows[1] == ["b", 2, "late"]
+
+    def test_a_non_dict_row_raises_with_its_row_number(self) -> None:
+        """A ragged list of dicts fails loudly instead of dropping the row."""
+        from fillxl._adapters import TabularAdapter
+
+        with pytest.raises(TypeError, match="row 2 is int"):
+            TabularAdapter([{"a": 1}, 5])
+
+    def test_a_named_pandas_index_logs_a_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A named index is probably data the user meant to write."""
+        pd = pytest.importorskip("pandas")
+        from fillxl._adapters import TabularAdapter
+
+        df = pd.DataFrame({"x": [1, 2]}, index=pd.Index(["a", "b"], name="Date"))
+
+        with caplog.at_level("WARNING", logger="fillxl._adapters"):
+            adapter = TabularAdapter(df)
+
+        assert adapter.columns == ["x"]
+        assert "is not written to Excel" in caplog.text
+        assert "Date" in caplog.text
+
+    def test_a_datetime_index_logs_a_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A datetime index is data too, not just row numbers."""
+        pd = pytest.importorskip("pandas")
+        from fillxl._adapters import TabularAdapter
+
+        df = pd.DataFrame(
+            {"x": [1, 2, 3]},
+            index=pd.date_range("2024-01-01", periods=3, freq="D"),
+        )
+        resampled = df.resample("2D").sum()
+
+        with caplog.at_level("WARNING", logger="fillxl._adapters"):
+            TabularAdapter(resampled)
+
+        assert "is not written to Excel" in caplog.text
+
+    def test_a_default_index_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A RangeIndex is row numbering, not data."""
+        pd = pytest.importorskip("pandas")
+        from fillxl._adapters import TabularAdapter
+
+        with caplog.at_level("WARNING", logger="fillxl._adapters"):
+            adapter = TabularAdapter(pd.DataFrame({"x": [1, 2]}))
+
+        assert adapter.columns == ["x"]
+        assert caplog.records == []
+
+    def test_a_filtered_integer_index_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Filtering keeps an integer index; it is still row numbering."""
+        pd = pytest.importorskip("pandas")
+        from fillxl._adapters import TabularAdapter
+
+        df = pd.DataFrame({"x": [1, -2, 3]})
+        filtered = df[df.x > 0]
+
+        with caplog.at_level("WARNING", logger="fillxl._adapters"):
+            adapter = TabularAdapter(filtered)
+
+        assert adapter.columns == ["x"]
+        assert caplog.records == []
+
     def test_a_series_with_a_non_default_index_is_read_positionally(self) -> None:
         """Series values are positional; their index labels must not be used."""
         pd = pytest.importorskip("pandas")
@@ -213,3 +302,60 @@ class TestTabularAdapter:
         assert list(adapter.rows) == [[1], [2]]
         assert list(adapter.rows) == [[1], [2]]
         assert list(adapter.iter_rows) == [[1], [2]]
+
+
+class TestDuplicateColumnNames:
+    """Column labels that collide after string conversion are rejected."""
+
+    def test_duplicate_literal_names_raise(self) -> None:
+        """Two columns named "amount" cannot be told apart when writing."""
+        pd = pytest.importorskip("pandas")
+        from fillxl._adapters import TabularAdapter
+
+        df = pd.DataFrame([[1, 2]], columns=["amount", "amount"])
+
+        with pytest.raises(ValueError, match=r"Duplicate column names.*'amount'"):
+            TabularAdapter(df)
+
+    def test_a_normalization_collision_raises(self) -> None:
+        """``1`` and ``"1"`` become the same Excel column name."""
+        pd = pytest.importorskip("pandas")
+        from fillxl._adapters import TabularAdapter
+
+        df = pd.DataFrame([[1, 2]], columns=[1, "1"])
+
+        with pytest.raises(ValueError, match=r"Duplicate column names.*'1'"):
+            TabularAdapter(df)
+
+    def test_a_dict_key_collision_raises(self) -> None:
+        """Mappings may hold ``1`` and ``"1"`` as distinct keys."""
+        from fillxl._adapters import TabularAdapter
+
+        with pytest.raises(ValueError, match=r"Duplicate column names.*'1'"):
+            TabularAdapter({1: [10], "1": [20]})
+
+    def test_a_list_of_dicts_key_collision_raises(self) -> None:
+        """Keys from different rows are unioned before normalisation."""
+        from fillxl._adapters import TabularAdapter
+
+        with pytest.raises(ValueError, match=r"Duplicate column names.*'1'"):
+            TabularAdapter([{1: 10}, {"1": 20}])
+
+    def test_unique_names_are_accepted(self) -> None:
+        """Distinct labels keep working, including non-string ones."""
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter({"amount": [1], "Amount": [2], 3: [4]})
+
+        assert adapter.columns == ["amount", "Amount", "3"]
+        assert adapter.rows == [[1, 2, 4]]
+
+    def test_polars_already_rejects_duplicate_names(self) -> None:
+        """polars refuses duplicate column names before fillxl sees them.
+
+        Its own error means the adapter can never receive such a frame.
+        """
+        pl = pytest.importorskip("polars")
+
+        with pytest.raises(pl.exceptions.DuplicateError):
+            pl.DataFrame([[1, 2]], schema=["amount", "amount"], orient="row")

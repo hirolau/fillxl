@@ -21,12 +21,12 @@ Set the strategy via ``FillXLConfig(column_validation_strategy=...)``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import openpyxl
 import pytest
 
-from fillxl import FillXLConfig, fill
+from fillxl import ColumnValidationStrategy, FillXLConfig, fill
 from fillxl._validation import validate_columns
 
 if TYPE_CHECKING:
@@ -274,7 +274,109 @@ class TestDropAndWarnStrategies:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6.4 The validate_columns function (unit level)
+# 6.4 Duplicate column names
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestDuplicateColumnNames:
+    """Ambiguous column names are rejected before anything is written."""
+
+    def test_two_columns_with_the_same_label_are_rejected(
+        self,
+        output_path: Path,
+    ) -> None:
+        """A DataFrame with two "amount" columns cannot be filled unambiguously."""
+        pd = pytest.importorskip("pandas")
+        _make_table_template(output_path.with_name("tmpl.xlsx"), columns=["Region", "Amount"])
+
+        data = pd.DataFrame([["North", 10, 20]], columns=["Region", "amount", "amount"])
+
+        with pytest.raises(ValueError, match=r"Duplicate column names.*'amount'"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"Data": data},
+            )
+
+    def test_labels_that_normalize_to_the_same_name_are_rejected(
+        self,
+        output_path: Path,
+    ) -> None:
+        """A numeric header ``1`` and a text header ``"1"`` both become column "1"."""
+        _make_table_template(output_path.with_name("tmpl.xlsx"), columns=["Region", "1"])
+
+        # Non-string mapping keys are supported, so this reaches the adapter.
+        data: Any = {1: ["North"], "1": [10]}
+
+        with pytest.raises(ValueError, match=r"Duplicate column names.*'1'"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"Data": data},
+            )
+
+    def test_no_output_is_written_when_columns_are_ambiguous(
+        self,
+        output_path: Path,
+    ) -> None:
+        """The fill stops before writing, so no column is silently dropped."""
+        _make_table_template(output_path.with_name("tmpl.xlsx"), columns=["Region", "1"])
+        output_path.write_bytes(b"previous")
+
+        data: Any = {1: ["North"], "1": [10]}
+
+        with pytest.raises(ValueError, match="Duplicate column names"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"Data": data},
+            )
+
+        assert output_path.read_bytes() == b"previous"
+
+    @pytest.mark.parametrize("strategy", ["strict", "all_but_formulas", "warn", "drop", "none"])
+    def test_the_check_does_not_depend_on_the_validation_strategy(
+        self,
+        output_path: Path,
+        strategy: ColumnValidationStrategy,
+    ) -> None:
+        """Duplicate names are ambiguous even where validation is switched off."""
+        _make_table_template(output_path.with_name("tmpl.xlsx"), columns=["Region", "1"])
+
+        data: Any = {1: ["North"], "1": [10]}
+
+        with pytest.raises(ValueError, match="Duplicate column names"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"Data": data},
+                config=FillXLConfig(column_validation_strategy=strategy),
+            )
+
+    def test_unique_column_names_still_fill(
+        self,
+        output_path: Path,
+    ) -> None:
+        """Distinct labels keep the existing behaviour."""
+        _make_table_template(output_path.with_name("tmpl.xlsx"), columns=["Region", "Amount"])
+
+        fill(
+            template=output_path.with_name("tmpl.xlsx"),
+            output=output_path,
+            tables={"Data": [{"Region": "North", "Amount": 10}]},
+        )
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            ws = wb["Sheet1"]
+            assert ws["A2"].value == "North"
+            assert ws["B2"].value == 10
+        finally:
+            wb.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6.5 The validate_columns function (unit level)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 

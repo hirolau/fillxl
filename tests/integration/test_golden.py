@@ -44,7 +44,7 @@ GOLDEN = ASSETS / "golden"
 # fill_kwargs     — extra kwargs passed to fillxl.fill()
 
 
-def _chart_tables_data() -> dict[str, list[dict[str, object]]]:
+def _chart_tables_data() -> dict[str, Any]:
     """Return the chart table data used in fill_template_2."""
     from datetime import datetime
 
@@ -560,6 +560,48 @@ def _chart_formulas(path: Path) -> set[str]:
                 raw = archive.read(name).decode("utf-8", errors="replace")
                 formulas.update(_CHART_FORMULA_RE.findall(raw))
     return formulas
+
+
+_CHART_KIND_RE = re.compile(
+    r"<(?:\w+:)?(barChart|lineChart|scatterChart|areaChart|pieChart|doughnutChart)>"
+)
+_AXIS_POS_RE = re.compile(r'axPos val="(\w+)"')
+
+
+def _chart_axis_positions(path: Path) -> dict[str, tuple[list[str], list[str]]]:
+    """Chart kind and ``axPos`` values of every chart part, keyed by part name."""
+    charts: dict[str, tuple[list[str], list[str]]] = {}
+    with zipfile.ZipFile(path) as archive:
+        for name in sorted(archive.namelist()):
+            if _CHART_PART_RE.fullmatch(name):
+                raw = archive.read(name).decode("utf-8", errors="replace")
+                charts[name] = (
+                    _CHART_KIND_RE.findall(raw),
+                    _AXIS_POS_RE.findall(raw),
+                )
+    return charts
+
+
+def test_scatter_and_combo_axes_survive_a_fill(
+    charts_template_2: Path,
+    output_path: Path,
+) -> None:
+    """Chart-axis repair keeps every axis in place, including secondary ones."""
+    fill(template=charts_template_2, output=output_path, tables=_chart_tables_data())
+
+    template_axes = _chart_axis_positions(charts_template_2)
+    output_axes = _chart_axis_positions(output_path)
+
+    assert set(output_axes) == set(template_axes)
+    for part, (kinds, positions) in template_axes.items():
+        output_kinds, output_positions = output_axes[part]
+        assert output_kinds == kinds, part
+        # Only the serialisation order of the axes may differ.
+        assert sorted(output_positions) == sorted(positions), part
+        if "scatterChart" in kinds:
+            assert output_positions == ["b", "l"], part
+        if "barChart" in kinds and "lineChart" in kinds:
+            assert "r" in output_positions, part
 
 
 def _pivot_refresh_flags(path: Path) -> list[bool]:

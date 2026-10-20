@@ -398,6 +398,52 @@ def _table_rows(count: int) -> list[dict[str, object]]:
 
 
 @pytest.mark.win32com
+class TestWin32ComNamedCellParity:
+    """Named-cell parity with the openpyxl backend."""
+
+    def test_writing_to_a_protected_sheet_raises_runtime_error_not_keyerror(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A write failure is not reported as a missing name.
+
+        openpyxl does not enforce sheet protection; this divergence is
+        intentional and documented.
+        """
+        from openpyxl.workbook.defined_name import DefinedName
+
+        template = tmp_path / "protected.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Guarded"
+        ws["A1"] = "before"
+        wb.defined_names.add(DefinedName("guarded", attr_text="Guarded!$A$1"))
+        ws.protection.sheet = True
+        wb.save(template)
+        wb.close()
+
+        with pytest.raises(RuntimeError, match="guarded"):
+            fill(
+                template=template,
+                output=tmp_path / "protected_out.xlsx",
+                values={"guarded": "after"},
+                engine="win32com",
+            )
+
+    def test_a_missing_name_still_raises_keyerror(self, output_path: Path) -> None:
+        """``KeyError`` means "no such name", nothing else."""
+        from conftest import TEMPLATE
+
+        with pytest.raises(KeyError, match="does_not_exist"):
+            fill(
+                template=TEMPLATE,
+                output=output_path,
+                values={"does_not_exist": 1},
+                engine="win32com",
+            )
+
+
+@pytest.mark.win32com
 class TestWin32ComSecurityAndThreading:
     """Excel starts hardened and can be driven from worker threads."""
 

@@ -10,10 +10,46 @@ from openpyxl.worksheet.worksheet import Worksheet
 from fillxl._normalize import is_text_cell_value, prepare_cell_value
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from openpyxl.workbook.defined_name import DefinedName
     from openpyxl.workbook.workbook import Workbook
 
 logger = logging.getLogger(__name__)
+
+
+def named_cell_target(
+    name: str,
+    destinations: Sequence[tuple[str, str]],
+) -> tuple[str, str] | None:
+    """Pick the single cell a scalar named-cell value is written to (both backends).
+
+    Returns:
+        ``(sheet_name, address)``, or ``None`` when the name has no destination.
+
+    Raises:
+        ValueError: If the first destination is a multi-cell range.
+
+    """
+    if not destinations:
+        logger.warning("Named cell '%s' has no destinations, skipping", name)
+        return None
+    sheet_name, address = destinations[0]
+    if ":" in address:
+        msg = (
+            f"Named cell '{name}' refers to a multi-cell range "
+            f"({sheet_name}!{address}), but only single cells "
+            f"can be filled with a scalar value"
+        )
+        raise ValueError(msg)
+    if len(destinations) > 1:
+        logger.warning(
+            "Named cell '%s' has multiple destinations, only the first one (%s!%s) was updated",
+            name,
+            sheet_name,
+            address,
+        )
+    return sheet_name.replace("''", "'"), address
 
 
 def find_defined_name(workbook: Workbook, name: str) -> DefinedName | None:
@@ -75,27 +111,10 @@ def populate_named_cells(
         # Normalise value for Excel compatibility
         normalised_value = prepare_cell_value(value)
 
-        # Get the cell destinations for this defined name
-        destinations = list(defined_name.destinations)
-        if not destinations:
-            logger.warning("Named cell '%s' has no destinations, skipping", name)
+        target = named_cell_target(name, list(defined_name.destinations))
+        if target is None:
             continue
-
-        # Write to the first destination
-        # destinations is a list of (worksheet_name, cell_address) tuples
-        worksheet_name, cell_address = destinations[0]
-
-        # A cell address containing ':' is a multi-cell range (e.g. $E$2:$F$3).
-        # Writing a single scalar to a range is not supported.
-        if ":" in cell_address:
-            msg = (
-                f"Named cell '{name}' refers to a multi-cell range "
-                f"({worksheet_name}!{cell_address}), but only single cells "
-                f"can be filled with a scalar value"
-            )
-            raise ValueError(
-                msg,
-            )
+        worksheet_name, cell_address = target
 
         worksheet = workbook[worksheet_name]
         if not isinstance(worksheet, Worksheet):
@@ -117,12 +136,3 @@ def populate_named_cells(
             cell_address,
             normalised_value,
         )
-
-        # Warn if there are multiple destinations
-        if len(destinations) > 1:
-            logger.warning(
-                "Named cell '%s' has multiple destinations, only the first one (%s!%s) was updated",
-                name,
-                worksheet_name,
-                cell_address,
-            )

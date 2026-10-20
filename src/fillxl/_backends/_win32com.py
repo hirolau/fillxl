@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from openpyxl.worksheet.cell_range import CellRange
 
+from fillxl._cells import named_cell_target
 from fillxl._charts import TableChangeSpecs, _unquote_sheet_name
 from fillxl._formulas import (
     BodyState,
@@ -184,19 +185,22 @@ class Win32ComBackend:
 
         """
         self._ensure_workbook()
-
-        # Same normalisation as the table path (pandas objects, date/time
-        # promotion, Decimal, tz stripping) plus the apostrophe prefix that
-        # keeps COM from reinterpreting strings, and the UTC marking that
-        # keeps it from shifting datetimes by the local timezone offset.
-        prepared = prepare_com_value(value, escape_formulas=config.escape_formulas)
-
         try:
             name_obj = self._workbook.Names(name)
-            name_obj.RefersToRange.Value = prepared
         except Exception as exc:
             msg = f"Named cell '{name}' not found in workbook"
             raise KeyError(msg) from exc
+
+        target = named_cell_target(name, _com_name_destinations(str(name_obj.RefersTo)))
+        if target is None:
+            return
+        sheet_name, address = target
+        prepared = prepare_com_value(value, escape_formulas=config.escape_formulas)
+        try:
+            self._workbook.Worksheets(sheet_name).Range(address).Value = prepared
+        except Exception as exc:
+            msg = f"Could not write named cell '{name}' ({sheet_name}!{address}): {exc}"
+            raise RuntimeError(msg) from exc
 
     def fill_table(
         self,
@@ -734,6 +738,14 @@ def _prepare_formula_for_com(formula: str) -> str:
         .replace("_xlfn.", "")
         .replace("_xlpm.", "")
     )
+
+
+def _com_name_destinations(refers_to: str) -> list[tuple[str, str]]:
+    """Parse ``Name.RefersTo`` exactly the way the openpyxl backend parses names."""
+    from openpyxl.workbook.defined_name import DefinedName
+
+    probe = DefinedName("fillxl_probe", attr_text=refers_to.removeprefix("="))
+    return list(probe.destinations)
 
 
 def _read_table_formula_definitions(

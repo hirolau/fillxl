@@ -75,6 +75,7 @@ def equivalence_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     ws.cell(row=2, column=2, value=0)
     ws.cell(row=2, column=3, value="template note")
     wb.defined_names.add(DefinedName("probe_cell", attr_text="Data!$E$1"))
+    wb.defined_names.add(DefinedName("probe_block", attr_text="Data!$E$2:$F$3"))
     ws.add_table(
         Table(
             displayName="Items",
@@ -449,6 +450,52 @@ def test_error_looking_strings_are_stored_as_text_not_errors(
     assert filled.worksheet["E1"].data_type == "s"
     assert filled.first_row[1] == "#N/A"
     assert filled.worksheet["B2"].data_type == "s"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Named cells
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_multi_cell_named_range_is_rejected_by_both_engines(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A scalar cannot be written to a multi-cell name on either engine."""
+    with pytest.raises(ValueError, match="multi-cell range"):
+        _fill_output(
+            equivalence_template,
+            output_path,
+            engine,
+            values={"probe_block": "x"},
+        )
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_multi_destination_name_updates_only_the_first_cell(
+    multi_dest_name_template: Path,
+    output_path: Path,
+    engine: Engine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Both engines write to the first destination and point out the rest."""
+    with caplog.at_level(logging.WARNING, logger="fillxl._cells"):
+        output = _fill_output(
+            multi_dest_name_template,
+            output_path,
+            engine,
+            values={"multi_dest": "new"},
+        )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        assert wb["Sheet1"]["A1"].value == "new"
+        assert wb["Sheet2"]["B2"].value == "Second dest"
+    finally:
+        wb.close()
+    assert "multiple destinations" in caplog.text
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

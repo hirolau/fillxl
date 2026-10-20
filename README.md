@@ -6,11 +6,11 @@
 [![CI](https://github.com/hirolau/fillxl/actions/workflows/ci.yml/badge.svg)](https://github.com/hirolau/fillxl/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue)](https://hirolau.github.io/fillxl/)
 
-**Fill Excel templates with data from Python.**
+**Design in Excel. Populate with Python.**
 
-Designed around named cells and Excel tables — no more fragile cell references like A1 or B3. Charts, formulas, formatting, and conditional formatting are preserved and updated automatically.
+Create polished templates with named cells and Excel Tables — then fill them from pandas, Polars, DuckDB or plain Python. Charts, formatting and formulas stay intact.
 
-Fill tables using list, pandas, polars or duckdb!
+fillxl focuses on a small, reliable API with strong correctness: tables resize properly, formatting is preserved, and edge cases are handled carefully.
 
 ```python
 from fillxl import fill

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from fillxl._backend import get_backend
 from fillxl._config import FillXLConfig
+from fillxl._lossy import check_lossy
 from fillxl._normalize import reset_tz_warning_state
 
 if TYPE_CHECKING:
@@ -133,7 +134,8 @@ def fill(
             finally:
                 backend.close()
 
-        # Phase 10 adds the lossy check here (before the swap).
+        if engine in ("auto", "openpyxl"):
+            check_lossy(template_path, staging_path, cfg.on_lossy)
         staging_path.replace(output_path)
     except BaseException:
         staging_path.unlink(missing_ok=True)

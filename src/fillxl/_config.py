@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import get_args
 
 from attrs import define, field
-from attrs.validators import instance_of
+from attrs.validators import in_, instance_of
 
+from fillxl._lossy import OnLossy
 from fillxl._validation import ColumnValidationStrategy
 
 _KNOWN_STRATEGIES: frozenset[str] = frozenset(get_args(ColumnValidationStrategy))
@@ -81,6 +82,8 @@ class FillXLConfig:
         hide_underscore_sheets: Whether to hide sheets starting with "_".
         delete_sheets: Sheet names to delete.
         active_sheet: Name of the sheet to set as active after filling.
+        on_lossy: What to do when the openpyxl engine drops template
+            features: ``"ignore"``, ``"warn"`` (default) or ``"raise"``.
 
     """
 
@@ -95,3 +98,4 @@ class FillXLConfig:
     hide_underscore_sheets: bool = field(default=True, validator=instance_of(bool))
     delete_sheets: tuple[str, ...] | None = field(default=None, converter=_to_sheet_tuple)
     active_sheet: str | None = field(default=None)
+    on_lossy: OnLossy = field(default="warn", validator=in_(get_args(OnLossy)))

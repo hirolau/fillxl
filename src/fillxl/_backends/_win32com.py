@@ -14,6 +14,7 @@ import contextlib
 import logging
 import re
 import sys
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
@@ -42,6 +43,9 @@ _is_windows = sys.platform == "win32"
 # COM constants (fallback if early binding is unavailable)
 _XL_SHEET_HIDDEN = 0
 _XL_PASTE_FORMATS = -4122
+
+_MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
+_RPC_E_CHANGED_MODE = -2147417850
 
 _OOXML_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xltx", ".xltm"})
 
@@ -82,6 +86,8 @@ class Win32ComBackend:
         # Calculated-column definitions per table; None = file format cannot be read.
         self._definitions: dict[str, dict[str, str]] | None = None
         self._definitions_loaded = False
+        self._com_initialized = False
+        self._com_thread: int | None = None
 
     # ── Internal helpers ───────────────────────────────────────────────────
 
@@ -95,32 +101,35 @@ class Win32ComBackend:
             raise RuntimeError(msg)
 
     def _ensure_app(self) -> None:
-        """Lazy-initialise the Excel Application COM object.
-
-        Creates a hidden Excel instance with alerts and screen updating
-        disabled.  Uses ``win32com.client.Dispatch`` directly (rather than
-        ``gencache.EnsureDispatch``) to avoid RPC issues when the type
-        library cache is being built.
-        """
+        """Start a hidden Excel that cannot run macros, fire events or update links."""
         if self._app is not None:
             return
         self._ensure_platform()
-        # Late import so the module is importable on non-Windows (for tests)
-        import pythoncom  # noqa: F401
+        import pythoncom
         import win32com.client
 
-        # Use DispatchEx to always create a new, isolated Excel instance.
-        # Dispatch would reuse a stale/hung instance which can cause
-        # AttributeError on property access.
+        try:
+            pythoncom.CoInitialize()
+        except pythoncom.com_error as exc:
+            # The thread already uses another apartment model; COM is usable as is.
+            if exc.hresult != _RPC_E_CHANGED_MODE:  # pyrefly: ignore[missing-attribute]
+                raise
+        else:
+            self._com_initialized = True
+            self._com_thread = threading.get_ident()
+
+        # DispatchEx always creates a new, isolated Excel instance.
         self._app = win32com.client.DispatchEx("Excel.Application")
-        # These properties may not be settable depending on the Excel
-        # process state or permissions — non-fatal, just best-effort.
+        # Security settings must hold before any workbook opens; failures propagate.
+        self._app.AutomationSecurity = _MSO_AUTOMATION_SECURITY_FORCE_DISABLE
+        self._app.EnableEvents = False
+        self._app.AskToUpdateLinks = False
         for attr, val in [("Visible", False), ("DisplayAlerts", False), ("ScreenUpdating", False)]:
             try:
                 setattr(self._app, attr, val)
             except AttributeError:
                 logger.warning("Could not set Excel.Application.%s", attr)
-        logger.debug("Excel Application started (hidden)")
+        logger.debug("Excel Application started (hidden, macros disabled)")
 
     def _ensure_workbook(self) -> None:
         """Raise :class:`RuntimeError` if no workbook has been loaded."""
@@ -153,7 +162,13 @@ class Win32ComBackend:
         self._load_path = abs_path
         self._definitions = None
         self._definitions_loaded = False
-        self._workbook = self._app.Workbooks.Open(str(abs_path))
+        self._workbook = self._app.Workbooks.Open(
+            str(abs_path),
+            UpdateLinks=0,
+            ReadOnly=False,
+            IgnoreReadOnlyRecommended=True,
+            AddToMru=False,
+        )
         logger.info("[win32com] load took %.3fs", time.perf_counter() - t0)
 
     def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
@@ -620,7 +635,7 @@ class Win32ComBackend:
         logger.info("[win32com] save took %.3fs", time.perf_counter() - t0)
 
     def close(self) -> None:
-        """Close the workbook and release the Excel Application."""
+        """Close the workbook, quit Excel and release COM on this thread."""
         try:
             if self._workbook is not None:
                 try:
@@ -630,14 +645,28 @@ class Win32ComBackend:
                 finally:
                     self._workbook = None
         finally:
-            if self._app is not None:
-                try:
-                    self._app.Quit()
-                except Exception:
-                    logger.exception("Error during Excel quit")
-                finally:
-                    self._app = None
-                    logger.debug("Excel Application quit")
+            try:
+                if self._app is not None:
+                    try:
+                        self._app.Quit()
+                    except Exception:
+                        logger.exception("Error during Excel quit")
+                    finally:
+                        self._app = None
+                        logger.debug("Excel Application quit")
+            finally:
+                self._release_com()
+
+    def _release_com(self) -> None:
+        if not self._com_initialized:
+            return
+        self._com_initialized = False
+        if threading.get_ident() != self._com_thread:
+            logger.warning("close() ran on another thread than load(); COM was not released")
+            return
+        import pythoncom
+
+        pythoncom.CoUninitialize()
 
 
 # ── Standalone helpers ──────────────────────────────────────────────────────

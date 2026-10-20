@@ -362,8 +362,11 @@ class TestWin32ComTableFill:
 
 def _com_column_has_formula(path: Path, table: str, column: str) -> object:
     """Open *path* in a separate Excel and return ``HasFormula`` of a table column."""
+    import pythoncom
     import win32com.client
 
+    # A backend fill releases COM on its thread, so direct COM use must init it.
+    pythoncom.CoInitialize()
     app = win32com.client.DispatchEx("Excel.Application")
     app.AutomationSecurity = 3
     app.DisplayAlerts = False
@@ -392,6 +395,64 @@ def _table_rows(count: int) -> list[dict[str, object]]:
         }
         for i in range(1, count + 1)
     ]
+
+
+@pytest.mark.win32com
+class TestWin32ComSecurityAndThreading:
+    """Excel starts hardened and can be driven from worker threads."""
+
+    def test_excel_starts_with_macros_events_and_link_updates_disabled(self) -> None:
+        """The security settings are applied before any workbook opens."""
+        from conftest import TEMPLATE
+
+        from fillxl._backends._win32com import Win32ComBackend
+
+        backend = Win32ComBackend()
+        try:
+            backend.load(TEMPLATE)
+            assert backend._app.AutomationSecurity == 3
+            assert backend._app.EnableEvents is False
+            assert backend._app.AskToUpdateLinks is False
+        finally:
+            backend.close()
+
+    def test_fill_works_from_a_worker_thread(self, output_path: Path) -> None:
+        """fill() initialises COM on the thread that uses it."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from conftest import TEMPLATE
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            result = pool.submit(
+                fill,
+                template=TEMPLATE,
+                output=output_path,
+                values={"single_cell": "x"},
+                engine="win32com",
+            ).result()
+
+        assert result.exists()
+
+    def test_two_sequential_fills_on_the_same_worker_thread(self, tmp_path: Path) -> None:
+        """CoInitialize/CoUninitialize stay balanced across fills."""
+        from conftest import TEMPLATE
+
+        def run(number: int) -> Path:
+            output = tmp_path / f"threaded_{number}.xlsx"
+            fill(
+                template=TEMPLATE,
+                output=output,
+                values={"single_cell": f"x{number}"},
+                engine="win32com",
+            )
+            return output
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            results = [pool.submit(run, number).result() for number in range(2)]
+
+        assert all(path.exists() for path in results)
 
 
 @pytest.mark.win32com

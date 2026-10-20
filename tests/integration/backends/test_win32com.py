@@ -58,6 +58,21 @@ class TestWin32ComBackendNoWorkbook:
         backend = Win32ComBackend()
         backend.close()
 
+    def test_close_without_load_does_not_touch_com(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """close() must not import or call pythoncom when no Excel was started."""
+        from fillxl._backends._win32com import Win32ComBackend
+
+        class ForbiddenCom:
+            def __getattr__(self, name: str) -> object:
+                raise AssertionError(f"pythoncom.{name} was accessed")
+
+        monkeypatch.setitem(sys.modules, "pythoncom", ForbiddenCom())
+
+        Win32ComBackend().close()
+
 
 class TestWin32ComBackendFactory:
     """Factory tests for the win32com engine (CI-safe)."""
@@ -108,8 +123,11 @@ def _skip_without_excel() -> None:
         pytest.skip("win32com backend requires Windows")
 
     try:
+        import pythoncom
         import win32com.client
 
+        # A backend fill releases COM on its thread, so direct COM use must init it.
+        pythoncom.CoInitialize()
         app = win32com.client.DispatchEx("Excel.Application")
     except Exception as exc:
         pytest.skip(f"Excel COM is not available: {exc}")

@@ -108,8 +108,11 @@ def _win32com_available() -> bool:
     instead of failures.
     """
     try:
+        import pythoncom
         import win32com.client
 
+        # A backend fill releases COM on its thread, so direct COM use must init it.
+        pythoncom.CoInitialize()
         app = win32com.client.DispatchEx("Excel.Application")
     except Exception:
         return False

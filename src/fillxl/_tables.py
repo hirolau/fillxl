@@ -247,9 +247,8 @@ def populate_table(
 def _totals_row_count(table: Table) -> int:
     """Number of totals rows in *table* (zero or one).
 
-    ``totalsRowCount`` is authoritative.  Excel writes
-    ``totalsRowShown="0"`` on ordinary tables, so ``totalsRowShown`` alone
-    would report a totals row for every table.
+    Only ``totalsRowCount`` counts: ``totalsRowShown`` means "was shown at some
+    point", not "is shown" (ECMA-376), matching COM's ``ShowTotals``.
 
     Examples:
         >>> from openpyxl.worksheet.table import Table, TableColumn
@@ -257,21 +256,17 @@ def _totals_row_count(table: Table) -> int:
         >>> _totals_row_count(Table(displayName="T", ref="A1:B2", tableColumns=columns))
         0
         >>> _totals_row_count(
-        ...     Table(
-        ...         displayName="T",
-        ...         ref="A1:B3",
-        ...         tableColumns=columns,
-        ...         totalsRowCount=1,
-        ...         totalsRowShown=True,
-        ...     )
+        ...     Table(displayName="T", ref="A1:B3", tableColumns=columns, totalsRowShown=True)
+        ... )
+        0
+        >>> _totals_row_count(
+        ...     Table(displayName="T", ref="A1:B3", tableColumns=columns, totalsRowCount=1)
         ... )
         1
 
     """
     count = getattr(table, "totalsRowCount", None)
-    if count:
-        return int(count)
-    return 1 if getattr(table, "totalsRowShown", False) else 0
+    return int(count) if count else 0
 
 
 class _CellSnapshot(NamedTuple):

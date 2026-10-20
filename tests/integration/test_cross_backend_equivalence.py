@@ -435,3 +435,60 @@ def test_error_looking_strings_are_stored_as_text_not_errors(
     assert filled.worksheet["E1"].data_type == "s"
     assert filled.first_row[1] == "#N/A"
     assert filled.worksheet["B2"].data_type == "s"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Totals rows
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_totals_row_shown_without_a_count_is_not_a_totals_row(
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """``totalsRowShown`` alone does not make the last row a totals row."""
+    template = tmp_path / "totals_shown.xlsx"
+    output = tmp_path / f"totals_shown_{engine}.xlsx"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws.append(["Name", "Value"])
+    ws.append(["old", 0])
+    ws.append(["old", 1])
+    ws.add_table(
+        Table(
+            displayName="Shown",
+            ref="A1:B3",
+            tableColumns=[TableColumn(id=1, name="Name"), TableColumn(id=2, name="Value")],
+            totalsRowShown=True,
+        ),
+    )
+    wb.save(template)
+    wb.close()
+
+    if engine == "win32com" and not _win32com_available():
+        pytest.skip("win32com backend requires Windows and Excel")
+
+    fill(
+        template=template,
+        output=output,
+        engine=engine,
+        tables={
+            "Shown": [
+                {"Name": "a", "Value": 1},
+                {"Name": "b", "Value": 2},
+                {"Name": "c", "Value": 3},
+            ]
+        },
+    )
+
+    result = openpyxl.load_workbook(output)
+    try:
+        sheet = result["Data"]
+        table = sheet.tables["Shown"]
+        assert table.ref == "A1:B4"
+        assert [sheet.cell(row=row, column=1).value for row in (2, 3, 4)] == ["a", "b", "c"]
+    finally:
+        result.close()

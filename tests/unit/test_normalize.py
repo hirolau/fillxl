@@ -132,9 +132,18 @@ class TestValueNormalisation:
         """Excel has no date type; everything is a serial number."""
         assert normalize_value(dt.date(2025, 12, 25)) == dt.datetime(2025, 12, 25, 0, 0)
 
-    def test_a_time_becomes_a_datetime_on_the_2000_01_01_anchor(self) -> None:
-        """COM cannot marshal time, so both backends write the same datetime."""
-        assert normalize_value(dt.time(9, 15, 30)) == dt.datetime(2000, 1, 1, 9, 15, 30)
+    def test_time_becomes_a_fraction_of_a_day(self) -> None:
+        """Excel stores a time as the part of a day that has elapsed."""
+        assert normalize_value(dt.time(9, 15, 30)) == pytest.approx(33330 / 86400)
+
+    def test_midnight_is_zero(self) -> None:
+        assert normalize_value(dt.time(0, 0)) == 0.0
+
+    def test_time_keeps_microseconds(self) -> None:
+        assert normalize_value(dt.time(9, 15, 30, 500_000)) == pytest.approx((33330.5) / 86400)
+
+    def test_time_is_not_a_datetime_any_more(self) -> None:
+        assert not isinstance(normalize_value(dt.time(9, 15, 30)), dt.datetime)
 
     def test_a_timedelta_becomes_a_fraction_of_a_day(self) -> None:
         assert normalize_value(dt.timedelta(hours=6)) == 0.25

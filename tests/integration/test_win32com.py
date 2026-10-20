@@ -7,7 +7,7 @@ and table fills.  All tests are marked @pytest.mark.win32com.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 from unittest import mock
 
@@ -392,6 +392,36 @@ def _table_rows(count: int) -> list[dict[str, object]]:
         }
         for i in range(1, count + 1)
     ]
+
+
+@pytest.mark.win32com
+def test_a_filled_time_works_in_excel_arithmetic(tmp_path: Path) -> None:
+    """A time is a fraction of a day, so ``=A1*24`` returns the hour."""
+    from openpyxl.workbook.defined_name import DefinedName
+
+    template = tmp_path / "time_arithmetic.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"] = None
+    ws["A1"].number_format = "hh:mm:ss"
+    ws["B1"] = "=A1*24"
+    wb.defined_names.add(DefinedName("t", attr_text=f"{ws.title}!$A$1"))
+    wb.save(template)
+    wb.close()
+
+    output = tmp_path / "time_arithmetic_filled.xlsx"
+    fill(
+        template=template,
+        output=output,
+        engine="win32com",
+        values={"t": time(9, 15, 30)},
+    )
+
+    result = openpyxl.load_workbook(output, data_only=True)
+    try:
+        assert result[ws.title]["B1"].value == pytest.approx(9.258333, abs=1e-6)
+    finally:
+        result.close()
 
 
 @pytest.mark.win32com

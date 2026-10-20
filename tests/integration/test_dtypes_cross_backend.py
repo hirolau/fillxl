@@ -974,12 +974,7 @@ class TestCrossBackendNamedCellsWin32Com:
         wb = openpyxl.load_workbook(output_path)
         try:
             ws = wb["CrossDtypeNamedCells"]
-            val = ws["H1"].value
-            # COM treats naive datetimes as local time → converts to UTC.
-            # Accept ±1 hour shift in the stored time.
-            assert val is not None and hasattr(val, "hour"), f"Expected time-like, got {val!r}"
-            assert val.minute == 15, f"Expected minute=15, got {val.minute}"
-            assert 8 <= val.hour <= 10, f"Expected hour ~9, got {val.hour}"
+            assert ws["H1"].value == time(9, 15, 30)
         finally:
             wb.close()
 

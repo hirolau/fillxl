@@ -19,10 +19,9 @@ Normalisation rules (applied in order):
        (Excel cannot represent IEEE-754 special values).
     5. ``datetime.date`` → ``datetime.datetime`` (Excel has no native
        ``date`` type — everything is a serial number).
-    6. ``datetime.time`` → ``datetime.datetime`` on ``2000-01-01``
-       (COM cannot marshal raw ``time`` objects, so they are promoted to
-       ``datetime`` for cross-backend consistency).  ``2000-01-01`` is a
-       universally COM-compatible anchor date.
+    6. ``datetime.time`` → ``float`` (fraction of a 24-hour day), which is
+       Excel's own time representation, so arithmetic such as ``=A2*24``
+       works.  The template's number format controls the display.
     7. ``datetime.timedelta`` → ``float`` (fraction of a 24-hour day).
        Excel has no native ``timedelta`` type.
     8. ``Decimal`` → ``float``.  Excel has no native ``Decimal`` type.
@@ -128,7 +127,7 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     3. NumPy scalars → native Python values.
     4. IEEE-754 special floats (NaN, Inf, -Inf) → ``None``.
     5. ``date`` → ``datetime`` (Excel has no native ``date`` type).
-    6. ``time`` → ``datetime`` on ``2000-01-01``.
+    6. ``time`` → ``float`` (fraction of a day).
     7. ``timedelta`` → ``float`` (fraction of a 24-hour day).
     8. ``Decimal`` → ``float``.
     9. Timezone-aware ``datetime`` → naive ``datetime``.
@@ -161,8 +160,8 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
         >>> from datetime import date, datetime, time, timedelta
         >>> normalize_value(date(2025, 12, 25))
         datetime.datetime(2025, 12, 25, 0, 0)
-        >>> normalize_value(time(9, 15, 30))
-        datetime.datetime(2000, 1, 1, 9, 15, 30)
+        >>> round(normalize_value(time(9, 15, 30)) * 24, 6)
+        9.258333
         >>> normalize_value(timedelta(hours=6))
         0.25
         >>> from decimal import Decimal
@@ -201,22 +200,11 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     if isinstance(value, dt.date) and not isinstance(value, dt.datetime):
         value = dt.datetime(value.year, value.month, value.day)
 
-    # ── 6. time → datetime on anchor date (2000-01-01) ────────────────────
-    #     COM cannot marshal raw time objects, so they are promoted to
-    #     datetime for cross-backend consistency.  2000-01-01 is used as
-    #     the anchor date because it is universally COM-compatible (some
-    #     Windows/pywin32 versions cannot marshal dates before ~1969).
-    #     The time fraction (hours:minutes:seconds) is preserved.
-    if isinstance(value, dt.time) and not isinstance(value, dt.datetime):
-        value = dt.datetime(
-            2000,
-            1,
-            1,
-            value.hour,
-            value.minute,
-            value.second,
-            value.microsecond,
-        )
+    # ── 6. time → fraction of a day (Excel's own representation) ──────────
+    if isinstance(value, dt.time):
+        return (
+            value.hour * 3600 + value.minute * 60 + value.second + value.microsecond / 1_000_000
+        ) / 86_400
 
     # ── 7. timedelta → float (fraction of a day) ──────────────────────────
     if isinstance(value, dt.timedelta):

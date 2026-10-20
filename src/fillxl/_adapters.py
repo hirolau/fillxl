@@ -67,6 +67,35 @@ def _check_column_lengths(keys: list[Any], column_values: list[list[Any]]) -> No
         raise ValueError(msg)
 
 
+def _ordered_key_union(rows: list[Any]) -> list[Any]:
+    """Keys of all row dicts in first-seen order (missing keys become ``None``).
+
+    Examples:
+        >>> _ordered_key_union([{"a": 1}, {"b": 2, "a": 3}])
+        ['a', 'b']
+        >>> _ordered_key_union([{"a": 1}, 5])
+        Traceback (most recent call last):
+            ...
+        TypeError: list[dict] row 2 is int, not dict.
+
+    """
+    keys: dict[Any, None] = {}
+    for number, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            msg = f"list[dict] row {number} is {type(row).__name__}, not dict."
+            raise TypeError(msg)
+        keys.update(dict.fromkeys(row))
+    return list(keys)
+
+
+def _pandas_index_carries_data(index: Any) -> bool:  # noqa: ANN401
+    """Whether a pandas index probably holds data (named, multi-level or non-integer)."""
+    if index.nlevels > 1 or any(name is not None for name in index.names):
+        return True
+    pd = sys.modules["pandas"]
+    return len(index) > 0 and not pd.api.types.is_integer_dtype(index.dtype)
+
+
 class TabularAdapter:
     """Adapter that normalizes different tabular data types to a common interface."""
 
@@ -89,6 +118,12 @@ class TabularAdapter:
         # Try pandas DataFrame
         pd = sys.modules.get("pandas")
         if pd is not None and isinstance(data, pd.DataFrame):
+            if _pandas_index_carries_data(data.index):
+                logger.warning(
+                    "The DataFrame index %s is not written to Excel; "
+                    "call df.reset_index() to include it.",
+                    list(data.index.names),
+                )
             self._columns = [str(col) for col in data.columns]
             self._rows = list(data.itertuples(index=False, name=None))
             logger.debug("Detected pandas DataFrame with %d columns", len(self._columns))
@@ -121,10 +156,10 @@ class TabularAdapter:
 
         # Try list[dict]
         if isinstance(data, list) and isinstance(data[0], dict):
-            columns = [str(col) for col in data[0]]
-            self._columns = columns
-            self._rows = [[row.get(col) for col in columns] for row in data]
-            logger.debug("Detected list[dict] with %d columns", len(columns))
+            keys = _ordered_key_union(data)
+            self._columns = [str(key) for key in keys]
+            self._rows = [[row.get(key) for key in keys] for row in data]
+            logger.debug("Detected list[dict] with %d columns", len(keys))
             return
 
         # Try dict[str, column] — column values may be lists, tuples, numpy

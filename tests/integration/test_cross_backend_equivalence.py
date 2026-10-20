@@ -452,6 +452,34 @@ def test_error_looking_strings_are_stored_as_text_not_errors(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Ragged list[dict] data
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_list_of_dicts_with_keys_first_seen_in_later_rows(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A late key is written instead of being silently dropped."""
+    filled = _fill_and_read(
+        equivalence_template,
+        output_path,
+        engine,
+        tables={
+            "Items": [
+                {"Name": "a", "Value": 1},
+                {"Name": "b", "Value": 2, "Notes": "late"},
+            ]
+        },
+    )
+
+    assert filled.worksheet["C2"].value is None
+    assert filled.worksheet["C3"].value == "late"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Calculated columns
 # ═══════════════════════════════════════════════════════════════════════════════
 

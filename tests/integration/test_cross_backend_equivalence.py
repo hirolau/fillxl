@@ -645,6 +645,27 @@ def test_a_named_cell_error_names_the_cell(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Duplicate column names
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_duplicate_normalized_column_names_are_rejected_by_both_engines(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """The adapter rejects the ambiguity before either engine maps names."""
+    with pytest.raises(ValueError, match=r"Duplicate column names.*'1'"):
+        _fill_output(
+            equivalence_template,
+            output_path,
+            engine,
+            tables={"Items": {1: ["a"], "1": ["b"]}},
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Atomic output
 # ═══════════════════════════════════════════════════════════════════════════════
 

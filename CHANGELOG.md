@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `=100` are kept.
 - win32com no longer erases calculated columns of `.xlsb`/`.xls` templates.
 - `list[dict]` keys that first appear in a later row are no longer dropped.
+- Input columns whose names collide after string conversion (for example `1`
+  and `"1"`, or two `"amount"` labels in a DataFrame) raise `ValueError`
+  instead of silently dropping one column. The check runs before any cell is
+  written and does not depend on the column-validation strategy.
 - Named cells behave identically on both engines (multi-cell ranges raise
   `ValueError`; `KeyError` only for missing names).
 - The win32com overflow guard refuses to resize when it cannot read the cells

@@ -67,6 +67,41 @@ def _check_column_lengths(keys: list[Any], column_values: list[list[Any]]) -> No
         raise ValueError(msg)
 
 
+def _normalize_column_names(names: Iterable[Any]) -> list[str]:
+    """Stringify column names, rejecting collisions that would lose a column.
+
+    Every backend maps column names to indices, so two labels that become the
+    same string would make one column overwrite the other.
+
+    Examples:
+        >>> _normalize_column_names(["amount", 1])
+        ['amount', '1']
+        >>> _normalize_column_names(["amount", "amount"])  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: Duplicate column names after normalization: ['amount']...
+        >>> _normalize_column_names([1, "1"])  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: Duplicate column names after normalization: ['1']...
+
+    """
+    normalized = [str(name) for name in names]
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for name in normalized:
+        if name in seen and name not in duplicates:
+            duplicates.append(name)
+        seen.add(name)
+    if duplicates:
+        msg = (
+            f"Duplicate column names after normalization: {duplicates}. "
+            "Input column names must be unique after normalization."
+        )
+        raise ValueError(msg)
+    return normalized
+
+
 def _ordered_key_union(rows: list[Any]) -> list[Any]:
     """Keys of all row dicts in first-seen order (missing keys become ``None``).
 
@@ -124,7 +159,7 @@ class TabularAdapter:
                     "call df.reset_index() to include it.",
                     list(data.index.names),
                 )
-            self._columns = [str(col) for col in data.columns]
+            self._columns = _normalize_column_names(data.columns)
             self._rows = list(data.itertuples(index=False, name=None))
             logger.debug("Detected pandas DataFrame with %d columns", len(self._columns))
             return
@@ -132,7 +167,7 @@ class TabularAdapter:
         # Try polars DataFrame
         pl = sys.modules.get("polars")
         if pl is not None and isinstance(data, pl.DataFrame):
-            self._columns = [str(col) for col in data.columns]
+            self._columns = _normalize_column_names(data.columns)
             self._rows = list(data.iter_rows())
             logger.debug("Detected polars DataFrame with %d columns", len(self._columns))
             return
@@ -140,7 +175,7 @@ class TabularAdapter:
         # Try duckdb Relation
         duckdb = sys.modules.get("duckdb")
         if duckdb is not None and isinstance(data, duckdb.DuckDBPyRelation):
-            self._columns = [str(col) for col in data.columns]
+            self._columns = _normalize_column_names(data.columns)
             self._rows = [tuple(row) for row in data.fetchall()]
             logger.debug("Detected duckdb Relation with %d columns", len(self._columns))
             return
@@ -157,7 +192,7 @@ class TabularAdapter:
         # Try list[dict]
         if isinstance(data, list) and isinstance(data[0], dict):
             keys = _ordered_key_union(data)
-            self._columns = [str(key) for key in keys]
+            self._columns = _normalize_column_names(keys)
             self._rows = [[row.get(key) for key in keys] for row in data]
             logger.debug("Detected list[dict] with %d columns", len(keys))
             return
@@ -174,7 +209,7 @@ class TabularAdapter:
             first_value: Any = next(iter(data.values()))
             if _is_column_values(first_value):
                 keys = list(data)
-                self._columns = [str(key) for key in keys]
+                self._columns = _normalize_column_names(keys)
                 # Materialise each column positionally: list(Series) ignores
                 # a non-default index, and this also handles arrays/tuples.
                 column_values = [list(data[key]) for key in keys]

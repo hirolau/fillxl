@@ -609,6 +609,47 @@ def test_error_looking_strings_are_stored_as_text_not_errors(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Atomic output
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _engine_output(output_path: Path, engine: Engine) -> Path:
+    return output_path.with_name(f"{output_path.stem}_{engine}{output_path.suffix}")
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_failed_fill_leaves_the_previous_output_untouched(
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A failure must never replace an existing output."""
+    target = _engine_output(output_path, engine)
+    target.write_bytes(b"old")
+
+    with pytest.raises(KeyError):
+        _fill_output(TEMPLATE, output_path, engine, tables={"NoSuchTable": []})
+
+    assert target.read_bytes() == b"old"
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_failed_fill_leaves_no_staging_file(output_path: Path, engine: Engine) -> None:
+    """The staging file is removed when the fill fails."""
+    with pytest.raises(KeyError):
+        _fill_output(TEMPLATE, output_path, engine, tables={"NoSuchTable": []})
+
+    assert list(output_path.parent.glob(".*.fillxl*")) == []
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_successful_fill_leaves_no_staging_file(output_path: Path, engine: Engine) -> None:
+    """The staging file is renamed into place."""
+    _fill_output(TEMPLATE, output_path, engine, values={"single_cell": "x"})
+
+    assert list(output_path.parent.glob(".*.fillxl*")) == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Named cells
 # ═══════════════════════════════════════════════════════════════════════════════
 

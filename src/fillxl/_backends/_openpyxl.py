@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_OPENPYXL_SUFFIXES = (".xlsx", ".xlsm")
+
 _CHARTEX_WARNING = (
     "Sheet(s) {sheets} contain chartEx charts (waterfall, treemap, "
     "sunburst, histogram, boxwhisker, funnel, etc.) that openpyxl "
@@ -47,6 +49,7 @@ class OpenpyxlBackend:
     def __init__(self) -> None:
         self._workbook: openpyxl.Workbook | None = None
         self._unsupported_chart_sheets: list[str] = []
+        self._source_suffix: str | None = None
 
     def _require_workbook(self) -> openpyxl.Workbook:
         """Return the loaded workbook or raise.
@@ -72,11 +75,10 @@ class OpenpyxlBackend:
         logger.debug("Loading workbook from %s", path)
 
         ext = path.suffix.lower()
-        if ext != ".xlsx":
+        if ext not in _OPENPYXL_SUFFIXES:
             msg = (
-                f"File type '{ext}' is not supported by the openpyxl backend. "
-                f"Only .xlsx files are supported. "
-                f"Use engine='win32com' to fill other formats (.xlsm, .xlsb, .xls, etc.) instead."
+                f"File type '{ext}' is not supported by the openpyxl backend "
+                "(supported: .xlsx, .xlsm). Use engine='win32com' for .xlsb and .xls."
             )
             raise ValueError(msg)
 
@@ -89,7 +91,8 @@ class OpenpyxlBackend:
             )
             logger.warning(msg)
             warnings.warn(msg, stacklevel=2)
-        self._workbook = openpyxl.load_workbook(path)
+        self._source_suffix = ext
+        self._workbook = openpyxl.load_workbook(path, keep_vba=ext == ".xlsm")
         _fix_chart_axes(self._workbook)
 
     def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
@@ -219,13 +222,23 @@ class OpenpyxlBackend:
 
         """
         workbook = self._require_workbook()
-        if self._unsupported_chart_sheets:
-            msg = _CHARTEX_WARNING.format(
-                sheets=", ".join(repr(s) for s in self._unsupported_chart_sheets),
+        suffix = path.suffix.lower()
+        if suffix != self._source_suffix:
+            msg = (
+                f"The openpyxl backend cannot turn a '{self._source_suffix}' template "
+                f"into a '{suffix}' file. Save to a '{self._source_suffix}' path, or use "
+                "engine='win32com' to convert between formats."
             )
-            logger.warning(msg)
-            warnings.warn(msg, stacklevel=2)
+            raise ValueError(msg)
         _fix_chart_axes(workbook)
+        # openpyxl writes no cached formula results, so ask Excel to recalculate on open.
+        from openpyxl.workbook.properties import CalcProperties
+
+        calculation = workbook.calculation
+        if calculation is None:
+            calculation = CalcProperties()
+            workbook.calculation = calculation
+        calculation.fullCalcOnLoad = True
         logger.debug("Saving workbook to %s", path)
         workbook.save(path)
 

@@ -1,16 +1,17 @@
 """Chapter 15 — Custom Excel Formats (.xlsm, .xlsb, .xls, etc.).
 =========================================================
 
-fillxl supports standard ``.xlsx`` files with both backends, but other
-formats (macro-enabled ``.xlsm``, binary ``.xlsb``, legacy ``.xls``, etc.)
-require the win32com backend because openpyxl cannot handle them.
+fillxl supports ``.xlsx`` and macro-enabled ``.xlsm`` with the openpyxl
+backend.  Binary ``.xlsb`` and legacy ``.xls`` require win32com.
 
-* openpyxl raises :class:`ValueError` for any non-``.xlsx`` file.
+* openpyxl raises :class:`ValueError` for any other template format, and it
+  never converts between formats.
 * win32com (Windows + Excel) opens and fills ``.xlsm`` and ``.xlsb`` successfully.
 """
 
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -21,18 +22,17 @@ ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 15.1 openpyxl rejects non-.xlsx formats
+# 15.1 openpyxl rejects unsupported formats
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestOpenpyxlRejectsUnsupportedFormats:
-    """openpyxl fails fast with a clear error for any non-.xlsx file."""
+    """openpyxl fails fast with a clear error for unsupported files."""
 
     @pytest.mark.parametrize(
         ("template", "ext"),
         [
             pytest.param(ASSETS / "test_template_1_xlsb.xlsb", ".xlsb", id=".xlsb"),
-            pytest.param(ASSETS / "test_template_1_slsm.xlsm", ".xlsm", id=".xlsm"),
         ],
     )
     def test_openpyxl_raises_valueerror_for_unsupported_format(
@@ -74,6 +74,65 @@ class TestOpenpyxlRejectsUnsupportedFormats:
         )
         assert result == output.resolve()
         assert output.exists()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 15.2 openpyxl fills .xlsm and never converts formats
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestOpenpyxlXlsm:
+    """The openpyxl backend keeps a macro-enabled template macro-enabled."""
+
+    def test_openpyxl_fills_an_xlsm_template_and_keeps_its_vba(self, tmp_path: Path) -> None:
+        template = ASSETS / "test_template_1_slsm.xlsm"
+        output = tmp_path / "filled.xlsm"
+
+        fill(
+            template=template,
+            output=output,
+            values={"single_cell": "works"},
+            engine="openpyxl",
+        )
+
+        with zipfile.ZipFile(output) as archive:
+            assert "xl/vbaProject.bin" in archive.namelist()
+            content_types = archive.read("[Content_Types].xml").decode()
+        assert "macroEnabled" in content_types
+
+    def test_openpyxl_refuses_to_save_an_xlsx_template_as_xlsm(self, tmp_path: Path) -> None:
+        output = tmp_path / "out.xlsm"
+        with pytest.raises(ValueError, match="cannot turn"):
+            fill(
+                template=ASSETS / "test_template_1.xlsx",
+                output=output,
+                values={"single_cell": "x"},
+                engine="openpyxl",
+            )
+        assert not output.exists()
+
+    def test_openpyxl_refuses_to_save_an_xlsm_template_as_xlsx(self, tmp_path: Path) -> None:
+        output = tmp_path / "out.xlsx"
+        with pytest.raises(ValueError, match="cannot turn"):
+            fill(
+                template=ASSETS / "test_template_1_slsm.xlsm",
+                output=output,
+                values={"single_cell": "x"},
+                engine="openpyxl",
+            )
+        assert not output.exists()
+
+    def test_openpyxl_output_asks_excel_to_recalculate_on_open(self, tmp_path: Path) -> None:
+        output = tmp_path / "out.xlsx"
+        fill(
+            template=ASSETS / "test_template_1.xlsx",
+            output=output,
+            values={"single_cell": "x"},
+            engine="openpyxl",
+        )
+
+        with zipfile.ZipFile(output) as archive:
+            assert b'fullCalcOnLoad="1"' in archive.read("xl/workbook.xml")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

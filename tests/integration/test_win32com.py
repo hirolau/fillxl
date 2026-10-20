@@ -502,6 +502,46 @@ class TestWin32ComSecurityAndThreading:
 
 
 @pytest.mark.win32com
+def test_filling_does_not_touch_the_clipboard(output_path: Path) -> None:
+    """Styles are filled, never copied, so the user's clipboard survives."""
+    import time
+
+    import win32clipboard  # ty: ignore[unresolved-import]
+    from conftest import TEMPLATE
+
+    def open_clipboard() -> None:
+        # Another process may hold the clipboard for a moment.
+        for _ in range(20):
+            try:
+                win32clipboard.OpenClipboard()
+                return
+            except Exception:
+                time.sleep(0.1)
+        pytest.skip("the clipboard is not accessible in this session")
+
+    open_clipboard()
+    try:
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardText("fillxl-sentinel", win32clipboard.CF_UNICODETEXT)
+    finally:
+        win32clipboard.CloseClipboard()
+
+    fill(
+        template=TEMPLATE,
+        output=output_path,
+        engine="win32com",
+        tables={"TableTest": _table_rows(5)},
+    )
+
+    open_clipboard()
+    try:
+        value = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+    finally:
+        win32clipboard.CloseClipboard()
+    assert value == "fillxl-sentinel"
+
+
+@pytest.mark.win32com
 def test_a_filled_time_works_in_excel_arithmetic(tmp_path: Path) -> None:
     """A time is a fraction of a day, so ``=A1*24`` returns the hour."""
     from openpyxl.workbook.defined_name import DefinedName

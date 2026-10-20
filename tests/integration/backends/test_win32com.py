@@ -113,6 +113,63 @@ class TestWin32ComPlatformGuard:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Overflow guard (CI-safe, fake COM)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class _FakeRange:
+    def __init__(self, value: object, *, fail: bool = False) -> None:
+        self._value, self._fail = value, fail
+
+    @property
+    def Value(self) -> object:  # noqa: N802
+        if self._fail:
+            raise OSError("COM read failed")
+        return self._value
+
+
+class _FakeSheet:
+    def __init__(self, rng: _FakeRange) -> None:
+        self._rng = rng
+
+    def Range(self, address: str) -> _FakeRange:  # noqa: N802
+        return self._rng
+
+
+def _guard(cells: object, *, fail: bool = False) -> None:
+    from fillxl._backends._win32com import _check_overflow_com
+
+    _check_overflow_com(
+        _FakeSheet(_FakeRange(cells, fail=fail)),
+        table_name="T",
+        start_col=2,
+        start_col_letter="B",
+        end_col_letter="C",
+        first_row=5,
+        last_row=6,
+        num_data_rows=4,
+    )
+
+
+def test_overflow_guard_refuses_to_grow_when_cells_cannot_be_read() -> None:
+    """An unreadable range must fail closed, not silently overwrite."""
+    with pytest.raises(RuntimeError, match="could not be read"):
+        _guard(None, fail=True)
+
+
+def test_overflow_guard_reports_the_first_blocking_cell() -> None:
+    """The error names the cell whose content blocks the resize."""
+    with pytest.raises(ValueError, match="C6"):
+        _guard(((None, None), (None, "x")))
+
+
+def test_overflow_guard_accepts_an_empty_range() -> None:
+    """``None`` and a grid of ``None`` cells both mean "empty"."""
+    _guard(None)
+    _guard(((None, None), (None, None)))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Excel-backed behaviours (skipped without Excel)
 # ═══════════════════════════════════════════════════════════════════════════════
 

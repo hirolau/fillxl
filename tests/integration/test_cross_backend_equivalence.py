@@ -25,6 +25,7 @@ from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
 from fillxl import Engine, FillXLConfig, fill
+from tests.conftest import TEMPLATE
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -356,6 +357,161 @@ def test_a_column_missing_from_the_data_does_not_leak_template_values(
         None,
         None,
     ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Styles and conditional formatting
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _cf_ranges(path: Path, sheet: str) -> set[str]:
+    wb = openpyxl.load_workbook(path)
+    try:
+        return {str(cf.sqref) for cf in wb[sheet].conditional_formatting}
+    finally:
+        wb.close()
+
+
+def _cf_rule_count(path: Path, sheet: str) -> int:
+    wb = openpyxl.load_workbook(path)
+    try:
+        return sum(len(list(cf.rules)) for cf in wb[sheet].conditional_formatting)
+    finally:
+        wb.close()
+
+
+def test_both_engines_extend_conditional_formatting_to_the_same_ranges(
+    output_path: Path,
+) -> None:
+    """The COM path uses the same range rule as the openpyxl path."""
+    rows = [
+        {"Col1": f"row{i}", "Col2": i, "ColNotFilled": "n", "TestFormattedPct": 0.1}
+        for i in range(5)
+    ]
+    opened = _fill_output(
+        TEMPLATE,
+        output_path.with_name("cf_openpyxl.xlsx"),
+        "openpyxl",
+        tables={"TableTest": rows},
+    )
+    closed = _fill_output(
+        TEMPLATE,
+        output_path.with_name("cf_win32com.xlsx"),
+        "win32com",
+        tables={"TableTest": rows},
+    )
+
+    assert _cf_ranges(closed, "TestTable") == _cf_ranges(opened, "TestTable")
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_conditional_formatting_rule_count_is_unchanged_after_fill(
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Extending a range must not fragment or duplicate rules."""
+    rows = [
+        {"Col1": f"row{i}", "Col2": i, "ColNotFilled": "n", "TestFormattedPct": 0.1}
+        for i in range(5)
+    ]
+    output = _fill_output(TEMPLATE, output_path, engine, tables={"TableTest": rows})
+
+    assert _cf_rule_count(output, "TestTable") == _cf_rule_count(TEMPLATE, "TestTable")
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_new_rows_get_the_first_row_number_format(
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """New rows copy the first data row's number formats."""
+    rows = [
+        {"Col1": f"row{i}", "Col2": i, "ColNotFilled": "n", "TestFormattedPct": 0.1}
+        for i in range(6)
+    ]
+    output = _fill_output(
+        TEMPLATE,
+        output_path,
+        engine,
+        tables={"TableTest": rows},
+        config=FillXLConfig(copy_table_styles=True),
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        ws = wb["TestTable"]
+        assert ws["E7"].number_format == ws["E2"].number_format
+        assert ws["E2"].number_format != "General"
+    finally:
+        wb.close()
+
+
+@pytest.mark.parametrize(
+    "engine",
+    [
+        pytest.param("openpyxl", id="openpyxl"),
+        pytest.param(
+            "win32com",
+            id="win32com",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="Excel applies the table column format to new rows itself",
+            ),
+        ),
+    ],
+)
+def test_copy_table_styles_false_does_not_copy_number_formats(
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Without style copying the new rows keep their own (default) format."""
+    rows = [
+        {"Col1": f"row{i}", "Col2": i, "ColNotFilled": "n", "TestFormattedPct": 0.1}
+        for i in range(6)
+    ]
+    output = _fill_output(
+        TEMPLATE,
+        output_path,
+        engine,
+        tables={"TableTest": rows},
+        config=FillXLConfig(copy_table_styles=False),
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        assert wb["TestTable"]["E7"].number_format == "General"
+    finally:
+        wb.close()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_mixed_type_column_keeps_number_formats_per_cell(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A date in the middle of a numeric column formats only its own cell."""
+    output = _fill_output(
+        equivalence_template,
+        output_path,
+        engine,
+        tables={
+            "Items": [
+                {"Name": "a", "Value": 1, "Notes": "n"},
+                {"Name": "b", "Value": dt.datetime(2025, 1, 1), "Notes": "n"},
+                {"Name": "c", "Value": 3, "Notes": "n"},
+            ]
+        },
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        ws = wb["Data"]
+        assert ws["B2"].number_format == "General"
+        assert ws["B4"].number_format == "General"
+        assert ws["B3"].number_format != "General"
+    finally:
+        wb.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -31,6 +31,7 @@ from fillxl._formulas import (
     warn_about_ignored_formula_data,
 )
 from fillxl._normalize import prepare_com_value
+from fillxl._utils import col_to_excel
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -43,7 +44,7 @@ _is_windows = sys.platform == "win32"
 
 # COM constants (fallback if early binding is unavailable)
 _XL_SHEET_HIDDEN = 0
-_XL_PASTE_FORMATS = -4122
+_XL_FILL_FORMATS = 3
 
 _MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
 _RPC_E_CHANGED_MODE = -2147417850
@@ -268,8 +269,6 @@ class Win32ComBackend:
         start_col = table_range.Column
         num_cols = table_range.Columns.Count
 
-        from fillxl._utils import col_to_excel
-
         start_col_letter = col_to_excel(start_col)
         end_col_letter = col_to_excel(start_col + num_cols - 1)
 
@@ -352,6 +351,15 @@ class Win32ComBackend:
                 worksheet.Range(
                     f"{start_col_letter}{new_last_row}:{end_col_letter}{new_last_row}",
                 ).ClearContents()
+            if config.extend_conditional_formatting:
+                _extend_conditional_formatting_com(
+                    self._app,
+                    worksheet,
+                    start_col=start_col,
+                    end_col=start_col + num_cols - 1,
+                    first_data_row=first_data_row,
+                    last_data_row=first_data_row,
+                )
             return TableChangeSpecs(
                 worksheet_title=worksheet_title,
                 header_row=table_start_row,
@@ -370,48 +378,16 @@ class Win32ComBackend:
         # instead of cell-by-cell (which is ~100x slower for large expansions).
         t_overflow = time.perf_counter()
         if num_data_rows > (old_last_row - first_data_row + 1):
-            # Start below the existing totals row (if any) and check through
-            # the last row the resized table will occupy.
-            overflow_start = old_last_row + 1 + totals_rows
-            new_table_end_row = new_end_row + totals_rows
-            overflow_range_str = (
-                f"{start_col_letter}{overflow_start}:{end_col_letter}{new_table_end_row}"
+            _check_overflow_com(
+                worksheet,
+                table_name=name,
+                start_col=start_col,
+                start_col_letter=start_col_letter,
+                end_col_letter=end_col_letter,
+                first_row=old_last_row + 1 + totals_rows,
+                last_row=new_end_row + totals_rows,
+                num_data_rows=num_data_rows,
             )
-            try:
-                overflow_values = worksheet.Range(overflow_range_str).Value
-                if overflow_values is not None:
-                    if isinstance(overflow_values, tuple):
-                        for row_idx, row_tuple in enumerate(overflow_values):
-                            for col_idx, val in enumerate(row_tuple):
-                                if val is not None:
-                                    check_row = overflow_start + row_idx
-                                    check_col = start_col + col_idx
-                                    cell_ref = f"{col_to_excel(check_col)}{check_row}"
-                                    msg = (
-                                        f"Table '{name}' cannot expand to "
-                                        f"{num_data_rows} rows: cell {cell_ref} "
-                                        f"already contains data ({val!r}). "
-                                        "Move or remove the content below the "
-                                        "table first."
-                                    )
-                                    raise ValueError(msg)
-                    elif overflow_values is not None:
-                        # Single cell overflow range
-                        check_row = overflow_start
-                        check_col = start_col
-                        cell_ref = f"{col_to_excel(check_col)}{check_row}"
-                        msg = (
-                            f"Table '{name}' cannot expand to {num_data_rows} "
-                            f"rows: cell {cell_ref} already contains data "
-                            f"({overflow_values!r}). Move or remove the content "
-                            "below the table first."
-                        )
-                        raise ValueError(msg)
-            except ValueError:
-                raise
-            except Exception:
-                # COM errors during overflow check → fall through to resize
-                pass
         logger.info("[win32com] overflow check took %.3fs", time.perf_counter() - t_overflow)
 
         # Resize the table first — Excel auto-fills calculated column formulas
@@ -440,8 +416,16 @@ class Win32ComBackend:
                 worksheet.Range(clear_range_str).ClearContents()
         logger.info("[win32com] clear took %.3fs", time.perf_counter() - t_clear)
 
-        # ── Write data (calculated columns are never written) ─────────────
+        # ── Copy styles from first data row ───────────────────────────────
+        # Formats are applied before the values so Excel can still apply its
+        # own date format to a datetime cell written afterwards.
         new_data_body = list_obj.DataBodyRange
+        t_style = time.perf_counter()
+        if config.copy_table_styles and num_data_rows > 1:
+            new_data_body.Rows(1).AutoFill(Destination=new_data_body, Type=_XL_FILL_FORMATS)
+        logger.info("[win32com] copy styles took %.3fs", time.perf_counter() - t_style)
+
+        # ── Write data (calculated columns are never written) ─────────────
         data_col_index = {col: idx for idx, col in enumerate(data_columns)}
         writable = [idx for idx, col in enumerate(table_columns) if col not in formulas]
 
@@ -461,28 +445,14 @@ class Win32ComBackend:
 
         _ensure_formula_columns(list_obj, table_columns, formulas, name)
 
-        # ── Copy styles from first data row ───────────────────────────────
-        t_style = time.perf_counter()
-        if config.copy_table_styles and num_data_rows > 1:
-            # Copy only the table data body columns (not the full worksheet
-            # row) to avoid a column shift when pasting.
-            first_data_row_range = new_data_body.Rows(1)
-            first_data_row_range.Copy()
-            dest_range = worksheet.Range(
-                f"{start_col_letter}{first_data_row + 1}:{end_col_letter}{new_end_row}",
-            )
-            dest_range.PasteSpecial(Paste=_XL_PASTE_FORMATS)
-            # Clear the clipboard (copy mode)
-            self._app.CutCopyMode = False
-        logger.info("[win32com] copy styles took %.3fs", time.perf_counter() - t_style)
-
         # ── Extend conditional formatting ─────────────────────────────────
         t_cf = time.perf_counter()
         if config.extend_conditional_formatting:
             _extend_conditional_formatting_com(
-                worksheet=worksheet,
-                start_col_letter=start_col_letter,
-                end_col_letter=end_col_letter,
+                self._app,
+                worksheet,
+                start_col=start_col,
+                end_col=start_col + num_cols - 1,
                 first_data_row=first_data_row,
                 last_data_row=new_end_row,
             )
@@ -740,6 +710,42 @@ def _prepare_formula_for_com(formula: str) -> str:
     )
 
 
+def _check_overflow_com(
+    worksheet: Any,  # noqa: ANN401
+    *,
+    table_name: str,
+    start_col: int,
+    start_col_letter: str,
+    end_col_letter: str,
+    first_row: int,
+    last_row: int,
+    num_data_rows: int,
+) -> None:
+    """Refuse to grow a table over non-empty cells, or when the cells cannot be read."""
+    range_str = f"{start_col_letter}{first_row}:{end_col_letter}{last_row}"
+    try:
+        values = worksheet.Range(range_str).Value
+    except Exception as exc:
+        msg = (
+            f"Table '{table_name}' cannot grow: the cells below it ({range_str}) "
+            "could not be read, so fillxl cannot confirm that they are empty."
+        )
+        raise RuntimeError(msg) from exc
+    if values is None:
+        return
+    grid = values if isinstance(values, tuple) else ((values,),)
+    for row_offset, row_values in enumerate(grid):
+        for col_offset, cell in enumerate(row_values):
+            if cell is not None:
+                cell_ref = f"{col_to_excel(start_col + col_offset)}{first_row + row_offset}"
+                msg = (
+                    f"Table '{table_name}' cannot expand to {num_data_rows} rows: "
+                    f"cell {cell_ref} already contains data ({cell!r}). "
+                    "Move or remove the content below the table first."
+                )
+                raise ValueError(msg)
+
+
 def _com_name_destinations(refers_to: str) -> list[tuple[str, str]]:
     """Parse ``Name.RefersTo`` exactly the way the openpyxl backend parses names."""
     from openpyxl.workbook.defined_name import DefinedName
@@ -898,41 +904,47 @@ def _ensure_formula_columns(
 
 
 def _extend_conditional_formatting_com(
+    app: Any,  # noqa: ANN401
     worksheet: Any,  # noqa: ANN401
-    start_col_letter: str,
-    end_col_letter: str,
+    *,
+    start_col: int,
+    end_col: int,
     first_data_row: int,
     last_data_row: int,
 ) -> None:
-    """Extend conditional formatting rules to cover all data rows.
+    """Resize CF ranges that start on the first data row to the table's last row."""
+    from fillxl._tables import _cf_range_tracks_table
 
-    Works by copying formatting from the first data row down (which carries
-    CF rules along when pasting formats).
-
-    Args:
-        worksheet: The COM Worksheet object.
-        start_col_letter: Starting column letter (e.g., ``'B'``).
-        end_col_letter: Ending column letter (e.g., ``'M'``).
-        first_data_row: Row number of the first data row.
-        last_data_row: Row number of the last data row.
-
-    """
-    try:
-        # Copy from the entire first data row (not just the first cell) so
-        # that each column's individual NumberFormat is preserved.
-        source_range = worksheet.Range(
-            f"{start_col_letter}{first_data_row}:{end_col_letter}{first_data_row}",
-        )
-        source_range.Copy()
-        dest_range = worksheet.Range(
-            f"{start_col_letter}{first_data_row}:{end_col_letter}{last_data_row}",
-        )
-        dest_range.PasteSpecial(Paste=_XL_PASTE_FORMATS)
-        # Clear clipboard — use the worksheet's own Application reference
-        with contextlib.suppress(Exception):
-            worksheet.Application.CutCopyMode = False
-    except Exception:
-        logger.exception("Failed to extend conditional formatting")
+    conditions = worksheet.Cells.FormatConditions
+    for index in range(1, conditions.Count + 1):
+        condition = conditions.Item(index)
+        applies_to = condition.AppliesTo
+        new_areas: list[Any] = []
+        changed = False
+        for area_index in range(1, applies_to.Areas.Count + 1):
+            area = applies_to.Areas(area_index)
+            bounds = CellRange(
+                min_col=area.Column,
+                min_row=area.Row,
+                max_col=area.Column + area.Columns.Count - 1,
+                max_row=area.Row + area.Rows.Count - 1,
+            )
+            if _cf_range_tracks_table(
+                bounds,
+                table_start_column=start_col,
+                table_end_column=end_col,
+                first_data_row=first_data_row,
+                table_last_row=last_data_row,
+            ):
+                area = area.Resize(last_data_row - first_data_row + 1, area.Columns.Count)
+                changed = True
+            new_areas.append(area)
+        if not changed:
+            continue
+        new_range = new_areas[0]
+        for area in new_areas[1:]:
+            new_range = app.Union(new_range, area)
+        condition.ModifyAppliesToRange(new_range)
 
 
 def _update_series_formula(formula: str, spec: TableChangeSpecs) -> str | None:

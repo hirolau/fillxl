@@ -212,7 +212,7 @@ def populate_table(
                 # read-back) that a datetime column holds dates rather than
                 # serial numbers.
                 if copy_style_in_tables:
-                    cell_to_fill._style = first_row_style
+                    cell_to_fill._style = copy(first_row_style)
 
                 value = prepare_cell_value(row_values[data_col_idx])
                 cell_to_fill.value = value

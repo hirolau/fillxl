@@ -98,6 +98,11 @@ totals row is moved to remain directly below it, keeping its values, labels,
 functions and styling. The table reference includes the totals row while the
 auto-filter range stops at the last data row, matching what Excel writes.
 
+`copy_table_styles=False` leaves new rows unformatted on the openpyxl engine.
+Excel itself extends a table column's number format to new rows when the table
+grows through COM, so a `win32com` fill can still show the column format even
+with style copying disabled. This divergence is intentional.
+
 Tables **without a header row** (the table's "Header Row" option is off) are
 supported too. Excel names their columns `Column1`, `Column2`, …, so that is
 how the data is addressed:

@@ -12,6 +12,10 @@ Create polished templates with named cells and Excel Tables — then fill them f
 
 fillxl focuses on a small, reliable API with strong correctness: tables resize properly, formatting is preserved, and edge cases are handled carefully.
 
+### Quick example
+
+Pass your Excel template, then map Excel **Tables** and **named cells** to Python data:
+
 ```python
 from fillxl import fill
 import pandas as pd

@@ -19,7 +19,7 @@ from openpyxl.worksheet.table import (
     TableFormula,
 )
 
-from fillxl import FillXLConfig
+from fillxl import FillXLConfig, fill
 
 
 @pytest.mark.win32com
@@ -360,6 +360,87 @@ class TestWin32ComTableFill:
             backend.close()
 
 
+def _com_column_has_formula(path: Path, table: str, column: str) -> object:
+    """Open *path* in a separate Excel and return ``HasFormula`` of a table column."""
+    import win32com.client
+
+    app = win32com.client.DispatchEx("Excel.Application")
+    app.AutomationSecurity = 3
+    app.DisplayAlerts = False
+    try:
+        wb = app.Workbooks.Open(str(path), UpdateLinks=0, ReadOnly=True)
+        try:
+            for sheet in wb.Worksheets:
+                for list_obj in sheet.ListObjects:
+                    if list_obj.Name == table:
+                        return list_obj.ListColumns(column).DataBodyRange.HasFormula
+        finally:
+            wb.Close(SaveChanges=False)
+    finally:
+        app.Quit()
+    raise KeyError(table)
+
+
+def _table_rows(count: int) -> list[dict[str, object]]:
+    """Rows for the five-column ``TableTest`` table, without ``ColFormula``."""
+    return [
+        {
+            "Col1": f"row{i}",
+            "Col2": i,
+            "ColNotFilled": f"nf{i}",
+            "TestFormattedPct": 0.0,
+        }
+        for i in range(1, count + 1)
+    ]
+
+
+@pytest.mark.win32com
+class TestWin32ComCalculatedColumns:
+    """Calculated columns keep their formulas on every template format."""
+
+    @staticmethod
+    def _assets() -> Path:
+        return Path(__file__).resolve().parent.parent / "assets"
+
+    def test_xlsb_template_keeps_its_calculated_column(self, tmp_path: Path) -> None:
+        """Without readable definitions, a fully formula body still counts."""
+        output = tmp_path / "filled.xlsb"
+        fill(
+            template=self._assets() / "test_template_1_xlsb.xlsb",
+            output=output,
+            engine="win32com",
+            tables={"TableTest": _table_rows(3)},
+        )
+
+        assert _com_column_has_formula(output, "TableTest", "ColFormula") is True
+
+    def test_xlsb_drop_strategy_keeps_its_calculated_column(self, tmp_path: Path) -> None:
+        """The drop strategy must not turn the formula column into data."""
+        output = tmp_path / "filled_drop.xlsb"
+        fill(
+            template=self._assets() / "test_template_1_xlsb.xlsb",
+            output=output,
+            engine="win32com",
+            tables={"TableTest": _table_rows(3)},
+            config=FillXLConfig(column_validation_strategy="drop"),
+        )
+
+        assert _com_column_has_formula(output, "TableTest", "ColFormula") is True
+
+    def test_data_for_a_formula_column_is_never_written_as_none(self, tmp_path: Path) -> None:
+        """Every body cell of a calculated column stays a formula."""
+        output = tmp_path / "filled_formula.xlsx"
+        rows = [dict(row, ColFormula=None) for row in _table_rows(5)]
+        fill(
+            template=self._assets() / "test_template_1.xlsx",
+            output=output,
+            engine="win32com",
+            tables={"TableTest": rows},
+        )
+
+        assert _com_column_has_formula(output, "TableTest", "ColFormula") is True
+
+
 @pytest.mark.win32com
 class TestWin32ComFormulaFixes:
     """Regression tests for formula-related bugs in the win32com backend.
@@ -400,6 +481,8 @@ class TestWin32ComFormulaFixes:
             ws.cell(row=1, column=col_idx, value=header)
         for col_idx in range(1, 6):
             ws.cell(row=2, column=col_idx, value=0)
+        # The body must hold a formula for the column to count as calculated.
+        ws.cell(row=2, column=4, value=f"={formula_attr}")
 
         table = Table(
             displayName="TableTest",
@@ -578,13 +661,12 @@ class TestWin32ComFormulaFixes:
             backend.close()
 
 
-class TestReadCalculatedColumnFormulas:
-    """Unit tests for ``_read_calculated_column_formulas``.
+class TestReadTableFormulaDefinitions:
+    """Unit tests for ``_read_table_formula_definitions``.
 
-    These tests read workbooks with openpyxl (no Excel COM required).
-    They verify that the helper correctly distinguishes real formulas
-    from plain-number defaults, and that formula strings are returned
-    with the ``=`` prefix.
+    These tests read workbooks with openpyxl (no Excel COM required).  They
+    verify that the helper returns the raw definitions of every table, and
+    that formats it cannot read report ``None`` instead of guessing.
     """
 
     def _make_table_wb(
@@ -624,50 +706,48 @@ class TestReadCalculatedColumnFormulas:
 
     # ── Tests ────────────────────────────────────────────────────────────
 
-    def test_real_formula_detected(self, tmp_path: Path) -> None:
-        r"""A column with ``calculatedColumnFormula='Col1&\" \"&Col2'`` is
-        detected as a formula column.
-        """
-        from fillxl._backends._win32com import _read_calculated_column_formulas
+    def test_xlsx_definitions_are_read(self, tmp_path: Path) -> None:
+        r"""A column with ``calculatedColumnFormula='Col1&\" \"&Col2'`` is kept."""
+        from fillxl._backends._win32com import _read_table_formula_definitions
 
         p = tmp_path / "real_formula.xlsx"
         self._make_table_wb(p, {"Col1": None, "ColFormula": 'Col1&" "&Col2'})
 
-        cols, formulas = _read_calculated_column_formulas(p, "TestTable")
-        assert "ColFormula" in cols
-        assert formulas.get("ColFormula") == '=Col1&" "&Col2'
+        assert _read_table_formula_definitions(p) == {
+            "TestTable": {"ColFormula": 'Col1&" "&Col2'},
+        }
 
-    def test_plain_number_skipped(self, tmp_path: Path) -> None:
-        """A column with ``calculatedColumnFormula='100'`` (a plain number
-        default) is NOT detected as a formula column.
-        """
-        from fillxl._backends._win32com import _read_calculated_column_formulas
+    def test_xlsb_paths_have_no_definitions(self, tmp_path: Path) -> None:
+        """``.xlsb`` hides definitions; callers must fall back to cell formulas."""
+        from fillxl._backends._win32com import _read_table_formula_definitions
 
-        p = tmp_path / "plain_number.xlsx"
-        self._make_table_wb(p, {"Col1": None, "StockPrice": "100"})
+        p = tmp_path / "book.xlsb"
+        p.write_bytes(b"not a workbook")
 
-        cols, _ = _read_calculated_column_formulas(p, "TestTable")
-        assert "StockPrice" not in cols
+        assert _read_table_formula_definitions(p) is None
 
-    def test_plain_bool_skipped(self, tmp_path: Path) -> None:
-        """A column with ``calculatedColumnFormula='TRUE'`` is skipped."""
-        from fillxl._backends._win32com import _read_calculated_column_formulas
+    def test_a_missing_file_has_no_definitions(self, tmp_path: Path) -> None:
+        """A missing path is reported as unreadable, not as "no formulas"."""
+        from fillxl._backends._win32com import _read_table_formula_definitions
 
-        p = tmp_path / "plain_bool.xlsx"
-        self._make_table_wb(p, {"Col1": None, "Flag": "TRUE"})
+        assert _read_table_formula_definitions(tmp_path / "missing.xlsx") is None
 
-        cols, _ = _read_calculated_column_formulas(p, "TestTable")
-        assert "Flag" not in cols
+    def test_a_corrupt_xlsx_returns_none_with_a_warning(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A corrupt workbook is unreadable and says so."""
+        import logging
 
-    def test_plain_float_skipped(self, tmp_path: Path) -> None:
-        """A column with ``calculatedColumnFormula='12.5'`` is skipped."""
-        from fillxl._backends._win32com import _read_calculated_column_formulas
+        from fillxl._backends._win32com import _read_table_formula_definitions
 
-        p = tmp_path / "plain_float.xlsx"
-        self._make_table_wb(p, {"Col1": None, "Price": "12.5"})
+        p = tmp_path / "corrupt.xlsx"
+        p.write_bytes(b"not a zip file")
 
-        cols, _ = _read_calculated_column_formulas(p, "TestTable")
-        assert "Price" not in cols
+        with caplog.at_level(logging.WARNING, logger="fillxl._backends._win32com"):
+            assert _read_table_formula_definitions(p) is None
+        assert "Could not read table definitions" in caplog.text
 
     def test_all_tables_are_read_with_one_workbook_load(
         self,
@@ -710,46 +790,10 @@ class TestReadCalculatedColumnFormulas:
             "load_workbook",
             wraps=openpyxl.load_workbook,
         ) as load_workbook:
-            assert backend._read_calculated_column_formulas("TableA") == (
-                ["Col1"],
-                {"Col1": "=Col1+1"},
-            )
-            assert backend._read_calculated_column_formulas("TableB") == (
-                ["Col1"],
-                {"Col1": '=Col1&"!"'},
-            )
+            assert backend._table_formula_definitions("TableA") == {"Col1": "Col1+1"}
+            assert backend._table_formula_definitions("TableB") == {"Col1": 'Col1&"!"'}
 
         assert load_workbook.call_count == 1
-
-    def test_formula_with_newlines_preserved_on_read(self, tmp_path: Path) -> None:
-        r"""A formula with embedded newlines is returned with those newlines.
-
-        Formatting is preserved end-to-end: the reader keeps indentation,
-        and ``_prepare_formula_for_com`` only normalizes CR/CRLF and strips
-        ``_xlfn.`` / ``_xlpm.`` prefixes.
-        """
-        from fillxl._backends._win32com import _read_calculated_column_formulas
-
-        p = tmp_path / "newline.xlsx"
-        self._make_table_wb(p, {"Col1": None, "ColFormula": 'Col1&\n" "&Col2'})
-
-        cols, formulas = _read_calculated_column_formulas(p, "TestTable")
-        assert "ColFormula" in cols
-        assert "\n" in formulas.get("ColFormula", "")
-
-    def test_xlfn_prefix_preserved_in_raw_formula(self, tmp_path: Path) -> None:
-        """A formula with ``_xlfn.`` prefix is returned as-is (the
-        prefix stripping is done during formula *writing* in
-        ``fill_table``).
-        """
-        from fillxl._backends._win32com import _read_calculated_column_formulas
-
-        p = tmp_path / "xlfn.xlsx"
-        self._make_table_wb(p, {"Col1": None, "ColFormula": "_xlfn.LET(x,1,x+1)"})
-
-        cols, formulas = _read_calculated_column_formulas(p, "TestTable")
-        assert "ColFormula" in cols
-        assert formulas.get("ColFormula") == "=_xlfn.LET(x,1,x+1)"
 
     def test_prepare_formula_for_com_preserves_newlines_and_indent(
         self,

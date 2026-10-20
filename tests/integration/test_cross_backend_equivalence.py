@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import logging
 from decimal import Decimal
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -21,7 +22,7 @@ import openpyxl
 import pandas as pd
 import pytest
 from openpyxl.workbook.defined_name import DefinedName
-from openpyxl.worksheet.table import Table, TableColumn
+from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
 from fillxl import Engine, FillXLConfig, fill
 
@@ -118,6 +119,20 @@ def _win32com_available() -> bool:
     return True
 
 
+def _fill_output(
+    template: Path,
+    output_path: Path,
+    engine: Engine,
+    **kwargs: Any,  # noqa: ANN401
+) -> Path:
+    """Fill *template* with *engine*; skip when Excel is unavailable."""
+    if engine == "win32com" and not _win32com_available():
+        pytest.skip("win32com backend requires Windows and Excel")
+    output = output_path.with_name(f"{output_path.stem}_{engine}{output_path.suffix}")
+    fill(template=template, output=output, engine=engine, **kwargs)
+    return output
+
+
 def _fill_and_read(
     template: Path,
     output_path: Path,
@@ -128,17 +143,13 @@ def _fill_and_read(
     config: FillXLConfig | None = None,
 ) -> FilledWorkbook:
     """Fill *template* with *engine* and return the openpyxl read-back."""
-    if engine == "win32com" and not _win32com_available():
-        pytest.skip("win32com backend requires Windows and Excel")
-
-    output = output_path.with_name(f"{output_path.stem}_{engine}{output_path.suffix}")
     try:
-        fill(
-            template=template,
-            output=output,
+        output = _fill_output(
+            template,
+            output_path,
+            engine,
             values=values,
             tables=tables,
-            engine=engine,
             config=config,
         )
     except Exception as exc:
@@ -435,6 +446,169 @@ def test_error_looking_strings_are_stored_as_text_not_errors(
     assert filled.worksheet["E1"].data_type == "s"
     assert filled.first_row[1] == "#N/A"
     assert filled.worksheet["B2"].data_type == "s"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Calculated columns
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _build_priced_template(path: Path, body_value: object) -> None:
+    """A one-data-row table whose Price column has the definition ``100``."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Data"
+    ws.append(["Name", "Price"])
+    ws.append(["old", body_value])
+    ws.add_table(
+        Table(
+            displayName="Priced",
+            ref="A1:B2",
+            tableColumns=[
+                TableColumn(id=1, name="Name"),
+                TableColumn(
+                    id=2,
+                    name="Price",
+                    calculatedColumnFormula=TableFormula(attr_text="100"),
+                ),
+            ],
+        ),
+    )
+    wb.save(path)
+    wb.close()
+
+
+@pytest.fixture(scope="module")
+def stale_definition_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A table whose calculated-column definition is stale (the body holds a value)."""
+    path = tmp_path_factory.mktemp("stale_definition") / "stale_definition.xlsx"
+    _build_priced_template(path, body_value=5)
+    return path
+
+
+@pytest.fixture(scope="module")
+def constant_formula_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A table whose ``=100`` calculated column holds the formula in the body."""
+    path = tmp_path_factory.mktemp("constant_formula") / "constant_formula.xlsx"
+    _build_priced_template(path, body_value="=100")
+    return path
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_calculated_column_survives_data_that_names_it(
+    calculated_column_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Data that names a formula column (even as None) must not erase the formula."""
+    rows = [
+        {
+            "Col1": "a",
+            "Col2": 1,
+            "ColNotFilled": "x",
+            "ColFormula": None,
+            "TestFormattedPct": 0.1,
+        },
+        {
+            "Col1": "b",
+            "Col2": 2,
+            "ColNotFilled": "y",
+            "ColFormula": None,
+            "TestFormattedPct": 0.2,
+        },
+    ]
+    output = _fill_output(
+        calculated_column_template, output_path, engine, tables={"TableTest": rows}
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        ws = wb["TestTable"]
+        for row in (2, 3):
+            cell = ws.cell(row=row, column=4)
+            assert cell.data_type == "f"
+            assert str(cell.value).startswith("=")
+    finally:
+        wb.close()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_real_data_for_a_calculated_column_is_ignored_with_a_warning(
+    calculated_column_template: Path,
+    output_path: Path,
+    engine: Engine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Real data for a formula column is dropped, and the user is told."""
+    rows = [
+        {
+            "Col1": "a",
+            "Col2": 1,
+            "ColNotFilled": "x",
+            "ColFormula": "oops",
+            "TestFormattedPct": 0.1,
+        },
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="fillxl._formulas"):
+        output = _fill_output(
+            calculated_column_template, output_path, engine, tables={"TableTest": rows}
+        )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        cell = wb["TestTable"].cell(row=2, column=4)
+        assert cell.data_type == "f"
+        assert str(cell.value).startswith("=")
+    finally:
+        wb.close()
+    assert "keep their formulas" in caplog.text
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_stale_definition_over_values_is_filled_as_data(
+    stale_definition_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A definition over constant values describes data, not a formula."""
+    output = _fill_output(
+        stale_definition_template,
+        output_path,
+        engine,
+        tables={"Priced": [{"Name": "new", "Price": 42.5}]},
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        assert wb["Data"]["B2"].value == 42.5
+    finally:
+        wb.close()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_constant_calculated_column_is_kept(
+    constant_formula_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """``=100`` is a valid calculated column and survives a data fill."""
+    output = _fill_output(
+        constant_formula_template,
+        output_path,
+        engine,
+        tables={"Priced": [{"Name": "a"}, {"Name": "b"}]},
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        ws = wb["Data"]
+        for row in (2, 3):
+            cell = ws.cell(row=row, column=2)
+            assert cell.data_type == "f"
+            assert cell.value == "=100"
+    finally:
+        wb.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

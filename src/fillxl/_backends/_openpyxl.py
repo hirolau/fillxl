@@ -254,11 +254,16 @@ def _validate_table_columns(
         ValueError: If the strategy requires exact match and columns don't align.
 
     """
+    from fillxl._formulas import openpyxl_formula_columns
+    from fillxl._tables import table_body_rows
     from fillxl._utils import find_worksheet_and_table
 
-    _, table = find_worksheet_and_table(workbook, table_name)
-    table_columns = [col.name for col in table.tableColumns]
-    formula_columns = [col.name for col in table.tableColumns if col.calculatedColumnFormula]
+    worksheet, table = find_worksheet_and_table(workbook, table_name)
+    first_body_row, last_body_row = table_body_rows(table)
+    table_columns = [str(col.name) for col in table.tableColumns]
+    formula_columns = list(
+        openpyxl_formula_columns(worksheet, table, first_body_row, last_body_row)
+    )
 
     validate_columns(
         table_columns=table_columns,

@@ -10,11 +10,9 @@ runners), so the same suite protects local runs and CI pipelines with Excel.
 
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
 import logging
 from decimal import Decimal
-from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -25,7 +23,8 @@ from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
 from fillxl import CellValueError, Engine, FillXLConfig, fill
-from tests.conftest import TEMPLATE
+from tests._assets import TEMPLATE
+from tests._engines import ENGINES, _fill_output, _win32com_available
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -57,8 +56,6 @@ VALUES = [
     pytest.param("#N/A", id="error_string"),
     pytest.param("", id="empty_string"),
 ]
-
-ENGINES = [pytest.param("openpyxl", id="openpyxl"), pytest.param("win32com", id="win32com")]
 
 
 @pytest.fixture(scope="module")
@@ -98,44 +95,6 @@ class FilledWorkbook:
         self.named_cell = worksheet["E1"].value
         self.first_row = [worksheet.cell(row=2, column=col).value for col in range(1, 4)]
         self.table = next(iter(worksheet.tables.values()))
-
-
-@cache
-def _win32com_available() -> bool:
-    """Whether this machine can actually start Excel via COM.
-
-    pywin32 can be installed on Windows CI runners that have no Excel, in
-    which case ``DispatchEx`` raises a COM error that says nothing about
-    Excel or win32com.  Checking up front turns those runs into skips
-    instead of failures.
-    """
-    try:
-        import pythoncom
-        import win32com.client
-
-        # A backend fill releases COM on its thread, so direct COM use must init it.
-        pythoncom.CoInitialize()
-        app = win32com.client.DispatchEx("Excel.Application")
-    except Exception:
-        return False
-
-    with contextlib.suppress(Exception):
-        app.Quit()
-    return True
-
-
-def _fill_output(
-    template: Path,
-    output_path: Path,
-    engine: Engine,
-    **kwargs: Any,  # noqa: ANN401
-) -> Path:
-    """Fill *template* with *engine*; skip when Excel is unavailable."""
-    if engine == "win32com" and not _win32com_available():
-        pytest.skip("win32com backend requires Windows and Excel")
-    output = output_path.with_name(f"{output_path.stem}_{engine}{output_path.suffix}")
-    fill(template=template, output=output, engine=engine, **kwargs)
-    return output
 
 
 def _fill_and_read(

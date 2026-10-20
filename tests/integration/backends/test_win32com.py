@@ -1,4 +1,4 @@
-"""Win32com backend unit tests — CI-safe guards (no Excel required).
+"""Win32com CI-safe guard tests (no Excel required).
 
 Tests the no-workbook guard, factory, and platform checks for the
 win32com backend.  These do not require Excel and can run in CI.

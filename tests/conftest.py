@@ -27,11 +27,7 @@ from openpyxl.worksheet.table import (
     TableFormula,
 )
 
-TEMPLATE = Path(__file__).parent / "assets" / "test_template_1.xlsx"
-CHARTS_TEMPLATE_2 = Path(__file__).parent / "assets" / "test_template_2_charts.xlsx"
-PIVOT_TEMPLATE = Path(__file__).parent / "assets" / "test_template_3_pivot.xlsx"
-CHARTS_TEMPLATE_4 = Path(__file__).parent / "assets" / "test_template_4_charts_edge_cases.xlsx"
-
+from tests._assets import CHARTS_TEMPLATE_2, PIVOT_TEMPLATE
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 

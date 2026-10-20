@@ -1,0 +1,3 @@
+from datetime import datetime
+
+def from_excel(value: float, epoch: object = ...) -> datetime: ...

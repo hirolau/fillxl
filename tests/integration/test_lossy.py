@@ -10,7 +10,7 @@ import openpyxl
 import pytest
 
 from fillxl import FillXLConfig, LossyTemplateError, fill
-from tests.conftest import TEMPLATE
+from tests._assets import TEMPLATE
 
 
 def _inject_part(path: Path, part: str, data: bytes) -> None:

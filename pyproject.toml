@@ -152,7 +152,7 @@ extra-paths = ["typings", "src", "tests"]
 #unused-ignore-comment = "ignore"
 
 [[tool.mypy.overrides]]
-module = ["xlwings.*", "duckdb", "polars", "win32com.*", "pythoncom", "pywintypes"]
+module = ["xlwings.*", "duckdb", "polars", "win32com.*", "win32clipboard", "pythoncom", "pywintypes"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -160,18 +160,13 @@ module = "tests.*"
 # Tests intentionally pass invalid engines, table payloads, and poke private attrs.
 disable_error_code = ["arg-type", "dict-item"]
 
-[[tool.mypy.overrides]]
-module = "tests.integration.test_win32com"
-# The conftest import works because pytest adds tests/ to sys.path at runtime.
-ignore_errors = true
-
 [tool.pyrefly]
 project-includes = ["src/fillxl", "tests"]
 project-excludes = ["**/__pycache__", "**/.nox", "**/.venv", "**/.git", "**/typings"]
 preset = "strict"
-search-path = ["typings", "src", "tests"]
+search-path = [".", "typings", "src", "tests"]
 # Prefer local typings/ for openpyxl; still use site-packages for other deps.
-ignore-missing-imports = ["xlwings.*", "win32com.*", "pythoncom", "pywintypes", "duckdb", "polars", "tests.conftest"]
+ignore-missing-imports = ["xlwings.*", "win32com.*", "pythoncom", "pywintypes", "duckdb", "polars"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

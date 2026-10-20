@@ -311,16 +311,12 @@ _WIN32COM_DEFS: list[tuple[str, str, str, Engine, dict[str, Any]]] = [
 def _compare_cells(
     ws_actual: openpyxl.worksheet.worksheet.Worksheet,
     ws_expected: openpyxl.worksheet.worksheet.Worksheet,
-    *,
-    tolerance_dates: bool = False,
 ) -> list[str]:
     """Compare cells in the used range of two worksheets.
 
     Args:
         ws_actual: Worksheet from the freshly filled output.
         ws_expected: Worksheet from the golden copy.
-        tolerance_dates: If True, allow ±1 day shift for datetime values
-            (needed for win32com golden copies due to COM timezone shenanigans).
 
     Returns:
         A list of difference messages (empty if identical).
@@ -411,17 +407,6 @@ def _compare_cells(
             nf_exp = c_exp.number_format
             if nf_act != nf_exp:
                 diffs.append(f"[{sheet_name}] {ref}: number_format {nf_act!r} != {nf_exp!r}")
-
-            # Date tolerance (win32com golden copies)
-            if tolerance_dates and hasattr(v_act, "year") and hasattr(v_exp, "year"):
-                # Both are datetime-like — allow ±1 day shift
-                if v_act.year == v_exp.year and v_act.month == v_exp.month:  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
-                    day_diff = abs(v_act.day - v_exp.day)  # type: ignore[union-attr]  # ty:ignore[unresolved-attribute]
-                    if day_diff <= 1:
-                        continue  # within tolerance
-                # Check full date ±1 day
-                if abs(v_act - v_exp) <= dt_module.timedelta(days=1):  # type: ignore[operator]  # ty:ignore[unsupported-operator]
-                    continue
 
             # Bool tolerance (COM may return 1/0)
             if isinstance(v_act, bool) and isinstance(v_exp, bool):
@@ -647,12 +632,7 @@ def _compare_package_parts(actual_path: Path, expected_path: Path) -> list[str]:
     return diffs
 
 
-def _assert_workbooks_match(
-    actual_path: Path,
-    expected_path: Path,
-    *,
-    tolerance_dates: bool = False,
-) -> None:
+def _assert_workbooks_match(actual_path: Path, expected_path: Path) -> None:
     """Assert that two workbooks are identical in structure and content."""
     wb_actual = openpyxl.load_workbook(actual_path)
     wb_expected = openpyxl.load_workbook(expected_path)
@@ -670,7 +650,7 @@ def _assert_workbooks_match(
         for sheet_name in sheet_names:
             ws_act = wb_actual[sheet_name]
             ws_exp = wb_expected[sheet_name]
-            all_diffs.extend(_compare_cells(ws_act, ws_exp, tolerance_dates=tolerance_dates))
+            all_diffs.extend(_compare_cells(ws_act, ws_exp))
     finally:
         wb_actual.close()
         wb_expected.close()
@@ -729,11 +709,7 @@ class TestGoldenCopyRegression:
         fill_kwargs: dict[str, Any],
         tmp_path: Path,
     ) -> None:
-        """A template filled via the win32com backend matches its golden copy.
-
-        Date tolerance is enabled because COM converts naive datetimes
-        from local time to UTC, which can shift dates by up to ±1 day.
-        """
+        """A template filled via the win32com backend matches its golden copy."""
         golden = GOLDEN / engine / golden_file
         if not golden.exists():
             pytest.skip(f"Golden copy not found: {golden}")
@@ -745,4 +721,4 @@ class TestGoldenCopyRegression:
             engine=engine,
             **fill_kwargs,
         )
-        _assert_workbooks_match(output, golden, tolerance_dates=True)
+        _assert_workbooks_match(output, golden)

@@ -28,9 +28,8 @@ class TestWin32ComLifecycle:
 
     def test_win32com_backend_loads_workbook_into_excel(self, output_path: Path) -> None:
         """Loading a workbook should open it in Excel."""
-        from conftest import TEMPLATE
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
 
         backend = Win32ComBackend()
         try:
@@ -41,9 +40,8 @@ class TestWin32ComLifecycle:
 
     def test_win32com_backend_saves_workbook_to_output_file(self, output_path: Path) -> None:
         """Saving a workbook should create the output file."""
-        from conftest import TEMPLATE
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
 
         backend = Win32ComBackend()
         try:
@@ -57,9 +55,8 @@ class TestWin32ComLifecycle:
 
     def test_win32com_backend_close_releases_excel_process(self) -> None:
         """Closing the backend should release the Excel process."""
-        from conftest import TEMPLATE
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
 
         backend = Win32ComBackend()
         backend.load(TEMPLATE)
@@ -74,9 +71,8 @@ class TestWin32ComNamedCells:
 
     def test_named_cells_are_filled_via_excel_com(self, output_path: Path) -> None:
         """Fill a named cell and verify via openpyxl read-back."""
-        from conftest import TEMPLATE
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
 
         backend = Win32ComBackend()
         try:
@@ -95,9 +91,8 @@ class TestWin32ComNamedCells:
 
     def test_keyerror_raised_for_nonexistent_named_cell(self) -> None:
         """Filling a nonexistent named cell should raise KeyError."""
-        from conftest import TEMPLATE
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
 
         backend = Win32ComBackend()
         try:
@@ -111,9 +106,8 @@ class TestWin32ComNamedCells:
         """Filling multiple named cells should update all of them."""
         from datetime import datetime
 
-        from conftest import _build_multi_named_cells_workbook
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests.conftest import _build_multi_named_cells_workbook
 
         template = output_path.parent / "multi_cells_com.xlsx"
         _build_multi_named_cells_workbook(template)
@@ -135,7 +129,7 @@ class TestWin32ComNamedCells:
                 if hasattr(val, "year"):
                     assert val.year == 2025
                     assert val.month == 6
-                    assert abs(val.day - 15) <= 1
+                    assert val.day == 15
                 else:
                     assert val == datetime(2025, 6, 15)
                 assert ws["C1"].value is True
@@ -152,9 +146,8 @@ class TestWin32ComSheetOps:
 
     def test_underscore_sheets_hidden_via_excel_com(self, output_path: Path) -> None:
         """Hide sheets starting with '_'."""
-        from conftest import _build_hidden_sheets_workbook
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests.conftest import _build_hidden_sheets_workbook
 
         template = output_path.parent / "hidden_com.xlsx"
         _build_hidden_sheets_workbook(template)
@@ -176,9 +169,8 @@ class TestWin32ComSheetOps:
 
     def test_sheets_deleted_via_excel_com(self, output_path: Path) -> None:
         """Delete specified sheets."""
-        from conftest import _build_delete_sheets_workbook
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests.conftest import _build_delete_sheets_workbook
 
         template = output_path.parent / "delete_com.xlsx"
         _build_delete_sheets_workbook(template)
@@ -200,9 +192,8 @@ class TestWin32ComSheetOps:
 
     def test_active_sheet_set_via_excel_com(self, output_path: Path) -> None:
         """Set the active worksheet."""
-        from conftest import _build_hidden_sheets_workbook
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests.conftest import _build_hidden_sheets_workbook
 
         template = output_path.parent / "active_com.xlsx"
         _build_hidden_sheets_workbook(template)
@@ -241,9 +232,8 @@ class TestWin32ComTableFill:
 
     def test_tables_grow_when_data_is_larger_than_excel_table(self, output_path: Path) -> None:
         """Table should grow when data has more rows than the original."""
-        from conftest import TEMPLATE
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
 
         backend = Win32ComBackend()
         try:
@@ -273,9 +263,8 @@ class TestWin32ComTableFill:
         output_path: Path,
     ) -> None:
         """Table should shrink when data has fewer rows than the original."""
-        from conftest import TEMPLATE
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
 
         backend = Win32ComBackend()
         try:
@@ -301,9 +290,8 @@ class TestWin32ComTableFill:
 
     def test_table_styles_copied_to_new_rows_when_enabled(self, output_path: Path) -> None:
         """Table fill should copy styles to new rows when enabled."""
-        from conftest import TEMPLATE
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
 
         backend = Win32ComBackend()
         try:
@@ -327,9 +315,8 @@ class TestWin32ComTableFill:
 
     def test_calculated_column_formulas_propagate_to_new_rows(self, output_path: Path) -> None:
         """Calculated column formulas should propagate to new rows."""
-        from conftest import _build_calculated_column_workbook
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests.conftest import _build_calculated_column_workbook
 
         template = output_path.parent / "calc_com.xlsx"
         _build_calculated_column_workbook(template)
@@ -432,7 +419,7 @@ class TestWin32ComNamedCellParity:
 
     def test_a_missing_name_still_raises_keyerror(self, output_path: Path) -> None:
         """``KeyError`` means "no such name", nothing else."""
-        from conftest import TEMPLATE
+        from tests._assets import TEMPLATE
 
         with pytest.raises(KeyError, match="does_not_exist"):
             fill(
@@ -449,9 +436,8 @@ class TestWin32ComSecurityAndThreading:
 
     def test_excel_starts_with_macros_events_and_link_updates_disabled(self) -> None:
         """The security settings are applied before any workbook opens."""
-        from conftest import TEMPLATE
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
 
         backend = Win32ComBackend()
         try:
@@ -466,7 +452,7 @@ class TestWin32ComSecurityAndThreading:
         """fill() initialises COM on the thread that uses it."""
         from concurrent.futures import ThreadPoolExecutor
 
-        from conftest import TEMPLATE
+        from tests._assets import TEMPLATE
 
         with ThreadPoolExecutor(max_workers=1) as pool:
             result = pool.submit(
@@ -481,7 +467,7 @@ class TestWin32ComSecurityAndThreading:
 
     def test_two_sequential_fills_on_the_same_worker_thread(self, tmp_path: Path) -> None:
         """CoInitialize/CoUninitialize stay balanced across fills."""
-        from conftest import TEMPLATE
+        from tests._assets import TEMPLATE
 
         def run(number: int) -> Path:
             output = tmp_path / f"threaded_{number}.xlsx"
@@ -507,7 +493,8 @@ def test_filling_does_not_touch_the_clipboard(output_path: Path) -> None:
     import time
 
     import win32clipboard  # ty: ignore[unresolved-import]
-    from conftest import TEMPLATE
+
+    from tests._assets import TEMPLATE
 
     def open_clipboard() -> None:
         # Another process may hold the clipboard for a moment.
@@ -805,9 +792,8 @@ class TestWin32ComFormulaFixes:
         """A naive datetime written via win32com must read back with the
         same year/month/day (no UTC+1 timezone shift).
         """
-        from conftest import _build_cross_backend_dtype_template
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests.conftest import _build_cross_backend_dtype_template
 
         template = output_path.parent / "dtype_com.xlsx"
         _build_cross_backend_dtype_template(template)
@@ -1077,9 +1063,8 @@ class TestWin32ComFormatPreservation:
         """``copy_table_styles`` must copy from the data body columns only,
         not the full worksheet row, to avoid a rightward column shift.
         """
-        from conftest import TEMPLATE
-
         from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
 
         backend = Win32ComBackend()
         try:

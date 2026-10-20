@@ -14,7 +14,7 @@ import openpyxl
 import pytest
 
 from fillxl import fill
-from tests.conftest import CHARTS_TEMPLATE_2
+from tests._assets import CHARTS_TEMPLATE_2
 
 if TYPE_CHECKING:
     from pathlib import Path

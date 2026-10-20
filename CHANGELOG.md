@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-10-20
+
+### Changed (breaking)
+
+- `datetime.time` values are written as a fraction of a day (Excel's own time
+  representation) instead of a datetime on 2000-01-01. Arithmetic such as
+  `=A2*24` now works. Format the template cell (e.g. `hh:mm:ss`) to control
+  the display.
+- The openpyxl engine saves `.xlsx` templates only as `.xlsx` and `.xlsm`
+  templates only as `.xlsm`.
+
+### Fixed
+
+- Calculated table columns are never overwritten by data, on either engine;
+  both engines detect them with the same rule. Constant formulas such as
+  `=100` are kept.
+- win32com no longer erases calculated columns of `.xlsb`/`.xls` templates.
+- `list[dict]` keys that first appear in a later row are no longer dropped.
+- Named cells behave identically on both engines (multi-cell ranges raise
+  `ValueError`; `KeyError` only for missing names).
+- The win32com overflow guard refuses to resize when it cannot read the cells
+  below a table.
+- Mixed-type table columns no longer share one style object (openpyxl).
+- `totalsRowShown` without `totalsRowCount` is no longer treated as a totals
+  row.
+- Chart axis repair no longer moves right/top or secondary axes, and handles
+  scatter charts.
+
+### Security
+
+- win32com opens templates with macros force-disabled, events off and link
+  updates off.
+
+### Added
+
+- `.xlsm` templates on the openpyxl engine (VBA preserved).
+- Atomic output: a failed fill never touches an existing output file.
+- `CellValueError` with table/row/column context for values Excel cannot
+  store.
+- `FillXLConfig.on_lossy` and `LossyTemplateError`.
+- openpyxl output requests a full recalculation on open.
+- win32com works from worker threads (`CoInitialize`) and no longer uses the
+  clipboard.
+
 ## [0.4.0] — 2026-10-18
 
 ### Added

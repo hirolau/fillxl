@@ -175,7 +175,7 @@ class Win32ComBackend:
             IgnoreReadOnlyRecommended=True,
             AddToMru=False,
         )
-        logger.info("[win32com] load took %.3fs", time.perf_counter() - t0)
+        logger.debug("[win32com] load took %.3fs", time.perf_counter() - t0)
 
     def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.
@@ -288,7 +288,7 @@ class Win32ComBackend:
                 table_columns = [str(header_values)]
         else:
             table_columns = [str(list_obj.ListColumns(i + 1).Name) for i in range(num_cols)]
-        logger.info("[win32com] table metadata took %.3fs", time.perf_counter() - t_meta)
+        logger.debug("[win32com] table metadata took %.3fs", time.perf_counter() - t_meta)
 
         # ── Column validation (before resize: detection reads the template body) ──
         from fillxl._validation import validate_columns
@@ -394,7 +394,7 @@ class Win32ComBackend:
                 last_row=new_end_row + totals_rows,
                 num_data_rows=num_data_rows,
             )
-        logger.info("[win32com] overflow check took %.3fs", time.perf_counter() - t_overflow)
+        logger.debug("[win32com] overflow check took %.3fs", time.perf_counter() - t_overflow)
 
         # Resize the table first — Excel auto-fills calculated column formulas
         # in new rows when the table is resized.
@@ -410,7 +410,7 @@ class Win32ComBackend:
                     f"{start_col_letter}{table_start_row}:{end_col_letter}{resize_last_row}",
                 ),
             )
-        logger.info("[win32com] resize took %.3fs", time.perf_counter() - t_resize)
+        logger.debug("[win32com] resize took %.3fs", time.perf_counter() - t_resize)
 
         # Clear the rows the table no longer covers — batch clear
         t_clear = time.perf_counter()
@@ -420,7 +420,7 @@ class Win32ComBackend:
             )
             with contextlib.suppress(Exception):
                 worksheet.Range(clear_range_str).ClearContents()
-        logger.info("[win32com] clear took %.3fs", time.perf_counter() - t_clear)
+        logger.debug("[win32com] clear took %.3fs", time.perf_counter() - t_clear)
 
         # ── Copy styles from first data row ───────────────────────────────
         # Formats are applied before the values so Excel can still apply its
@@ -429,7 +429,7 @@ class Win32ComBackend:
         t_style = time.perf_counter()
         if config.copy_table_styles and num_data_rows > 1:
             new_data_body.Rows(1).AutoFill(Destination=new_data_body, Type=_XL_FILL_FORMATS)
-        logger.info("[win32com] copy styles took %.3fs", time.perf_counter() - t_style)
+        logger.debug("[win32com] copy styles took %.3fs", time.perf_counter() - t_style)
 
         # ── Write data (calculated columns are never written) ─────────────
         data_col_index = {col: idx for idx, col in enumerate(data_columns)}
@@ -456,7 +456,7 @@ class Win32ComBackend:
                     )
             values_matrix.append(row_values)
         _write_body_blocks(new_data_body, values_matrix, writable, headerless=not header_rows)
-        logger.info("[win32com] write data took %.3fs", time.perf_counter() - t_write)
+        logger.debug("[win32com] write data took %.3fs", time.perf_counter() - t_write)
 
         _ensure_formula_columns(list_obj, table_columns, formulas, name)
 
@@ -471,7 +471,7 @@ class Win32ComBackend:
                 first_data_row=first_data_row,
                 last_data_row=new_end_row,
             )
-        logger.info("[win32com] conditional formatting took %.3fs", time.perf_counter() - t_cf)
+        logger.debug("[win32com] conditional formatting took %.3fs", time.perf_counter() - t_cf)
 
         return TableChangeSpecs(
             worksheet_title=worksheet_title,
@@ -621,7 +621,7 @@ class Win32ComBackend:
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         logger.debug("Saving workbook to %s (format %d)", abs_path, file_format)
         self._workbook.SaveAs(str(abs_path), FileFormat=file_format)
-        logger.info("[win32com] save took %.3fs", time.perf_counter() - t0)
+        logger.debug("[win32com] save took %.3fs", time.perf_counter() - t0)
 
     def close(self) -> None:
         """Close the workbook, quit Excel and release COM on this thread."""

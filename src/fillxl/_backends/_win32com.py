@@ -121,7 +121,8 @@ class Win32ComBackend:
             pythoncom.CoInitialize()
         except pythoncom.com_error as exc:
             # The thread already uses another apartment model; COM is usable as is.
-            if exc.hresult != _RPC_E_CHANGED_MODE:  # pyrefly: ignore[missing-attribute]
+            # getattr keeps this readable where pywin32 is not installed (Linux CI).
+            if getattr(exc, "hresult", None) != _RPC_E_CHANGED_MODE:
                 raise
         else:
             self._com_initialized = True

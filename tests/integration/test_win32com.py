@@ -508,15 +508,16 @@ def test_filling_does_not_touch_the_clipboard(output_path: Path) -> None:
     """Styles are filled, never copied, so the user's clipboard survives."""
     import time
 
-    import win32clipboard  # ty: ignore[unresolved-import]
-
     from tests._assets import TEMPLATE
+
+    # Imported dynamically: pywin32 is absent from the Linux CI type-check job.
+    clipboard = pytest.importorskip("win32clipboard")
 
     def open_clipboard() -> None:
         # Another process may hold the clipboard for a moment.
         for _ in range(20):
             try:
-                win32clipboard.OpenClipboard()
+                clipboard.OpenClipboard()
                 return
             except Exception:
                 time.sleep(0.1)
@@ -524,10 +525,10 @@ def test_filling_does_not_touch_the_clipboard(output_path: Path) -> None:
 
     open_clipboard()
     try:
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardText("fillxl-sentinel", win32clipboard.CF_UNICODETEXT)
+        clipboard.EmptyClipboard()
+        clipboard.SetClipboardText("fillxl-sentinel", clipboard.CF_UNICODETEXT)
     finally:
-        win32clipboard.CloseClipboard()
+        clipboard.CloseClipboard()
 
     fill(
         template=TEMPLATE,
@@ -538,9 +539,9 @@ def test_filling_does_not_touch_the_clipboard(output_path: Path) -> None:
 
     open_clipboard()
     try:
-        value = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+        value = clipboard.GetClipboardData(clipboard.CF_UNICODETEXT)
     finally:
-        win32clipboard.CloseClipboard()
+        clipboard.CloseClipboard()
     assert value == "fillxl-sentinel"
 
 

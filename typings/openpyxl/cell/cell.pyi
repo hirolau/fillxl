@@ -1,6 +1,9 @@
+import re
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
+
+ILLEGAL_CHARACTERS_RE: re.Pattern[str]
 
 _CellValue = (
     bool

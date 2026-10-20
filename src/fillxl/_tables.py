@@ -13,7 +13,7 @@ from openpyxl.worksheet.cell_range import CellRange
 from ._adapters import TabularAdapter
 from ._charts import TableChangeSpecs
 from ._formulas import openpyxl_formula_columns, warn_about_ignored_formula_data
-from ._normalize import is_text_cell_value, prepare_cell_value
+from ._normalize import check_cell_value, is_text_cell_value, prepare_cell_value
 from ._utils import find_worksheet_and_table
 
 if TYPE_CHECKING:
@@ -186,6 +186,8 @@ def populate_table(
     # Create a mapping of data column names to column indices
     data_column_map = {str(col_name): idx for idx, col_name in enumerate(columns)}
 
+    warned: set[tuple[str | None, str | None]] = set()
+
     # Populate each table column
     for col_ix, column in enumerate(table.tableColumns):
         first_row_cell = table_first_cell.offset(column=col_ix, row=header_rows)
@@ -215,6 +217,13 @@ def populate_table(
                     cell_to_fill._style = copy(first_row_style)
 
                 value = prepare_cell_value(row_values[data_col_idx])
+                check_cell_value(
+                    value,
+                    table=table_name,
+                    row=row_ix + 1,
+                    column=column_name,
+                    warned=warned,
+                )
                 cell_to_fill.value = value
 
                 # Force text for strings openpyxl would reinterpret: error

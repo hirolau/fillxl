@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from openpyxl.worksheet.worksheet import Worksheet
 
-from fillxl._normalize import is_text_cell_value, prepare_cell_value
+from fillxl._normalize import check_cell_value, is_text_cell_value, prepare_cell_value
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -110,6 +110,7 @@ def populate_named_cells(
 
         # Normalise value for Excel compatibility
         normalised_value = prepare_cell_value(value)
+        check_cell_value(normalised_value, name=name)
 
         target = named_cell_target(name, list(defined_name.destinations))
         if target is None:

@@ -30,7 +30,11 @@ from fillxl._formulas import (
     resolve_formula,
     warn_about_ignored_formula_data,
 )
-from fillxl._normalize import prepare_com_value
+from fillxl._normalize import (
+    check_cell_value,
+    com_value_from_normalized,
+    prepare_cell_value,
+)
 from fillxl._utils import col_to_excel
 
 if TYPE_CHECKING:
@@ -196,7 +200,9 @@ class Win32ComBackend:
         if target is None:
             return
         sheet_name, address = target
-        prepared = prepare_com_value(value, escape_formulas=config.escape_formulas)
+        normalized = prepare_cell_value(value)
+        check_cell_value(normalized, name=name)
+        prepared = com_value_from_normalized(normalized, escape_formulas=config.escape_formulas)
         try:
             self._workbook.Worksheets(sheet_name).Range(address).Value = prepared
         except Exception as exc:
@@ -429,15 +435,24 @@ class Win32ComBackend:
         data_col_index = {col: idx for idx, col in enumerate(data_columns)}
         writable = [idx for idx, col in enumerate(table_columns) if col not in formulas]
 
+        warned: set[tuple[str | None, str | None]] = set()
         t_write = time.perf_counter()
         values_matrix: list[list[Any]] = []
-        for row in rows:
+        for row_number, row in enumerate(rows, start=1):
             row_values: list[Any] = [None] * len(table_columns)
             for col_idx in writable:
                 source = data_col_index.get(table_columns[col_idx])
                 if source is not None:
-                    row_values[col_idx] = prepare_com_value(
-                        row[source], escape_formulas=config.escape_formulas
+                    normalized = prepare_cell_value(row[source])
+                    check_cell_value(
+                        normalized,
+                        table=name,
+                        row=row_number,
+                        column=table_columns[col_idx],
+                        warned=warned,
+                    )
+                    row_values[col_idx] = com_value_from_normalized(
+                        normalized, escape_formulas=config.escape_formulas
                     )
             values_matrix.append(row_values)
         _write_body_blocks(new_data_body, values_matrix, writable, headerless=not header_rows)

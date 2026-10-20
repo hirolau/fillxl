@@ -29,19 +29,151 @@ Normalisation rules (applied in order):
        wall-clock preserved).  ``pd.Timestamp`` (subclass of ``datetime``)
        is handled identically.
    10. Unrecognised objects → ``str(obj)`` via ``__str__``.
+
+Values Excel cannot store faithfully (text longer than 32,767 characters,
+illegal control characters, dates before 1900, integers with more than 15
+significant digits) are reported by :func:`check_cell_value`.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import math
 import sys
 import warnings
 from contextvars import ContextVar
 from decimal import Decimal
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
+
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
+
+_MAX_TEXT_LENGTH = 32_767
+_MAX_SIGNIFICANT_DIGITS = 15
+_SIGNIFICANT_DIGIT_FLOOR = 10**_MAX_SIGNIFICANT_DIGITS
+_FIRST_EXCEL_DATE = dt.datetime(1900, 1, 1)
+
+Severity = Literal["error", "warning"]
+
+
+class CellValueError(ValueError):
+    """A value Excel cannot store, with the cell it was meant for."""
+
+    def __init__(
+        self,
+        problem: str,
+        *,
+        table: str | None = None,
+        row: int | None = None,
+        column: str | None = None,
+        name: str | None = None,
+    ) -> None:
+        self.problem = problem
+        self.table = table
+        self.row = row
+        self.column = column
+        self.name = name
+        location = describe_cell(table=table, row=row, column=column, name=name)
+        super().__init__(f"{location}: {problem}")
+
+
+def describe_cell(
+    *,
+    table: str | None = None,
+    row: int | None = None,
+    column: str | None = None,
+    name: str | None = None,
+) -> str:
+    """Human-readable location of a cell; *row* is the 1-based row in the data.
+
+    Examples:
+        >>> describe_cell(table="Sales", row=3, column="Notes")
+        "Table 'Sales', data row 3, column 'Notes'"
+        >>> describe_cell(name="report_date")
+        "Named cell 'report_date'"
+
+    """
+    if name is not None:
+        return f"Named cell {name!r}"
+    return f"Table {table!r}, data row {row}, column {column!r}"
+
+
+def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN401
+    """Why Excel cannot store a normalised *value* faithfully, or ``None``.
+
+    Examples:
+        >>> cell_value_problem("ok") is None
+        True
+        >>> cell_value_problem("x" * 32_768)[0]
+        'error'
+        >>> cell_value_problem("bell\\x07")[0]
+        'error'
+        >>> cell_value_problem(1234567890123456)[0]
+        'warning'
+        >>> cell_value_problem(10**15) is None
+        True
+        >>> cell_value_problem(dt.datetime(1899, 12, 31))[0]
+        'error'
+
+    """
+    if isinstance(value, str):
+        if len(value) > _MAX_TEXT_LENGTH:
+            return "error", (
+                f"text is {len(value):,} characters long; an Excel cell holds at most 32,767"
+            )
+        # isprintable() is a fast C scan; only a non-printable string needs
+        # the regex, which tells tabs/newlines (allowed) from illegal chars.
+        if not value.isprintable():
+            match = ILLEGAL_CHARACTERS_RE.search(value)
+            if match:
+                return "error", (
+                    f"text contains the control character {match.group()!r} at position "
+                    f"{match.start()}, which Excel cannot store"
+                )
+        return None
+    if isinstance(value, int) and not isinstance(value, bool):
+        if abs(value) >= _SIGNIFICANT_DIGIT_FLOOR and (
+            len(str(abs(value)).rstrip("0")) > _MAX_SIGNIFICANT_DIGITS
+        ):
+            return "warning", (
+                f"integer {value} has more than 15 significant digits and Excel will "
+                "round it; pass it as text if it is an identifier"
+            )
+        return None
+    if isinstance(value, dt.datetime) and value < _FIRST_EXCEL_DATE:
+        return "error", (
+            f"date {value.isoformat()} is before 1900-01-01, the first date Excel can store"
+        )
+    return None
+
+
+def check_cell_value(
+    value: Any,  # noqa: ANN401
+    *,
+    table: str | None = None,
+    row: int | None = None,
+    column: str | None = None,
+    name: str | None = None,
+    warned: set[tuple[str | None, str | None]] | None = None,
+) -> None:
+    """Raise :class:`CellValueError`, or warn once per column, for values Excel cannot store."""
+    problem = cell_value_problem(value)
+    if problem is None:
+        return
+    severity, text = problem
+    if severity == "error":
+        raise CellValueError(text, table=table, row=row, column=column, name=name)
+    key = (table or name, column)
+    if warned is not None:
+        if key in warned:
+            return
+        warned.add(key)
+    logger.warning("%s: %s", describe_cell(table=table, row=row, column=column, name=name), text)
+
 
 # ── Per-fill-session state ──────────────────────────────────────────────────
 # A ContextVar (rather than a module global) so that two concurrent fills in
@@ -398,14 +530,15 @@ def prepare_com_value(value: Any, *, escape_formulas: bool = False) -> Any:  # n
         '2025-06-15T14:30:00+00:00'
 
     """
-    value = normalize_value(_to_python_datetime(value))
+    return com_value_from_normalized(prepare_cell_value(value), escape_formulas=escape_formulas)
 
+
+def com_value_from_normalized(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
+    """The COM-specific part of :func:`prepare_com_value` for an already normalised value."""
     if isinstance(value, str):
         if escape_formulas or not value.startswith("="):
             return "'" + value
         return value
-
     if isinstance(value, dt.datetime):
         return value.replace(tzinfo=dt.UTC)
-
     return value

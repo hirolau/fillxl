@@ -171,6 +171,15 @@ class TestValueNormalisation:
 
         assert normalize_value(Greeting()) == "Hello!"
 
+    def test_cell_value_error_is_a_value_error(self) -> None:
+        """Callers can catch the documented Value error."""
+        from fillxl import CellValueError
+
+        error = CellValueError("too long", table="Sales", row=2, column="Notes")
+
+        assert isinstance(error, ValueError)
+        assert str(error) == "Table 'Sales', data row 2, column 'Notes': too long"
+
 
 class TestTimezoneHandling:
     """tz-aware datetimes lose their offset, keeping the wall-clock time."""

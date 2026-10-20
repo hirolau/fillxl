@@ -24,7 +24,7 @@ import pytest
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
-from fillxl import Engine, FillXLConfig, fill
+from fillxl import CellValueError, Engine, FillXLConfig, fill
 from tests.conftest import TEMPLATE
 
 if TYPE_CHECKING:
@@ -606,6 +606,83 @@ def test_error_looking_strings_are_stored_as_text_not_errors(
     assert filled.worksheet["E1"].data_type == "s"
     assert filled.first_row[1] == "#N/A"
     assert filled.worksheet["B2"].data_type == "s"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Excel cell limits
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_overlong_text_raises_with_table_row_and_column(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A cell holds at most 32,767 characters."""
+    rows = [{"Name": "a", "Value": 1, "Notes": "x" * 32_768}]
+
+    with pytest.raises(CellValueError, match=r"Table 'Items', data row 1, column 'Notes'"):
+        _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_control_character_raises_with_context(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Excel rejects control characters in text."""
+    rows = [{"Name": "a", "Value": 1, "Notes": "bell\x07"}]
+
+    with pytest.raises(CellValueError, match="control character"):
+        _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_pre_1900_date_raises(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """Excel cannot store dates before 1900-01-01."""
+    rows = [{"Name": "a", "Value": dt.datetime(1899, 12, 31), "Notes": "n"}]
+
+    with pytest.raises(CellValueError, match="before 1900-01-01"):
+        _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_large_integer_warns_once_per_column(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Excel rounds integers above 15 significant digits; say so once."""
+    rows = [{"Name": f"r{i}", "Value": 1234567890123456, "Notes": "n"} for i in range(3)]
+
+    with caplog.at_level(logging.WARNING, logger="fillxl._normalize"):
+        _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
+
+    warnings = [record for record in caplog.records if "significant digits" in record.getMessage()]
+    assert len(warnings) == 1
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_named_cell_error_names_the_cell(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """A named-cell error says which name failed."""
+    with pytest.raises(CellValueError, match="Named cell 'probe_cell'"):
+        _fill_output(
+            equivalence_template,
+            output_path,
+            engine,
+            values={"probe_cell": "x" * 32_768},
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

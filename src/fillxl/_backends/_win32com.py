@@ -52,6 +52,7 @@ _XL_FILL_FORMATS = 3
 
 _MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
 _RPC_E_CHANGED_MODE = -2147417850
+_XL_CALCULATION_MANUAL = -4135
 
 _OOXML_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xltx", ".xltm"})
 
@@ -94,6 +95,8 @@ class Win32ComBackend:
         self._definitions_loaded = False
         self._com_initialized = False
         self._com_thread: int | None = None
+        # Excel's calculation mode before this fill; restored before SaveAs.
+        self._previous_calculation: int | None = None
 
     # ── Internal helpers ───────────────────────────────────────────────────
 
@@ -175,6 +178,10 @@ class Win32ComBackend:
             IgnoreReadOnlyRecommended=True,
             AddToMru=False,
         )
+        # Filling recalculates constantly in automatic mode; save() restores this.
+        if self._previous_calculation is None:
+            self._previous_calculation = self._app.Calculation
+        self._app.Calculation = _XL_CALCULATION_MANUAL
         logger.debug("[win32com] load took %.3fs", time.perf_counter() - t0)
 
     def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
@@ -619,6 +626,9 @@ class Win32ComBackend:
         # from the Excel process working directory, not the Python CWD.
         abs_path = path.resolve()
         abs_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._previous_calculation is not None:
+            self._app.Calculation = self._previous_calculation
+            self._previous_calculation = None
         logger.debug("Saving workbook to %s (format %d)", abs_path, file_format)
         self._workbook.SaveAs(str(abs_path), FileFormat=file_format)
         logger.debug("[win32com] save took %.3fs", time.perf_counter() - t0)

@@ -448,6 +448,22 @@ class TestWin32ComSecurityAndThreading:
         finally:
             backend.close()
 
+    def test_calculation_mode_is_restored_before_save(self, output_path: Path) -> None:
+        """Filling runs in manual mode; SaveAs restores the previous mode."""
+        from fillxl._backends._win32com import Win32ComBackend
+        from tests._assets import TEMPLATE
+
+        backend = Win32ComBackend()
+        try:
+            backend.load(TEMPLATE)
+            assert backend._app.Calculation == -4135
+            backend._previous_calculation = -4105  # automatic
+            backend.save(output_path)
+            assert backend._app.Calculation == -4105
+            assert backend._previous_calculation is None
+        finally:
+            backend.close()
+
     def test_fill_works_from_a_worker_thread(self, output_path: Path) -> None:
         """fill() initialises COM on the thread that uses it."""
         from concurrent.futures import ThreadPoolExecutor

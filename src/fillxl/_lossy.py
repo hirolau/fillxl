@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 import warnings
 import zipfile
@@ -12,13 +11,15 @@ from typing import TYPE_CHECKING, Literal
 if TYPE_CHECKING:
     from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 OnLossy = Literal["ignore", "warn", "raise"]
 
 
 class LossyTemplateError(RuntimeError):
     """The output lost template features and ``on_lossy="raise"`` was set."""
+
+
+class LossyTemplateWarning(UserWarning):
+    """The openpyxl engine dropped template features."""
 
 
 _PART_FEATURES: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -85,7 +86,7 @@ def find_lost_features(template: Path, output: Path) -> list[str]:
     return [f"{label} ({count} lost)" for label, count in sorted(lost.items())]
 
 
-def check_lossy(template: Path, output: Path, policy: OnLossy) -> None:
+def check_lossy(template: Path, output: Path, policy: OnLossy, *, stacklevel: int = 2) -> None:
     """Apply the ``on_lossy`` policy to a filled *output*."""
     if policy == "ignore":
         return
@@ -99,5 +100,4 @@ def check_lossy(template: Path, output: Path, policy: OnLossy) -> None:
     )
     if policy == "raise":
         raise LossyTemplateError(msg)
-    logger.warning(msg)
-    warnings.warn(msg, stacklevel=3)
+    warnings.warn(msg, LossyTemplateWarning, stacklevel=stacklevel)

@@ -13,6 +13,7 @@ from fillxl._charts import (
     TableChangeSpecs,
     update_chart_data_ranges,
 )
+from fillxl._lossy import check_lossy
 from fillxl._sheets import first_remaining, require_a_visible_sheet
 from fillxl._tables import populate_table
 from fillxl._validation import ColumnValidationStrategy, validate_columns
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from fillxl._config import FillXLConfig
+    from fillxl._lossy import OnLossy
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +247,11 @@ class OpenpyxlBackend:
         if self._workbook is not None:
             self._workbook.close()
             self._workbook = None
+
+    def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
+        """Report template features openpyxl did not write back."""
+        # Frames: check_lossy -> check_output -> fill -> the caller of fill.
+        check_lossy(template, output, policy, stacklevel=4)
 
 
 def _active_title(workbook: openpyxl.Workbook) -> str | None:

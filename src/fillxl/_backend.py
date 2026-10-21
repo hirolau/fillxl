@@ -6,9 +6,12 @@ and provides the :func:`get_backend` factory for creating backend instances.
 
 from __future__ import annotations
 
+import importlib.util
+import logging
+import sys
 from typing import TYPE_CHECKING, Any, Protocol, get_args, runtime_checkable
 
-from fillxl._types import Engine
+from fillxl._types import ConcreteEngine, Engine
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -16,6 +19,9 @@ if TYPE_CHECKING:
 
     from fillxl._charts import TableChangeSpecs
     from fillxl._config import FillXLConfig
+    from fillxl._lossy import OnLossy
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -118,8 +124,48 @@ class Backend(Protocol):
         """Close the workbook and release resources."""
         ...
 
+    def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
+        """Apply the ``on_lossy`` policy to the saved *output* of *template*."""
+        ...
+
 
 _KNOWN_ENGINES: frozenset[str] = frozenset(get_args(Engine))
+_OPENPYXL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
+
+
+def _win32com_available() -> bool:
+    return sys.platform == "win32" and importlib.util.find_spec("win32com") is not None
+
+
+def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngine:
+    """The engine that will fill *template* into *output*.
+
+    ``"auto"`` picks openpyxl when it can do the job: an ``.xlsx``/``.xlsm``
+    template saved in the same format.  Otherwise it picks win32com when Excel
+    automation is available (``.xlsb``/``.xls`` templates, format conversion),
+    and falls back to openpyxl so its error explains what is missing.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> resolve_engine("auto", Path("t.xlsx"), Path("o.xlsx"))
+        'openpyxl'
+        >>> resolve_engine("win32com", Path("t.xlsx"), Path("o.xlsx"))
+        'win32com'
+
+    """
+    if engine not in _KNOWN_ENGINES:
+        known = ", ".join(sorted(_KNOWN_ENGINES))
+        msg = f"Unknown engine {engine!r}. Known engines: {known}."
+        raise ValueError(msg)
+    if engine != "auto":
+        return engine
+    suffix = template.suffix.lower()
+    if suffix in _OPENPYXL_SUFFIXES and output.suffix.lower() == suffix:
+        return "openpyxl"
+    if _win32com_available():
+        logger.debug("engine='auto' chose win32com for %s -> %s", template, output)
+        return "win32com"
+    return "openpyxl"
 
 
 def get_backend(engine: Engine) -> Backend:

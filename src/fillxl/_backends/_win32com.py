@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from fillxl._config import FillXLConfig
+    from fillxl._lossy import OnLossy
 
 logger = logging.getLogger(__name__)
 
@@ -530,6 +531,9 @@ class Win32ComBackend:
                         logger.debug("Excel Application quit")
             finally:
                 self._release_com()
+
+    def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
+        """Excel writes back every feature it read, so there is nothing to check."""
 
     def _release_com(self) -> None:
         if not self._com_initialized:

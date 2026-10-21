@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
+import importlib
 import re
 import sys
 from pathlib import Path
@@ -34,20 +36,23 @@ def _number_format(cell: Any) -> str:  # noqa: ANN401
 
 @functools.cache
 def excel_is_available() -> bool:
-    """Whether Microsoft Excel can be started through COM on this machine."""
+    """Whether Microsoft Excel can be started through COM on this machine.
+
+    The COM modules are imported by name: they only exist on Windows, and a
+    plain ``import`` inside the guard leaves a name a static analyser cannot
+    prove is bound on the platform where they are missing.
+    """
     if sys.platform != "win32":
         return False
     try:
-        import pythoncom
-        import win32com.client
-    except ImportError:
-        return False
-    try:
+        pythoncom = importlib.import_module("pythoncom")
+        win32com_client = importlib.import_module("win32com.client")
         pythoncom.CoInitialize()
-        app = win32com.client.DispatchEx("Excel.Application")
-        app.Quit()
+        app = win32com_client.DispatchEx("Excel.Application")
     except Exception:  # any failure means "no usable Excel"
         return False
+    with contextlib.suppress(Exception):
+        app.Quit()
     return True
 
 

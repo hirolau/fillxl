@@ -15,21 +15,7 @@ from openpyxl.utils.escape import unescape
 from openpyxl.worksheet.worksheet import Worksheet
 
 import fillxl
-
-# Local copy of fillxl._charts.REFERENCE_RE until WP3 moves the parser there.
-_SHEET_PATTERN = r"(?:'(?:[^']|'')+'|[^\s'!(),=\[\]{}\"]+)"
-_CELL_PATTERN = r"\$?[A-Z]{1,3}\$?\d+"
-REFERENCE_RE = re.compile(
-    rf"(?<![^\s(),=])(?P<sheet>{_SHEET_PATTERN})!"
-    rf"(?P<area>{_CELL_PATTERN}(?::{_CELL_PATTERN})?)(?![\w$:])"
-)
-
-
-def _unquote_sheet_name(sheet_name: str) -> str:
-    if len(sheet_name) >= 2 and sheet_name.startswith("'") and sheet_name.endswith("'"):
-        return sheet_name[1:-1].replace("''", "'")
-    return sheet_name
-
+from fillxl._charts import REFERENCE_RE, _unquote_sheet_name
 
 _MISSING = object()
 _SERIES_PARTS = ("cat", "val", "xVal", "yVal")

@@ -154,3 +154,21 @@ def test_a_header_with_a_line_break_matches_the_data_column_of_the_same_name(
             config=FillXLConfig(column_validation_strategy="strict"),
         )
     )
+
+
+def test_rich_text_above_a_growing_table_is_preserved_by_both_engines(
+    tmp_path: Path, parity: Parity
+) -> None:
+    """A partly bold title is not template furniture either engine may flatten."""
+    import openpyxl
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+
+    template = table_template(tmp_path / "template.xlsx", top_row=3)
+    workbook = openpyxl.load_workbook(template, rich_text=True)
+    workbook["Data"]["A1"] = CellRichText([TextBlock(InlineFont(b=True), "Bold"), " plain"])
+    workbook.save(template)
+    workbook.close()
+
+    rows = [{"fund": f"F{i}", "nav": i} for i in range(5)]
+    parity.assert_same(*parity.fill_both(template, tables={"Sales": rows}))

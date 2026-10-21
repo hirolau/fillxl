@@ -1,14 +1,4 @@
-from openpyxl.cell.cell import Cell
-
-class InlineFont:
-    b: bool | None
-    i: bool | None
-    def __init__(
-        self,
-        b: bool | None = ...,
-        i: bool | None = ...,
-        **kwargs: object,
-    ) -> None: ...
+from openpyxl.cell.text import InlineFont
 
 class TextBlock:
     font: InlineFont | None

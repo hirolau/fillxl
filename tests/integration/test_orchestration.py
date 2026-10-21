@@ -70,7 +70,7 @@ def test_an_unknown_engine_is_refused_before_any_file_is_touched(tmp_path: Path)
     output = tmp_path / "out.xlsx"
 
     with pytest.raises(ValueError, match="Unknown engine"):
-        fill(template, output, engine="openpyxl2", tables={"Sales": _ROWS})  # ty: ignore[invalid-argument-type]
+        fill(template, output, engine="openpyxl2", tables={"Sales": _ROWS})  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-argument-type]
 
     assert not output.exists()
 

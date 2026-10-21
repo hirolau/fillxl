@@ -175,6 +175,7 @@ pythonpath = ["tests"]
 markers = [
 	"xlwings: tests that require xlwings / Excel COM (skipped on CI without Excel)",
 	"win32com: tests that require pywin32 / Excel COM (skipped on CI without Excel)",
+	"excel: needs Windows with Microsoft Excel",
 	"slow: tests that are intentionally slow (large data, stress tests)",
 	"story: narrative chapter tests (ordered progression)",
 ]

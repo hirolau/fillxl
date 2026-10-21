@@ -49,10 +49,11 @@ def excel_is_available() -> bool:
         win32com_client = importlib.import_module("win32com.client")
         pythoncom.CoInitialize()
         app = win32com_client.DispatchEx("Excel.Application")
+        # A quit failure must not turn a usable Excel into "no Excel".
+        with contextlib.suppress(Exception):
+            app.Quit()
     except Exception:  # any failure means "no usable Excel"
         return False
-    with contextlib.suppress(Exception):
-        app.Quit()
     return True
 
 

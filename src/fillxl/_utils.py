@@ -7,10 +7,27 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from openpyxl.workbook.workbook import Workbook
-    from openpyxl.worksheet.table import Table
+    from openpyxl.worksheet.table import Table, TableColumn
     from openpyxl.worksheet.worksheet import Worksheet
 
 logger = logging.getLogger(__name__)
+
+
+def table_column_name(column: TableColumn) -> str:
+    """The name of a table column as Excel shows it.
+
+    The file format escapes characters such as line breaks (``_x000a_``).
+    COM returns them unescaped, so openpyxl names are unescaped to match.
+
+    Examples:
+        >>> from openpyxl.worksheet.table import TableColumn
+        >>> table_column_name(TableColumn(id=1, name="NAV_x000a_SEK"))
+        'NAV\\nSEK'
+
+    """
+    from openpyxl.utils.escape import unescape
+
+    return unescape(str(column.name))
 
 
 def col_to_excel(col: int) -> str:

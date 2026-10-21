@@ -417,3 +417,37 @@ def test_dropping_columns_logs_which_table_they_came_from(
         )
 
     assert "Table 'Sales'" in caplog.text
+
+
+def test_a_header_with_a_line_break_matches_the_data_column_of_the_same_name(
+    tmp_path: Path,
+) -> None:
+    """The file format stores ``_x000a_``; the data column is named as shown."""
+    from openpyxl.utils.escape import unescape
+
+    from tests.parity.builders import table_template
+
+    template = table_template(
+        tmp_path / "template.xlsx",
+        header=("fund", "NAV_x000a_SEK"),
+        header_cells=("fund", "NAV\nSEK"),
+    )
+    output = tmp_path / "out.xlsx"
+
+    fill(
+        template=template,
+        output=output,
+        engine="openpyxl",
+        tables={"Sales": [{"fund": "A", "NAV\nSEK": 42}]},
+        config=FillXLConfig(column_validation_strategy="strict"),
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        ws = wb["Data"]
+        table = ws.tables["Sales"]
+        assert unescape(str(table.tableColumns[1].name)) == "NAV\nSEK"
+        assert ws["B1"].value == "NAV\nSEK"
+        assert ws["B2"].value == 42
+    finally:
+        wb.close()

@@ -27,13 +27,11 @@ def _date_template(tmp_path: Path) -> Path:
     return table_template(tmp_path / "template.xlsx", header=("fund", "when"))
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in WP5")
 def test_a_column_of_dates_looks_the_same_in_both_engines(tmp_path: Path, parity: Parity) -> None:
     template = _date_template(tmp_path)
     parity.assert_same(*parity.fill_both(template, tables={"Sales": _DATES}))
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in WP5")
 def test_a_column_of_datetimes_looks_the_same_in_both_engines(
     tmp_path: Path, parity: Parity
 ) -> None:
@@ -41,7 +39,6 @@ def test_a_column_of_datetimes_looks_the_same_in_both_engines(
     parity.assert_same(*parity.fill_both(template, tables={"Sales": _DATETIMES}))
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in WP5")
 def test_a_column_mixing_dates_datetimes_blanks_and_numbers_looks_the_same(
     tmp_path: Path, parity: Parity
 ) -> None:
@@ -49,7 +46,6 @@ def test_a_column_mixing_dates_datetimes_blanks_and_numbers_looks_the_same(
     parity.assert_same(*parity.fill_both(template, tables={"Sales": _MIXED}))
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in WP5")
 def test_dates_look_the_same_without_copying_table_styles(tmp_path: Path, parity: Parity) -> None:
     template = _date_template(tmp_path)
     parity.assert_same(

@@ -248,16 +248,15 @@ def _validate_table_columns(
 
     """
     from fillxl._formulas import openpyxl_formula_columns
-    from fillxl._tables import table_body_rows
-    from fillxl._utils import find_worksheet_and_table
+    from fillxl._tables import openpyxl_table_geometry
+    from fillxl._utils import find_worksheet_and_table, table_column_name
 
     worksheet, table = find_worksheet_and_table(workbook, table_name)
-    first_body_row, last_body_row = table_body_rows(table)
-    table_columns = [str(col.name) for col in table.tableColumns]
+    geometry = openpyxl_table_geometry(table)
+    table_columns = [table_column_name(col) for col in table.tableColumns]
     formula_columns = list(
-        openpyxl_formula_columns(worksheet, table, first_body_row, last_body_row)
+        openpyxl_formula_columns(worksheet, table, geometry.first_data_row, geometry.body_last_row)
     )
-
     validate_columns(
         table_columns=table_columns,
         data_columns=data_columns,

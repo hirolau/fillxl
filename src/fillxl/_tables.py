@@ -14,7 +14,8 @@ from ._adapters import TabularAdapter
 from ._charts import TableChangeSpecs
 from ._formulas import openpyxl_formula_columns, warn_about_ignored_formula_data
 from ._normalize import check_cell_value, is_text_cell_value, prepare_cell_value
-from ._utils import find_worksheet_and_table
+from ._plan import RowSpan, TableGeometry, plan_table_fill
+from ._utils import find_worksheet_and_table, table_column_name
 
 if TYPE_CHECKING:
     from openpyxl.workbook.workbook import Workbook
@@ -47,11 +48,52 @@ def is_single_cell(cell: object) -> bool:
     return isinstance(cell, Cell)
 
 
-def table_body_rows(table: Table) -> tuple[int, int]:
-    """First and last body row of *table* (header and totals rows excluded)."""
+def openpyxl_table_geometry(table: Table) -> TableGeometry:
+    """Where *table* sits, read from its reference and header/totals settings."""
     ref = CellRange(table.ref)
-    header_rows = 0 if table.headerRowCount == 0 else 1
-    return ref.min_row + header_rows, ref.max_row - _totals_row_count(table)
+    return TableGeometry(
+        top_row=ref.min_row,
+        last_row=ref.max_row,
+        first_col=ref.min_col,
+        last_col=ref.max_col,
+        header_rows=0 if table.headerRowCount == 0 else 1,
+        totals_rows=_totals_row_count(table),
+    )
+
+
+def _clear_rows(worksheet: Worksheet, rows: RowSpan, first_col: int, last_col: int) -> None:
+    """Clear values (not styles) in *rows* between *first_col* and *last_col*."""
+    first_row, last_row = rows
+    for row in range(first_row, last_row + 1):
+        for col in range(first_col, last_col + 1):
+            cell = worksheet._cells.get((row, col))
+            if cell is not None and is_single_cell(cell):
+                cell.value = None
+
+
+def _check_overflow(
+    worksheet: Worksheet,
+    table_name: str,
+    rows: RowSpan,
+    first_col: int,
+    last_col: int,
+    data_rows: int,
+) -> None:
+    """Refuse to grow a table over non-empty cells.
+
+    ``_cells`` is read directly: ``worksheet.cell()`` would create the cell.
+    """
+    first_row, last_row = rows
+    for row in range(first_row, last_row + 1):
+        for col in range(first_col, last_col + 1):
+            cell = worksheet._cells.get((row, col))
+            if cell is not None and cell.value is not None:
+                msg = (
+                    f"Table '{table_name}' cannot expand to {data_rows} rows: "
+                    f"cell {get_column_letter(col)}{row} already contains data "
+                    f"({cell.value!r}). Move or remove the content below the table first."
+                )
+                raise ValueError(msg)
 
 
 def populate_table(
@@ -87,184 +129,103 @@ def populate_table(
     """
     columns = adapter.columns
     rows = adapter.rows
-    num_data_rows = len(rows)
 
-    worksheet: Worksheet
-    table: Table
     worksheet, table = find_worksheet_and_table(workbook, table_name)
-
-    # A totals row is part of the table's reference but not of its data body.
-    totals_rows = _totals_row_count(table)
-    # A table can be shown without a header row; Excel names its columns
-    # Column1, Column2, … and the reference starts at the first data row.
-    header_rows = 0 if table.headerRowCount == 0 else 1
-
-    # Parse the original table reference (e.g. 'B12:M13')
-    original_table_ref: str = table.ref
-    original_cell_range = CellRange(original_table_ref)
-
-    table_start_row = original_cell_range.min_row
-    table_old_last_row = original_cell_range.max_row
-    table_old_body_last_row = table_old_last_row - totals_rows
-    table_start_column = original_cell_range.min_col
-    table_end_column = original_cell_range.max_col
-    first_data_row = table_start_row + header_rows
+    geometry = openpyxl_table_geometry(table)
+    plan = plan_table_fill(geometry, len(rows))
+    first_col, last_col = geometry.first_col, geometry.last_col
+    header_rows = geometry.header_rows
 
     # Calculated columns must be detected before any body cell is cleared.
     formula_columns = openpyxl_formula_columns(
-        worksheet, table, first_data_row, table_old_body_last_row
+        worksheet, table, geometry.first_data_row, geometry.body_last_row
     )
     warn_about_ignored_formula_data(table_name, columns, rows, formula_columns)
 
-    # Snapshot the totals row before any clearing: openpyxl writes cells in
-    # place, so the row has to be recreated at its new position below.
+    # openpyxl writes cells in place, so the totals row is captured before
+    # clearing and recreated at its new position afterwards.
     totals_row_cells = (
-        _read_row(worksheet, table_old_last_row, table_start_column, table_end_column)
-        if totals_rows
+        _read_row(worksheet, geometry.last_row, first_col, last_col)
+        if geometry.totals_rows
         else None
     )
 
-    # An Excel table needs at least one body row, so empty data keeps a single
-    # (cleared) row — the same thing the win32com backend does.
-    new_table_body_last_row = first_data_row + max(num_data_rows, 1) - 1
-    new_table_last_row = new_table_body_last_row + totals_rows
-    new_table_ref = (
-        f"{get_column_letter(table_start_column)}{table_start_row}:"
-        f"{get_column_letter(table_end_column)}{new_table_last_row}"
-    )
-    worksheet_title: str = str(worksheet.title)
+    if plan.overflow_rows is not None:
+        _check_overflow(worksheet, table_name, plan.overflow_rows, first_col, last_col, len(rows))
 
-    # Check for overflow: if the table is growing, ensure no existing content
-    # is overwritten.  ``_cells`` is inspected directly because
-    # ``worksheet.cell(...)`` would create the cell (and inflate ``max_row``)
-    # just to look at it.
-    if new_table_last_row > table_old_last_row:
-        for check_row in range(table_old_last_row + 1, new_table_last_row + 1):
-            for check_col in range(table_start_column, table_end_column + 1):
-                existing_cell = worksheet._cells.get((check_row, check_col))
-                if existing_cell is not None and existing_cell.value is not None:
-                    cell_ref = f"{get_column_letter(check_col)}{check_row}"
-                    msg = (
-                        f"Table '{table_name}' cannot expand to {new_table_last_row} rows: "
-                        f"cell {cell_ref} already contains data ({existing_cell.value!r}). "
-                        f"Move or remove the content below the table first."
-                    )
-                    raise ValueError(
-                        msg,
-                    )
-
-    # Update table reference — the autoFilter must stay in step with the table,
-    # otherwise Excel reports the workbook as repaired on open.  Excel excludes
-    # the totals row from the filter range.
-    table.ref = new_table_ref
+    # The autoFilter must stay in step with the table, or Excel repairs the file.
+    original_ref = table.ref
+    table.ref = plan.new_ref
     if table.autoFilter is not None:
-        table.autoFilter.ref = (
-            f"{get_column_letter(table_start_column)}{table_start_row}:"
-            f"{get_column_letter(table_end_column)}{new_table_body_last_row}"
-        )
-    logger.debug("Table '%s' resized: %s -> %s", table_name, original_table_ref, new_table_ref)
+        table.autoFilter.ref = plan.new_autofilter_ref
+    logger.debug("Table '%s' resized: %s -> %s", table_name, original_ref, plan.new_ref)
 
-    # Get the first cell of the table
-    table_first_cell = worksheet.cell(row=table_start_row, column=table_start_column)
+    table_first_cell = worksheet.cell(row=geometry.top_row, column=first_col)
     if not is_single_cell(table_first_cell):
         msg = "Expected a single cell! This should never happen in a table."
         raise ValueError(msg)
 
-    # Clear any leftover rows the new data does not cover (this also clears the
-    # single body row that empty data leaves behind).  The totals row is not
-    # part of the body and is cleared only after its contents are captured.
-    first_unused_row = first_data_row + num_data_rows
-    for clear_row in range(first_unused_row, table_old_body_last_row + 1):
-        for clear_col in range(table_start_column, table_end_column + 1):
-            stale_cell = worksheet._cells.get((clear_row, clear_col))
-            if stale_cell is not None and is_single_cell(stale_cell):
-                stale_cell.value = None
+    if plan.unused_body_rows is not None:
+        _clear_rows(worksheet, plan.unused_body_rows, first_col, last_col)
+    if geometry.totals_rows:
+        _clear_rows(worksheet, (geometry.last_row, geometry.last_row), first_col, last_col)
 
-    if totals_rows:
-        _clear_row(worksheet, table_old_last_row, table_start_column, table_end_column)
-
-    # Create a mapping of data column names to column indices
-    data_column_map = {str(col_name): idx for idx, col_name in enumerate(columns)}
-
+    data_column_map = {str(name): idx for idx, name in enumerate(columns)}
     warned: set[tuple[str | None, str | None]] = set()
 
-    # Populate each table column
     for col_ix, column in enumerate(table.tableColumns):
-        first_row_cell = table_first_cell.offset(column=col_ix, row=header_rows)
-        first_row_style = first_row_cell._style
-        column_name = str(column.name)
+        first_row_style = table_first_cell.offset(column=col_ix, row=header_rows)._style
+        column_name = table_column_name(column)
 
         if column_name in formula_columns:
             formula = formula_columns[column_name]
-            for row_ix in range(num_data_rows):
-                cell_to_fill = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
+            for row_ix in range(plan.data_rows):
+                cell = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
                 if copy_style_in_tables:
-                    cell_to_fill._style = copy(first_row_style)
-                cell_to_fill.value = formula
+                    cell._style = copy(first_row_style)
+                cell.value = formula
 
         elif column_name in data_column_map:
             data_col_idx = data_column_map[column_name]
-
-            # Write each row value
             for row_ix, row_values in enumerate(rows):
-                cell_to_fill = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
-
-                # Copy style from the first data row *before* assigning the
-                # value: a date format is what tells Excel (and openpyxl on
-                # read-back) that a datetime column holds dates rather than
-                # serial numbers.
+                cell = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
+                # Style first: a date format must be in place before the value
+                # arrives, or openpyxl replaces it with its default date format.
                 if copy_style_in_tables:
-                    cell_to_fill._style = copy(first_row_style)
-
+                    cell._style = copy(first_row_style)
                 value = prepare_cell_value(row_values[data_col_idx])
                 check_cell_value(
-                    value,
-                    table=table_name,
-                    row=row_ix + 1,
-                    column=column_name,
-                    warned=warned,
+                    value, table=table_name, row=row_ix + 1, column=column_name, warned=warned
                 )
-                cell_to_fill.value = value
-
+                cell.value = value
                 # Force text for strings openpyxl would reinterpret: error
                 # values such as "#N/A", and formulas when escaping is on.
                 if is_text_cell_value(value, escape_formulas=escape_formulas):
-                    cell_to_fill.data_type = "s"
+                    cell.data_type = "s"
 
         else:
-            # The column is missing from the data: clear whatever sample values
-            # the template left in the rows this fill covers.
-            column_index = table_start_column + col_ix
-            for clear_row in range(first_data_row, new_table_body_last_row + 1):
-                stale_cell = worksheet._cells.get((clear_row, column_index))
-                if stale_cell is not None and is_single_cell(stale_cell):
-                    stale_cell.value = None
+            # The data has no such column: clear the template's sample values.
+            column_index = first_col + col_ix
+            _clear_rows(
+                worksheet,
+                (plan.first_data_row, plan.new_body_last_row),
+                column_index,
+                column_index,
+            )
 
-    # Recreate the totals row at the bottom of the resized table.
     if totals_row_cells is not None:
-        _write_row(worksheet, new_table_last_row, table_start_column, totals_row_cells)
+        _write_row(worksheet, plan.new_last_row, first_col, totals_row_cells)
 
-    # Extend conditional formatting to cover all new data rows (the totals row
-    # is deliberately excluded).
-    # Guard: skip when there are no data rows (first_data_row > new_table_body_last_row)
-    if extend_conditional_formatting and first_data_row <= new_table_body_last_row:
+    if extend_conditional_formatting:
         _extend_conditional_formatting(
             worksheet=worksheet,
-            table_start_column=table_start_column,
-            table_end_column=table_end_column,
-            first_data_row=first_data_row,
-            table_last_row=new_table_body_last_row,
+            table_start_column=first_col,
+            table_end_column=last_col,
+            first_data_row=plan.first_data_row,
+            table_last_row=plan.new_body_last_row,
         )
 
-    return TableChangeSpecs(
-        worksheet_title=worksheet_title,
-        header_row=table_start_row,
-        first_col=table_start_column,
-        last_col=table_end_column,
-        old_last_row=table_old_body_last_row,
-        new_last_row=new_table_body_last_row,
-        header_rows=header_rows,
-    )
+    return plan.change_spec(str(worksheet.title))
 
 
 def _totals_row_count(table: Table) -> int:
@@ -315,14 +276,6 @@ def _read_row(
             continue
         snapshots.append(_CellSnapshot(cell.value, copy(cell._style), cell.data_type))
     return snapshots
-
-
-def _clear_row(worksheet: Worksheet, row: int, first_col: int, last_col: int) -> None:
-    """Clear the values in *row* between *first_col* and *last_col*."""
-    for col in range(first_col, last_col + 1):
-        cell = worksheet._cells.get((row, col))
-        if cell is not None and is_single_cell(cell):
-            cell.value = None
 
 
 def _write_row(

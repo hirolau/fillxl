@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from fillxl import FillXLConfig
+from fillxl import FillXLConfig, fill
 from tests.parity.builders import named_cells_template, table_template
 from tests.parity.conftest import Parity
 
@@ -99,3 +99,58 @@ def test_named_cells_of_every_scalar_type_end_up_the_same_in_both_engines(
     )
     values = {"fund_name": "NAE", "fund_nav": 12.5, "report_date": datetime(2025, 1, 2, 9, 30)}
     parity.assert_same(*parity.fill_both(template, values=values))
+
+
+def test_a_table_on_a_sheet_that_is_not_active_can_still_grow(
+    tmp_path: Path, parity: Parity
+) -> None:
+    """Resizing must not depend on which sheet Excel happens to show."""
+    template = table_template(
+        tmp_path / "template.xlsx", other_sheets=("Report",), active_sheet="Report"
+    )
+    rows = [{"fund": f"F{i}", "nav": i} for i in range(6)]
+    parity.assert_same(*parity.fill_both(template, tables={"Sales": rows}))
+
+
+def test_a_table_name_in_the_wrong_case_is_not_found_by_either_engine(
+    tmp_path: Path,
+) -> None:
+    """Excel's ListObjects() ignores case; openpyxl does not, and both must agree."""
+    template = table_template(tmp_path / "template.xlsx")
+
+    for engine in ("openpyxl", "win32com"):
+        with pytest.raises(KeyError):
+            fill(
+                template,
+                tmp_path / engine / "filled.xlsx",
+                engine=engine,
+                tables={"sales": [{"fund": "A", "nav": 1}]},
+            )
+
+
+def test_an_empty_table_with_only_a_blank_row_grows_the_same_way(
+    tmp_path: Path, parity: Parity
+) -> None:
+    """A cleared template row is not content; the table may still grow over it."""
+    template = table_template(tmp_path / "template.xlsx", body=((None, None),))
+    rows = [{"fund": f"F{i}", "nav": i} for i in range(4)]
+    parity.assert_same(*parity.fill_both(template, tables={"Sales": rows}))
+
+
+def test_a_header_with_a_line_break_matches_the_data_column_of_the_same_name(
+    tmp_path: Path, parity: Parity
+) -> None:
+    """The file format escapes the line break; COM returns it as it is shown."""
+    template = table_template(
+        tmp_path / "template.xlsx",
+        header=("fund", "NAV_x000a_SEK"),
+        header_cells=("fund", "NAV\nSEK"),
+    )
+    rows = [{"fund": f"F{i}", "NAV\nSEK": i} for i in range(3)]
+    parity.assert_same(
+        *parity.fill_both(
+            template,
+            tables={"Sales": rows},
+            config=FillXLConfig(column_validation_strategy="strict"),
+        )
+    )

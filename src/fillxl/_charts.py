@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import logging
 import re
-import xml.etree.ElementTree as ET
-import zipfile
-from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
@@ -17,11 +14,6 @@ if TYPE_CHECKING:
 from openpyxl.worksheet.cell_range import CellRange
 
 logger = logging.getLogger(__name__)
-
-# XML namespaces used in the OOXML package relationship files.
-_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
-_MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-_R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
 
 class TableChangeSpecs(NamedTuple):
@@ -109,6 +101,137 @@ def _unquote_sheet_name(sheet_name: str) -> str:
     return sheet_name
 
 
+# A reference such as Data!$B$13:$B$20, 'My Sheet'!$B$13 or Försäljning!B13.
+# The sheet is quoted ('' escapes a quote) or a run of characters that cannot
+# appear in an unquoted name.  The look-behind stops a match from starting in
+# the middle of a token such as [1]Data (a sheet in another workbook); the
+# look-ahead stops $B$13 from matching the start of $B$134.
+_SHEET_PATTERN = r"(?:'(?:[^']|'')+'|[^\s'!(),=\[\]{}\"]+)"
+_CELL_PATTERN = r"\$?[A-Z]{1,3}\$?\d+"
+REFERENCE_RE = re.compile(
+    rf"(?<![^\s(),=])(?P<sheet>{_SHEET_PATTERN})!"
+    rf"(?P<area>{_CELL_PATTERN}(?::{_CELL_PATTERN})?)(?![\w$:])"
+)
+_CELL_PARTS_RE = re.compile(r"(\$?[A-Z]{1,3}\$?)(\d+)")
+
+
+def _with_last_row(area: str, last_row: int) -> str:
+    """*area* as a range that ends on *last_row*, keeping its ``$`` markers.
+
+    Examples:
+        >>> _with_last_row("$B$13:$B$13", 20)
+        '$B$13:$B$20'
+        >>> _with_last_row("$B$13", 20)
+        '$B$13:$B$20'
+        >>> _with_last_row("B13:C13", 15)
+        'B13:C15'
+
+    """
+    first, _, last = area.partition(":")
+    end = _CELL_PARTS_RE.fullmatch(last or first)
+    if end is None:  # pragma: no cover - REFERENCE_RE only matches valid cells
+        msg = f"Not a cell reference: {area!r}"
+        raise ValueError(msg)
+    return f"{first}:{end.group(1)}{last_row}"
+
+
+def update_reference_text(text: str, spec: TableChangeSpecs) -> str | None:
+    """Rewrite references to the table's data body in *text*; ``None`` if none matched.
+
+    A reference matches when it is on the table's sheet, starts on the first
+    data row, ends on the old last data row and stays inside the table's
+    columns.  Any number of references may appear, so non-contiguous series
+    such as ``(Data!$B$13,Data!$D$13)`` work.
+
+    Examples:
+        >>> spec = TableChangeSpecs("Data", 12, 2, 13, 13, 20)
+        >>> update_reference_text("Data!$B$13:$B$13", spec)
+        'Data!$B$13:$B$20'
+        >>> update_reference_text("Data!$B$13", spec)
+        'Data!$B$13:$B$20'
+        >>> update_reference_text("(Data!$B$13,Data!$D$13)", spec)
+        '(Data!$B$13:$B$20,Data!$D$13:$D$20)'
+        >>> update_reference_text("Data2!$B$13:$B$13", spec) is None
+        True
+        >>> update_reference_text("Data!$B$12:$B$13", spec) is None
+        True
+        >>> update_reference_text("[1]Data!$B$13", spec) is None
+        True
+        >>> swedish = TableChangeSpecs("Försäljning", 1, 1, 2, 2, 5)
+        >>> update_reference_text("Försäljning!$B$2", swedish)
+        'Försäljning!$B$2:$B$5'
+        >>> apostrophe = TableChangeSpecs("Bob's Data", 1, 1, 2, 2, 5)
+        >>> update_reference_text("'Bob''s Data'!$B$2", apostrophe)
+        "'Bob''s Data'!$B$2:$B$5"
+
+    """
+    if spec.new_last_row == spec.old_last_row:
+        return None
+    changed = False
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal changed
+        if _unquote_sheet_name(match["sheet"]) != spec.worksheet_title:
+            return match[0]
+        bounds = CellRange(match["area"])
+        if bounds.min_row != spec.first_data_row or bounds.max_row != spec.old_last_row:
+            return match[0]
+        if bounds.min_col < spec.first_col or bounds.max_col > spec.last_col:
+            return match[0]
+        changed = True
+        return f"{match['sheet']}!{_with_last_row(match['area'], spec.new_last_row)}"
+
+    updated = REFERENCE_RE.sub(replace, text)
+    return updated if changed else None
+
+
+def point_count(text: str) -> int:
+    """Number of cells the references in *text* cover.
+
+    Examples:
+        >>> point_count("(Data!$B$13:$B$20,Data!$D$13:$D$20)")
+        16
+
+    """
+    total = 0
+    for match in REFERENCE_RE.finditer(text):
+        size = CellRange(match["area"]).size
+        total += size["rows"] * size["columns"]
+    return total
+
+
+def split_formula_arguments(text: str) -> list[str]:
+    """Split *text* on commas that are not inside quotes or parentheses.
+
+    Examples:
+        >>> split_formula_arguments('"a,b",(Data!$B$1,Data!$C$1),1')
+        ['"a,b"', '(Data!$B$1,Data!$C$1)', '1']
+        >>> split_formula_arguments("'Bob''s, Data'!$A$1,2")
+        ["'Bob''s, Data'!$A$1", '2']
+
+    """
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    quote: str | None = None
+    for index, char in enumerate(text):
+        if quote is not None:
+            if char == quote:  # a doubled quote closes and reopens: net no change
+                quote = None
+            continue
+        if char in "'\"":
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append(text[start:index])
+            start = index + 1
+    parts.append(text[start:])
+    return parts
+
+
 def all_chart_series(workbook: Workbook) -> Generator[Any, None, None]:
     """Yield all chart series from all worksheets in the workbook.
 
@@ -152,14 +275,7 @@ def all_chart_series_references(workbook: Workbook) -> Generator[Any, None, None
 
 
 def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None:
-    """Update chart data ranges after a table has been resized.
-
-    When a table's row count changes, charts that reference that table need their
-    data ranges updated to match the new table dimensions.
-
-    Only references that point at the table's *data body* — that is, ranges
-    starting at the table's first data row, ending at its last data row, and
-    within the table's columns — are updated.
+    """Point chart series that show the table's data body at its new rows.
 
     Args:
         spec: TableChangeSpecs describing the old and new table dimensions
@@ -167,168 +283,18 @@ def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None
 
     """
     for reference in all_chart_series_references(workbook):
-        try:
-            ref = reference.f
-            if not ref:
-                continue
-
-            new_ref = _update_series_reference(ref, spec)
-            if new_ref is None or new_ref == ref:
-                continue
-
-            reference.f = new_ref
-
-            # Update the cached data point count to match the new range.
-            # openpyxl does not update these automatically, and leaving stale
-            # ptCount values can cause Excel to drop axis labels (especially
-            # for Area charts).
-            new_pt_count = spec.new_last_row - spec.first_data_row + 1
-            if hasattr(reference, "strCache") and reference.strCache is not None:
-                reference.strCache.ptCount = new_pt_count
-            if hasattr(reference, "numCache") and reference.numCache is not None:
-                reference.numCache.ptCount = new_pt_count
-
-            logger.debug("Updated chart reference: %s -> %s", ref, new_ref)
-
-        except Exception:
-            logger.exception(
-                "Unable to update chart series reference",
-                extra={
-                    "ref": getattr(reference, "f", None),
-                    "worksheet": spec.worksheet_title,
-                },
-            )
-
-
-def _update_series_reference(ref: str, spec: TableChangeSpecs) -> str | None:
-    """Return *ref* with its end row updated, or ``None`` if it does not match.
-
-    Args:
-        ref: A chart series reference, e.g. ``'My Sheet'!$B$13:$B$13``.
-        spec: The table change to apply.
-
-    Returns:
-        The updated reference, or ``None`` when the reference does not point
-        at the table's data body.
-
-    Examples:
-        >>> spec = TableChangeSpecs("Data", 12, 2, 13, 13, 20)
-        >>> _update_series_reference("Data!$B$13:$B$13", spec)
-        'Data!$B$13:$B$20'
-        >>> _update_series_reference("Data2!$B$13:$B$13", spec) is None
-        True
-        >>> _update_series_reference("Data!$B$12:$B$13", spec) is None
-        True
-        >>> _update_series_reference("Data!$B$13:$B$40", spec) is None
-        True
-
-    """
-    sheet_name, separator, cell_ref = ref.rpartition("!")
-    if not separator or _unquote_sheet_name(sheet_name) != spec.worksheet_title:
-        return None
-
-    # A reference may cover several areas: "$B$13:$B$13 $D$13:$D$13".
-    areas = cell_ref.split()
-    updated = False
-    for index, area in enumerate(areas):
-        cell_range = CellRange(area)
-        if cell_range.min_row != spec.first_data_row or cell_range.max_row != spec.old_last_row:
+        ref = reference.f
+        if not ref:
             continue
-        if cell_range.min_col < spec.first_col or cell_range.max_col > spec.last_col:
+        new_ref = update_reference_text(ref, spec)
+        if new_ref is None:
             continue
-        # Replace only the trailing row number, preserving "$" prefixes.
-        areas[index] = re.sub(r"\d+$", str(spec.new_last_row), area)
-        updated = True
-
-    if not updated:
-        return None
-    return f"{sheet_name}!{' '.join(areas)}"
-
-
-def detect_unsupported_chart_sheets(path: Path) -> list[str]:
-    """Return sheet names that contain chartEx (extension) charts.
-
-    Excel stores "modern" chart types — waterfall, treemap, sunburst,
-    histogram, boxwhisker, funnel, etc. — as *chartEx* parts
-    (``xl/charts/chartEx*.xml``) using an extension namespace that
-    openpyxl cannot read or write.  When the workbook is saved through
-    openpyxl, these charts are **silently dropped**.
-
-    This function scans the raw ``.xlsx`` zip *before* openpyxl loads it
-    and traces the relationship chain (chartEx → drawing → worksheet)
-    to identify which sheets are affected.
-
-    Args:
-        path: Path to the ``.xlsx`` file.
-
-    Returns:
-        A list of worksheet names that contain unsupported chartEx charts.
-        Empty if the workbook has none.
-
-    """
-    try:
-        with zipfile.ZipFile(path) as z:
-            # 1. Collect chartEx basenames (e.g. "chartEx1.xml")
-            chartex_basenames: set[str] = set()
-            for name in z.namelist():
-                if "/charts/chartEx" in name and name.endswith(".xml"):
-                    chartex_basenames.add(PurePosixPath(name).name)
-
-            if not chartex_basenames:
-                return []
-
-            # 2. Find drawings that reference any chartEx file
-            affected_drawings: set[str] = set()
-            for name in z.namelist():
-                if "/drawings/_rels/" not in name or not name.endswith(".rels"):
-                    continue
-                root = ET.fromstring(z.read(name))
-                for rel in root:
-                    rel_type = rel.get("Type", "")
-                    target_basename = PurePosixPath(rel.get("Target", "")).name
-                    if "chartEx" in rel_type or target_basename in chartex_basenames:
-                        # rels file: xl/drawings/_rels/drawingN.xml.rels
-                        # → drawing file: drawingN.xml
-                        drawing_file = name.split("_rels/")[1].removesuffix(".rels")
-                        affected_drawings.add(drawing_file)
-
-            if not affected_drawings:
-                return []
-
-            # 3. Find worksheets that reference those drawings
-            affected_sheet_files: set[str] = set()
-            for name in z.namelist():
-                if "/worksheets/_rels/" not in name or not name.endswith(".rels"):
-                    continue
-                root = ET.fromstring(z.read(name))
-                for rel in root:
-                    if "drawing" not in rel.get("Type", ""):
-                        continue
-                    target_basename = PurePosixPath(rel.get("Target", "")).name
-                    if target_basename in affected_drawings:
-                        sheet_file = name.split("_rels/")[1].removesuffix(".rels")
-                        affected_sheet_files.add(sheet_file)
-
-            if not affected_sheet_files:
-                return []
-
-            # 4. Map worksheet files → sheet names via workbook.xml
-            wb_rels_root = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
-            rid_to_sheet_file: dict[str, str] = {}
-            for rel in wb_rels_root:
-                if "worksheet" in rel.get("Type", ""):
-                    rid_to_sheet_file[rel.get("Id", "")] = PurePosixPath(rel.get("Target", "")).name
-
-            wb_root = ET.fromstring(z.read("xl/workbook.xml"))
-            result: list[str] = []
-            for sheet_elem in wb_root.iter(f"{{{_MAIN_NS}}}sheet"):
-                sheet_name = sheet_elem.get("name", "")
-                rid = sheet_elem.get(f"{{{_R_NS}}}id", "")
-                if rid_to_sheet_file.get(rid, "") in affected_sheet_files:
-                    result.append(sheet_name)
-
-            return result
-
-    except Exception:
-        logger.debug("Failed to scan for chartEx charts", exc_info=True)
-        return []
+        reference.f = new_ref
+        # openpyxl does not update cached point counts; stale counts make Excel
+        # drop axis labels (especially on area charts).
+        count = point_count(new_ref)
+        for cache_name in ("strCache", "numCache"):
+            cache = getattr(reference, cache_name, None)
+            if cache is not None:
+                cache.ptCount = count
+        logger.debug("Updated chart reference: %s -> %s", ref, new_ref)

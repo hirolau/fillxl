@@ -1,7 +1,7 @@
 """Unit tests for chart helper functions.
 
-Tests the pure helper functions (all_chart_series, update_chart_data_ranges,
-detect_unsupported_chart_sheets, _fix_chart_axes) in isolation — no fill() calls.
+Tests the pure helper functions (all_chart_series, update_reference_text,
+update_chart_data_ranges, _fix_chart_axes) in isolation — no fill() calls.
 """
 
 from __future__ import annotations
@@ -9,13 +9,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, TypeVar
 
 import openpyxl
+import pytest
 
 T = TypeVar("T")
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # all_chart_series
@@ -89,6 +88,62 @@ class TestAllChartSeriesReferences:
             assert refs == []
         finally:
             wb.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# update_reference_text
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestUpdateReferenceText:
+    """One parser for chart references, shared by both engines."""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Data!$B$13:$B$13", "Data!$B$13:$B$20"),
+            ("Data!$B$13", "Data!$B$13:$B$20"),
+            ("(Data!$B$13,Data!$D$13)", "(Data!$B$13:$B$20,Data!$D$13:$D$20)"),
+            ("Data2!$B$13:$B$13", None),
+            ("Data!$B$12:$B$13", None),
+            ("[1]Data!$B$13", None),
+            ("Data!B13:B13", "Data!B13:B20"),
+        ],
+    )
+    def test_only_the_table_data_body_is_rewritten(self, text: str, expected: str | None) -> None:
+        """A reference follows the table only when it covers the body's rows."""
+        from fillxl._charts import TableChangeSpecs, update_reference_text
+
+        spec = TableChangeSpecs("Data", 12, 2, 13, 13, 20)
+        assert update_reference_text(text, spec) == expected
+
+    def test_a_row_below_the_old_last_row_is_not_mistaken_for_it(self) -> None:
+        """``$B$134`` must not be read as ``$B$13`` with a stray digit."""
+        from fillxl._charts import TableChangeSpecs, update_reference_text
+
+        spec = TableChangeSpecs("Data", 12, 2, 13, 13, 20)
+        assert update_reference_text("Data!$B$134", spec) is None
+
+    def test_a_reference_beyond_the_last_table_column_is_left_alone(self) -> None:
+        """A chart series to the right of the table does not follow it."""
+        from fillxl._charts import TableChangeSpecs, update_reference_text
+
+        spec = TableChangeSpecs("Data", 12, 2, 13, 13, 20)
+        assert update_reference_text("Data!$N$13", spec) is None
+
+    def test_a_table_that_keeps_its_size_gives_no_change(self) -> None:
+        """Nothing is rewritten when the last row does not move."""
+        from fillxl._charts import TableChangeSpecs, update_reference_text
+
+        spec = TableChangeSpecs("Data", 12, 2, 13, 13, 13)
+        assert update_reference_text("Data!$B$13:$B$13", spec) is None
+
+    def test_a_sheet_name_with_an_apostrophe_is_unquoted_before_comparison(self) -> None:
+        """Excel writes ``'Bob''s Data'``; the stored name is ``Bob's Data``."""
+        from fillxl._charts import TableChangeSpecs, update_reference_text
+
+        spec = TableChangeSpecs("Bob's Data", 1, 1, 2, 2, 5)
+        assert update_reference_text("'Bob''s Data'!$B$2", spec) == "'Bob''s Data'!$B$2:$B$5"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -276,53 +331,6 @@ class TestUpdateChartDataRanges:
         finally:
             wb.close()
 
-    def test_update_chart_data_ranges_exception_handler_is_exercised(
-        self,
-        charts_template: Path,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """When a chart reference cannot be parsed, the exception is logged."""
-        import logging
-
-        from fillxl._charts import (
-            TableChangeSpecs,
-            update_chart_data_ranges,
-        )
-
-        wb = openpyxl.load_workbook(charts_template)
-        try:
-            for sheet_name in wb.sheetnames:
-                ws = wb[sheet_name]
-                for chart in getattr(ws, "_charts", []):
-                    for ser in chart.ser:
-                        for label in ("cat", "val", "xVal", "yVal"):
-                            item = getattr(ser, label, None)
-                            if item is None:
-                                continue
-                            for ref_type in ("strRef", "numRef"):
-                                ref = getattr(item, ref_type, None)
-                                if ref is not None and ref.f:
-                                    ref.f = "TestTable!not-a-range"
-
-            caplog.set_level(logging.DEBUG)
-
-            spec = TableChangeSpecs(
-                worksheet_title="TestTable",
-                header_row=1,
-                first_col=1,
-                last_col=2,
-                old_last_row=5,
-                new_last_row=10,
-            )
-            update_chart_data_ranges(spec, wb)
-
-            assert any(
-                "Unable to update chart series reference" in record.message
-                for record in caplog.records
-            ), f"Expected exception log, got: {[r.message for r in caplog.records]}"
-        finally:
-            wb.close()
-
     def test_update_chart_data_ranges_skips_ref_not_starting_at_data_row(self) -> None:
         """A chart ref that starts at the header row is skipped."""
         from fillxl._charts import (
@@ -454,31 +462,6 @@ class TestWin32ComSeriesFormula:
 
         spec = TableChangeSpecs("Data", 12, 2, 3, 13, 20)
         assert _update_series_formula("=SERIES(T,'Data'!$B$:B$13,1)", spec) is None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# detect_unsupported_chart_sheets
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class TestDetectUnsupportedChartSheets:
-    """Unit tests for detect_unsupported_chart_sheets()."""
-
-    def test_detect_returns_empty_for_non_existent_file(self, tmp_path: Path) -> None:
-        """A non-existent file returns empty list (no crash)."""
-        from fillxl._charts import detect_unsupported_chart_sheets
-
-        result = detect_unsupported_chart_sheets(tmp_path / "nonexistent.xlsx")
-        assert result == []
-
-    def test_detect_returns_empty_for_invalid_zip(self, tmp_path: Path) -> None:
-        """An invalid .xlsx file returns empty list (no crash)."""
-        from fillxl._charts import detect_unsupported_chart_sheets
-
-        bad_file = tmp_path / "bad.xlsx"
-        bad_file.write_text("not a zip file")
-        result = detect_unsupported_chart_sheets(bad_file)
-        assert result == []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

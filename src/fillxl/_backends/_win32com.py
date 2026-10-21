@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import re
 import sys
 import threading
 import time
@@ -22,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._cells import named_cell_target
-from fillxl._charts import TableChangeSpecs, _unquote_sheet_name
+from fillxl._charts import TableChangeSpecs, split_formula_arguments, update_reference_text
 from fillxl._formulas import (
     BodyState,
     ColumnFormulaEvidence,
@@ -38,6 +37,7 @@ from fillxl._normalize import (
 from fillxl._utils import col_to_excel
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from fillxl._config import FillXLConfig
@@ -65,11 +65,6 @@ _FILE_FORMATS: dict[str, int] = {
     ".xlsb": 50,  # xlExcel12
     ".xls": 56,  # xlExcel8
 }
-
-# A chart series formula contains references such as 'Sheet 1'!$B$13:$B$13.
-_SERIES_RANGE_RE = re.compile(
-    r"(?:'[^']+'|[A-Za-z0-9_.]+)!\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?",
-)
 
 
 class Win32ComBackend:
@@ -493,40 +488,37 @@ class Win32ComBackend:
         )
 
     def update_charts(self, spec: TableChangeSpecs) -> None:
-        """Update chart data ranges after a table resize.
+        """Point chart series that show the resized table at its new rows.
 
-        Iterates all ``ChartObject`` items across all worksheets and updates
-        series formulas that reference the resized table.
+        Covers charts embedded in worksheets and charts on their own chart sheet.
 
         Args:
             spec: The table dimension change to reflect in charts.
 
         """
         self._ensure_workbook()
+        for chart in self._iter_charts():
+            for series in chart.SeriesCollection():
+                try:
+                    formula = str(series.Formula)
+                except Exception:  # e.g. pivot chart series have no formula
+                    continue
+                updated = _update_series_formula(formula, spec)
+                if updated is None:
+                    continue
+                try:
+                    series.Formula = updated
+                except Exception as exc:
+                    msg = f"Could not update chart series {formula!r} to {updated!r}: {exc}"
+                    raise RuntimeError(msg) from exc
+                logger.debug("Updated chart series formula: %s -> %s", formula, updated)
 
-        for sheet in self._workbook.Sheets:
-            try:
-                chart_objects = sheet.ChartObjects()
-            except Exception:
-                continue
-
-            for chart_obj in chart_objects:
-                chart = chart_obj.Chart
-                for series in chart.SeriesCollection():
-                    try:
-                        formula = series.Formula
-                        if not formula:
-                            continue
-                    except Exception:
-                        continue
-
-                    # Parse the formula to find end row references
-                    # Formula format: =SERIES(name, x_values, y_values, plot_order)
-                    # Each range is like: 'Sheet'!$A$2:$A$N
-                    updated = _update_series_formula(formula, spec)
-                    if updated:
-                        logger.debug("Updated chart series formula: %s -> %s", formula, updated)
-                        series.Formula = updated
+    def _iter_charts(self) -> Iterator[Any]:
+        for sheet in self._workbook.Worksheets:
+            for chart_object in sheet.ChartObjects():
+                yield chart_object.Chart
+        # A chart sheet is itself a Chart; it holds no ChartObjects.
+        yield from self._workbook.Charts
 
     def set_pivot_refresh(self) -> None:
         """Mark all pivot caches for refresh, and refresh them now.
@@ -974,17 +966,14 @@ def _extend_conditional_formatting_com(
         condition.ModifyAppliesToRange(new_range)
 
 
+_SERIES_PREFIX = "=SERIES("
+# =SERIES(name, categories, values, order[, bubble sizes]): the name and the
+# plot order are never table data, so only these arguments are rewritten.
+_SERIES_DATA_ARGUMENTS = (1, 2, 4)
+
+
 def _update_series_formula(formula: str, spec: TableChangeSpecs) -> str | None:
     """Update a chart series formula to reflect the table's new last row.
-
-    Only references that point at the table's data body — starting one row
-    below the header, ending at the table's last row, and within the table's
-    columns — are updated.  The sheet name is compared exactly, so a chart on
-    ``Data2`` is left alone while ``Data`` is filled.
-
-    Args:
-        formula: The original series formula (e.g., ``=SERIES(...)``).
-        spec: The table change to apply.
 
     Returns:
         The updated formula string, or ``None`` if no update was needed.
@@ -995,28 +984,19 @@ def _update_series_formula(formula: str, spec: TableChangeSpecs) -> str | None:
         "=SERIES(T,'Data'!$B$13:$B$20,1)"
         >>> _update_series_formula("=SERIES(T,'Data2'!$B$13:$B$13,1)", spec) is None
         True
+        >>> _update_series_formula("=SERIES(Data!$B$13,,Data!$C$13,1)", spec)
+        '=SERIES(Data!$B$13,,Data!$C$13:$C$20,1)'
 
     """
-    updated_any = False
-
-    def _replace_reference(match: re.Match[str]) -> str:
-        nonlocal updated_any
-        reference = match.group(0)
-        sheet_part, separator, cell_part = reference.rpartition("!")
-        if not separator or _unquote_sheet_name(sheet_part) != spec.worksheet_title:
-            return reference
-        try:
-            cell_range = CellRange(cell_part)
-        except ValueError:
-            return reference
-        if cell_range.min_row != spec.first_data_row or cell_range.max_row != spec.old_last_row:
-            return reference
-        if cell_range.min_col < spec.first_col or cell_range.max_col > spec.last_col:
-            return reference
-        updated_any = True
-        # Replace only the trailing row number, preserving "$" prefixes.
-        new_cell_part = re.sub(r"\d+$", str(spec.new_last_row), cell_part)
-        return f"{sheet_part}!{new_cell_part}"
-
-    updated = str(_SERIES_RANGE_RE.sub(_replace_reference, formula))
-    return updated if updated_any else None
+    if not (formula.upper().startswith(_SERIES_PREFIX) and formula.endswith(")")):
+        return None
+    head = formula[: len(_SERIES_PREFIX)]
+    arguments = split_formula_arguments(formula[len(_SERIES_PREFIX) : -1])
+    changed = False
+    for index in _SERIES_DATA_ARGUMENTS:
+        if index < len(arguments):
+            updated = update_reference_text(arguments[index], spec)
+            if updated is not None:
+                arguments[index] = updated
+                changed = True
+    return head + ",".join(arguments) + ")" if changed else None

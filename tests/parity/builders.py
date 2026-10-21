@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook
+from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.data_source import NumData
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.filters import AutoFilter
@@ -94,5 +96,52 @@ def named_cells_template(
     for name, (coordinate, value) in cells.items():
         worksheet[coordinate] = value
         workbook.defined_names.add(DefinedName(name, attr_text=f"'{sheet}'!{coordinate}"))
+    workbook.save(path)
+    return path
+
+
+def chart_template(
+    path: Path,
+    *,
+    sheet: str = "Data",
+    header: tuple[str, ...] = ("fund", "nav"),
+    body: tuple[tuple[Any, ...], ...] = (("A", 1),),
+    reference: str = "Data!$B$2",
+    chart_sheet: bool = False,
+    cache_points: int | None = None,
+) -> Path:
+    """A workbook with one table and a bar chart whose values point at *reference*."""
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = sheet
+    for col, title in enumerate(header, start=1):
+        worksheet.cell(row=1, column=col, value=title)
+    for row, values in enumerate(body, start=2):
+        for col, value in enumerate(values, start=1):
+            worksheet.cell(row=row, column=col, value=value)
+    last_row = 1 + len(body)
+    last_col = get_column_letter(len(header))
+
+    table = Table(
+        displayName="Sales",
+        ref=f"A1:{last_col}{last_row}",
+        tableColumns=[TableColumn(id=i, name=title) for i, title in enumerate(header, start=1)],
+        tableStyleInfo=TableStyleInfo(name="TableStyleMedium2", showRowStripes=True),
+    )
+    table.autoFilter = AutoFilter(ref=f"A1:{last_col}{last_row}")
+    worksheet.add_table(table)
+
+    chart = BarChart()
+    chart.title = "Chart"
+    chart.add_data(
+        Reference(worksheet, min_col=2, min_row=1, max_row=last_row), titles_from_data=True
+    )
+    chart.series[0].val.numRef.f = reference
+    if cache_points is not None:
+        chart.series[0].val.numRef.numCache = NumData(ptCount=cache_points)
+    if chart_sheet:
+        workbook.create_chartsheet("Chart Sheet").add_chart(chart)
+    else:
+        workbook.create_sheet("Charts").add_chart(chart, "A1")
     workbook.save(path)
     return path

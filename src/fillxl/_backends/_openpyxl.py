@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import warnings
 from typing import TYPE_CHECKING, Any
 
 import openpyxl
@@ -13,7 +12,6 @@ from fillxl._adapters import TabularAdapter
 from fillxl._cells import populate_named_cells
 from fillxl._charts import (
     TableChangeSpecs,
-    detect_unsupported_chart_sheets,
     update_chart_data_ranges,
 )
 from fillxl._tables import populate_table
@@ -29,14 +27,6 @@ logger = logging.getLogger(__name__)
 
 _OPENPYXL_SUFFIXES = (".xlsx", ".xlsm")
 
-_CHARTEX_WARNING = (
-    "Sheet(s) {sheets} contain chartEx charts (waterfall, treemap, "
-    "sunburst, histogram, boxwhisker, funnel, etc.) that openpyxl "
-    "cannot preserve. These charts will be lost when the workbook "
-    "is saved. Use the win32com backend (engine='win32com') to "
-    "preserve them."
-)
-
 
 class OpenpyxlBackend:
     """Backend implementation using openpyxl.
@@ -48,7 +38,6 @@ class OpenpyxlBackend:
 
     def __init__(self) -> None:
         self._workbook: openpyxl.Workbook | None = None
-        self._unsupported_chart_sheets: list[str] = []
         self._source_suffix: str | None = None
 
     def _require_workbook(self) -> openpyxl.Workbook:
@@ -82,15 +71,6 @@ class OpenpyxlBackend:
             )
             raise ValueError(msg)
 
-        # Detect chartEx charts (waterfall, treemap, etc.) that openpyxl
-        # cannot preserve — they will be silently dropped on save.
-        self._unsupported_chart_sheets = detect_unsupported_chart_sheets(path)
-        if self._unsupported_chart_sheets:
-            msg = _CHARTEX_WARNING.format(
-                sheets=", ".join(repr(s) for s in self._unsupported_chart_sheets),
-            )
-            logger.warning(msg)
-            warnings.warn(msg, stacklevel=2)
         self._source_suffix = ext
         self._workbook = openpyxl.load_workbook(path, keep_vba=ext == ".xlsm")
         _fix_chart_axes(self._workbook)

@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from fillxl._normalize import (
+    check_cell_value,
     is_formula_string,
     normalize_value,
     prepare_cell_value,
@@ -94,8 +95,11 @@ class TestNumpyScalars:
         """Missing datetime64 values become empty cells."""
         assert normalize_value(np.datetime64("NaT", "ns")) is None
 
-    def test_a_date_unit_numpy_datetime64_becomes_a_datetime(self) -> None:
-        assert normalize_value(np.datetime64("2025-06-15")) == dt.datetime(2025, 6, 15, 0, 0)
+    def test_numpy_day_precision_dates_arrive_as_dates(self) -> None:
+        """A day-precision datetime64 is a date, so it gets a date-only format."""
+        result = normalize_value(np.datetime64("2025-06-15"))
+        assert result == dt.date(2025, 6, 15)
+        assert not isinstance(result, dt.datetime)
 
     def test_a_longdouble_becomes_a_float_not_text(self) -> None:
         """np.longdouble.item() returns another NumPy scalar, not a float."""
@@ -128,9 +132,15 @@ class TestPandasSentinels:
 class TestValueNormalisation:
     """Date, time, duration and decimal handling."""
 
-    def test_a_date_becomes_a_midnight_datetime(self) -> None:
-        """Excel has no date type; everything is a serial number."""
-        assert normalize_value(dt.date(2025, 12, 25)) == dt.datetime(2025, 12, 25, 0, 0)
+    def test_a_date_stays_a_date_until_it_reaches_excel(self) -> None:
+        """Excel has no date type, but the two engines need to tell them apart."""
+        from fillxl._normalize import prepare_com_value
+
+        result = normalize_value(dt.date(2025, 12, 25))
+
+        assert result == dt.date(2025, 12, 25)
+        assert not isinstance(result, dt.datetime)
+        assert prepare_com_value(result).isoformat() == "2025-12-25T00:00:00+00:00"
 
     def test_time_becomes_a_fraction_of_a_day(self) -> None:
         """Excel stores a time as the part of a day that has elapsed."""
@@ -179,6 +189,16 @@ class TestValueNormalisation:
 
         assert isinstance(error, ValueError)
         assert str(error) == "Table 'Sales', data row 2, column 'Notes': too long"
+
+    def test_dates_before_march_1900_are_refused_because_excel_miscounts_them(self) -> None:
+        """Excel counts a 29 February 1900, so the engines disagree before March."""
+        from fillxl import CellValueError
+
+        for value in (dt.date(1900, 2, 28), dt.datetime(1900, 2, 28, 12)):
+            with pytest.raises(CellValueError, match="before 1900-03-01"):
+                check_cell_value(value)
+
+        check_cell_value(dt.date(1900, 3, 1))
 
 
 class TestTimezoneHandling:

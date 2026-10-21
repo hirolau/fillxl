@@ -26,6 +26,7 @@ def validate_columns(
     strategy: ColumnValidationStrategy = "all_but_formulas",
     *,
     formula_columns: list[str] | None = None,
+    table_name: str | None = None,
 ) -> None:
     """Validate data columns against Excel table columns.
 
@@ -50,93 +51,67 @@ def validate_columns(
             - ``"warn"``: Log warnings but proceed with best-effort fill.
         formula_columns: Names of table columns that are formulas.  Only
             relevant for ``"all_but_formulas"`` / ``"all_but_formulas_strict"``.
+        table_name: Name of the table, used in error and log messages.
 
     Raises:
         ValueError: If *strategy* is ``"strict"``, ``"all_but_formulas"``, or
             ``"all_but_formulas_strict"`` and the validation fails.
 
     """
-    # "none" skips all checks
-    if strategy == "none":
+    if strategy == "none" or not data_columns:
         return
 
-    # An empty payload has no schema to validate.  It is an explicit request
-    # to clear the table, not a column mismatch.
-    if not data_columns:
-        return
-
+    where = f"table {table_name!r}" if table_name else "table"
+    label = f"Table {table_name!r}" if table_name else "Table"
     formula_set = set(formula_columns or [])
-
-    # For "all_but_formulas" modes, exclude formula columns from the table
-    # columns we compare against.
     if strategy in ("all_but_formulas", "all_but_formulas_strict"):
-        effective_table_columns = [c for c in table_columns if c not in formula_set]
+        effective = [c for c in table_columns if c not in formula_set]
     else:
-        effective_table_columns = table_columns
+        effective = list(table_columns)
 
-    table_set = set(effective_table_columns)
-    data_set = set(data_columns)
-
-    missing = table_set - data_set  # columns in table but not in data
-    extra = data_set - table_set  # columns in data but not in table
-
+    missing = sorted(set(effective) - set(data_columns))
+    extra = sorted(set(data_columns) - set(effective))
     if not missing and not extra:
         return
 
-    # ── Strict modes ───────────────────────────────────────────────────────
+    details = "; ".join(
+        part
+        for part in (
+            f"missing columns: {missing}" if missing else "",
+            f"extra columns: {extra}" if extra else "",
+        )
+        if part
+    )
 
     if strategy == "strict":
-        msg_parts = []
-        if missing:
-            msg_parts.append(f"Missing columns: {sorted(missing)}")
-        if extra:
-            msg_parts.append(f"Extra columns: {sorted(extra)}")
         msg = (
-            f"Column mismatch for table. "
-            f"{'; '.join(msg_parts)}. "
-            f"Table columns: {table_columns}. "
+            f"Column mismatch for {where}: {details}. "
+            f"Table columns: {table_columns}. Data columns: {data_columns}."
+        )
+        raise ValueError(msg)
+    if strategy == "all_but_formulas_strict":
+        msg = (
+            f"Column mismatch for {where} (all_but_formulas_strict): {details}. "
+            f"Table columns (excluding calculated columns): {effective}. "
             f"Data columns: {data_columns}."
         )
         raise ValueError(msg)
-
-    if strategy == "all_but_formulas_strict":
-        msg_parts = []
-        if missing:
-            msg_parts.append(f"Missing columns: {sorted(missing)}")
-        if extra:
-            msg_parts.append(f"Extra columns: {sorted(extra)}")
-        if msg_parts:
-            msg = (
-                f"Column mismatch for table (all_but_formulas_strict). "
-                f"{'; '.join(msg_parts)}. "
-                f"Table columns (excl. formulas): {effective_table_columns}. "
-                f"Data columns: {data_columns}."
-            )
-            raise ValueError(msg)
-        return
-
     if strategy == "all_but_formulas":
         if missing:
             msg = (
-                f"Missing columns in data (all_but_formulas). "
-                f"These non-formula table columns have no matching data column: "
-                f"{sorted(missing)}. "
-                f"Table columns (excl. formulas): {effective_table_columns}. "
-                f"Data columns: {data_columns}."
+                f"Column mismatch for {where} (all_but_formulas): these table columns have "
+                f"no data column: {missing}. Table columns (excluding calculated columns): "
+                f"{effective}. Data columns: {data_columns}."
             )
             raise ValueError(msg)
         return
-
-    # ── Non-strict modes ───────────────────────────────────────────────────
-
     if strategy == "drop":
         if extra:
-            logger.info("Dropping extra data columns: %s", sorted(extra))
+            logger.info("%s: dropping extra data columns %s", label, extra)
         if missing:
-            logger.info("Skipping missing table columns: %s", sorted(missing))
+            logger.info("%s: leaving table columns without data empty: %s", label, missing)
         return
-
     if missing:
-        logger.warning("Data missing columns expected by table: %s", sorted(missing))
+        logger.warning("%s: data is missing columns %s", label, missing)
     if extra:
-        logger.warning("Data has extra columns not in table: %s", sorted(extra))
+        logger.warning("%s: data has extra columns %s", label, extra)

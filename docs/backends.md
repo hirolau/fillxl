@@ -2,8 +2,14 @@
 
 fillxl supports two backend engines for writing Excel files. Choose based on your platform and fidelity requirements.
 
-Both engines are expected to produce **the same values** for the same input;
-the test suite enforces that with a cross-backend equivalence suite.
+Both engines produce **the same workbook** for the same template and data: the
+same values, number formats, chart references and sheet states. A *parity* suite
+fills one template with both engines and compares the results cell by cell, and a
+cross-backend equivalence suite checks the values.
+
+`engine="auto"` (the default) uses `openpyxl` for `.xlsx`/`.xlsm` templates
+saved in the same format, and `win32com` when openpyxl cannot do the job
+(`.xlsb`/`.xls` templates, format conversion) and Excel is available.
 
 ## Comparison
 
@@ -33,7 +39,7 @@ fill(template="tpl.xlsx", output="out.xlsx", ..., engine="openpyxl")
 
 - Does **not** support `.xlsb` or legacy `.xls`
 - Drops some modern chart types (e.g., sunburst, treemap), slicers and other
-  parts; `on_lossy` reports what was lost
+  parts; `on_lossy` reports what was lost as `LossyTemplateWarning`
 - No dynamic array formula support
 - Writes no cached formula results: the output sets `fullCalcOnLoad` so Excel
   recalculates on open. Use `engine="win32com"` when the saved file must
@@ -54,6 +60,8 @@ fill(template="tpl.xlsm", output="out.xlsm", ..., engine="win32com")
 - **Full fidelity** — all Excel features preserved
 - Supports all modern chart types
 - Handles `.xlsm` and `.xlsb` formats
+- Recalculates before refreshing pivot caches and before saving, so pivots on
+  calculated columns and formulas reading named cells show the new data
 
 ### Limitations
 

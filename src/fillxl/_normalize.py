@@ -17,8 +17,8 @@ Normalisation rules (applied in order):
        marker.
     4. ``float('nan')``, ``float('inf'), float('-inf')`` → ``None``
        (Excel cannot represent IEEE-754 special values).
-    5. ``datetime.date`` → ``datetime.datetime`` (Excel has no native
-       ``date`` type — everything is a serial number).
+    5. ``datetime.date`` stays a ``date`` so it can get a date-only number
+        format; the COM edge converts it.
     6. ``datetime.time`` → ``float`` (fraction of a 24-hour day), which is
        Excel's own time representation, so arithmetic such as ``=A2*24``
        works.  The template's number format controls the display.
@@ -31,8 +31,8 @@ Normalisation rules (applied in order):
    10. Unrecognised objects → ``str(obj)`` via ``__str__``.
 
 Values Excel cannot store faithfully (text longer than 32,767 characters,
-illegal control characters, dates before 1900, integers with more than 15
-significant digits) are reported by :func:`check_cell_value`.
+illegal control characters, dates before 1900-03-01, integers with more than
+15 significant digits) are reported by :func:`check_cell_value`.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 _MAX_TEXT_LENGTH = 32_767
 _MAX_SIGNIFICANT_DIGITS = 15
 _SIGNIFICANT_DIGIT_FLOOR = 10**_MAX_SIGNIFICANT_DIGITS
-_FIRST_EXCEL_DATE = dt.datetime(1900, 1, 1)
+_FIRST_EXCEL_DATE = dt.date(1900, 3, 1)
 
 Severity = Literal["error", "warning"]
 
@@ -144,10 +144,14 @@ def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN4
                 "round it; pass it as text if it is an identifier"
             )
         return None
-    if isinstance(value, dt.datetime) and value < _FIRST_EXCEL_DATE:
-        return "error", (
-            f"date {value.isoformat()} is before 1900-01-01, the first date Excel can store"
-        )
+    if isinstance(value, dt.date):
+        day = value.date() if isinstance(value, dt.datetime) else value
+        if day < _FIRST_EXCEL_DATE:
+            return "error", (
+                f"date {value.isoformat()} is before 1900-03-01; Excel's calendar is wrong "
+                "before that day (it counts a 29 February 1900), so it cannot be written "
+                "reliably"
+            )
     return None
 
 
@@ -258,7 +262,7 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     2. Empty strings → ``None`` (openpyxl cannot round-trip them).
     3. NumPy scalars → native Python values.
     4. IEEE-754 special floats (NaN, Inf, -Inf) → ``None``.
-    5. ``date`` → ``datetime`` (Excel has no native ``date`` type).
+    5. ``date`` stays a ``date`` (the COM edge converts it).
     6. ``time`` → ``float`` (fraction of a day).
     7. ``timedelta`` → ``float`` (fraction of a 24-hour day).
     8. ``Decimal`` → ``float``.
@@ -291,7 +295,7 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
         True
         >>> from datetime import date, datetime, time, timedelta
         >>> normalize_value(date(2025, 12, 25))
-        datetime.datetime(2025, 12, 25, 0, 0)
+        datetime.date(2025, 12, 25)
         >>> round(normalize_value(time(9, 15, 30)) * 24, 6)
         9.258333
         >>> normalize_value(timedelta(hours=6))
@@ -328,9 +332,9 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
         return None
 
-    # ── 5. date → datetime ────────────────────────────────────────────────
-    if isinstance(value, dt.date) and not isinstance(value, dt.datetime):
-        value = dt.datetime(value.year, value.month, value.day)
+    # ── 5. date stays a date so it can get a date-only format ─────────────
+    # Excel has no date type, but openpyxl (and the COM edge) need the
+    # distinction to choose between ``yyyy-mm-dd`` and ``yyyy-mm-dd h:mm:ss``.
 
     # ── 6. time → fraction of a day (Excel's own representation) ──────────
     if isinstance(value, dt.time):
@@ -350,10 +354,7 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     value = normalize_datetime(value)
 
     # ── 10. Recognised Excel-compatible primitives pass through unchanged ─
-    if value is None or isinstance(
-        value,
-        (str, int, float, bool, dt.datetime),
-    ):
+    if value is None or isinstance(value, (str, int, float, bool, dt.date)):
         return value
 
     # ── 11. Unrecognised → string ────────────────────────────────────────
@@ -486,7 +487,7 @@ def prepare_cell_value(value: Any) -> Any:  # noqa: ANN401
     Examples:
         >>> import datetime as dt
         >>> prepare_cell_value(dt.date(2025, 1, 2))
-        datetime.datetime(2025, 1, 2, 0, 0)
+        datetime.date(2025, 1, 2)
 
     """
     return normalize_value(_to_python_datetime(value))
@@ -534,11 +535,19 @@ def prepare_com_value(value: Any, *, escape_formulas: bool = False) -> Any:  # n
 
 
 def com_value_from_normalized(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
-    """The COM-specific part of :func:`prepare_com_value` for an already normalised value."""
+    """The COM-specific part of :func:`prepare_com_value` for an already normalised value.
+
+    Examples:
+        >>> com_value_from_normalized(dt.date(2025, 6, 15)).isoformat()
+        '2025-06-15T00:00:00+00:00'
+
+    """
     if isinstance(value, str):
         if escape_formulas or not value.startswith("="):
             return "'" + value
         return value
     if isinstance(value, dt.datetime):
         return value.replace(tzinfo=dt.UTC)
+    if isinstance(value, dt.date):
+        return dt.datetime(value.year, value.month, value.day, tzinfo=dt.UTC)
     return value

@@ -55,12 +55,16 @@ class TestOpenpyxlRejectsUnsupportedFormats:
         with pytest.raises(ValueError, match="not supported by the openpyxl backend"):
             fill(template=template, output=output, engine="openpyxl")
 
-    def test_auto_engine_also_rejects_non_xlsx(self, tmp_path: Path) -> None:
-        """'auto' maps to openpyxl, so .xlsb fails the same way."""
+    def test_auto_engine_hands_a_non_xlsx_template_to_excel(self, tmp_path: Path) -> None:
+        """'auto' sends .xlsb to Excel; without Excel, openpyxl explains why."""
         template = ASSETS / "test_template_1_xlsb.xlsb"
-        output = tmp_path / "out.xlsx"
-        with pytest.raises(ValueError, match="not supported by the openpyxl backend"):
+        output = tmp_path / "out.xlsb"
+        try:
             fill(template=template, output=output, engine="auto")
+        except ValueError as exc:
+            assert "not supported by the openpyxl backend" in str(exc)
+            pytest.skip("needs Excel to fill a .xlsb template")
+        assert output.exists()
 
     def test_openpyxl_accepts_xlsx(self, tmp_path: Path) -> None:
         """Plain .xlsx works fine with openpyxl."""

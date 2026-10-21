@@ -61,10 +61,11 @@ pip install fillxl[all]      # pandas + polars + duckdb
 
 Tables are automatically resized, charts updated, and all formatting preserved.
 
-**Backend (optional)**
+**Engine**
 
 ```python
-fill(..., engine="openpyxl")   # default, cross-platform
+fill(..., engine="auto")       # default: openpyxl unless Excel is needed
+fill(..., engine="openpyxl")   # cross-platform, no Excel needed
 fill(..., engine="win32com")   # Windows + Excel installed (maximum fidelity)
 ```
 
@@ -101,15 +102,101 @@ fill(..., engine="win32com")   # Windows + Excel installed (maximum fidelity)
 fill(
     template: str | Path,
     output: str | Path,
+    *,
     values: dict[str, Any] | None = None,
     tables: dict[str, TabularData] | None = None,
-    *,
     engine: Engine = "auto",   # "auto", "openpyxl", "win32com"
     config: FillXLConfig | None = None
 ) -> Path
 ```
 
 See the full documentation for `FillXLConfig` options.
+
+---
+
+## Choosing an engine
+
+`engine="auto"` (the default) picks the engine that can do the job:
+
+| Template → output | Engine used |
+|-------------------|-------------|
+| `.xlsx` → `.xlsx`, `.xlsm` → `.xlsm` | `openpyxl` (no Excel needed) |
+| `.xlsb`/`.xls` template, or a format conversion | `win32com` when Excel is available |
+| anything else, without Excel | `openpyxl`, whose error says what is missing |
+
+Pass `engine="openpyxl"` or `engine="win32com"` to choose explicitly. Both
+engines produce the same workbook for the same template and data, and a parity
+test suite checks it — see [Backends](backends.md).
+
+---
+
+## Dates
+
+- A `date` is written with the number format `yyyy-mm-dd`; a `datetime` with
+  `yyyy-mm-dd h:mm:ss`. Both engines use these defaults, so a date never shows
+  up as a midnight timestamp.
+- A date format already in the template wins: format the cell in Excel (for
+  example `dd.mm.yyyy`) and fillxl leaves it alone.
+- Dates before **1900-03-01** raise `CellValueError`. Excel counts a 29
+  February 1900 that never existed, so the two engines cannot agree before
+  that day.
+- Timezone-aware datetimes lose their offset; the wall-clock time is kept.
+
+---
+
+## Sheets
+
+After filling, fillxl can tidy the workbook up:
+
+```python
+from fillxl import FillXLConfig, fill
+
+fill(
+    template="template.xlsx",
+    output="report.xlsx",
+    config=FillXLConfig(
+        hide_underscore_sheets=True,      # hide "_data", "_lookups", …
+        delete_sheets=["RawData"],        # remove sheets that must not ship
+        active_sheet="Report",            # what the reader sees first
+    ),
+)
+```
+
+- Only **visible** sheets are hidden, and the sheet that was active always
+  moves to a visible one.
+- Hiding or deleting every visible sheet raises `ValueError`: Excel requires at
+  least one.
+- A sheet that should have been deleted but could not be raises
+  `RuntimeError`, because a leftover sheet must not leak into a report.
+- A hidden sheet cannot be made active (`ValueError`), and exactly one tab is
+  left selected so Excel does not open the workbook with sheets grouped.
+
+---
+
+## Warnings
+
+The openpyxl engine cannot write every template feature (modern charts,
+slicers, shapes, …). When it drops one it warns once, after the output has been
+saved:
+
+```python
+import warnings
+from fillxl import LossyTemplateWarning
+
+warnings.filterwarnings("error", category=LossyTemplateWarning)  # fail instead
+```
+
+Batch jobs that only watch logs can route warnings into `logging`:
+
+```python
+import logging
+
+logging.captureWarnings(True)
+```
+
+Set `FillXLConfig(on_lossy="ignore")` to silence them, or `on_lossy="raise"` to
+turn them into `LossyTemplateError`.
+
 
 ---
 
@@ -138,10 +225,15 @@ and is meant to contain formulas.
 | `""` | empty cell (openpyxl cannot round-trip an empty text cell) |
 | `int`, `float`, `Decimal`, NumPy scalars | number |
 | `bool` | boolean |
-| `date`, `time`, `datetime` | date/time serial (timezone stripped) |
+| `date` | date serial, shown as `yyyy-mm-dd` |
+| `datetime` | date/time serial, shown as `yyyy-mm-dd h:mm:ss` |
+| `time` | fraction of a day |
 | `timedelta` | fraction of a day |
 | `None`, `NaN`, `pd.NA`, `pd.NaT` | empty cell |
 | `"=SUM(A1:A2)"` | literal text (formula with `escape_formulas=False`) |
+
+A date format already in the template wins over the defaults, and dates before
+1900-03-01 are refused — see [Dates](#dates).
 
 ---
 
@@ -153,8 +245,27 @@ and is meant to contain formulas.
 | `win32com` | Windows only   | Yes            | `.xlsb`/`.xls`, modern charts |
 
 Both engines write the same values for the same input; the test suite enforces
-this with a cross-backend equivalence suite. See [Backends](backends.md) for the
-engine-specific details.
+this with a cross-backend equivalence suite and a parity suite that fills the
+same template with both engines and compares the workbooks. See
+[Backends](backends.md) for the engine-specific details.
+
+---
+
+## Upgrading from 0.5
+
+- `values` and `tables` are keyword-only. `fill(template, output, values, tables)`
+  still works but warns (`DeprecationWarning`) and stops working in 0.7.0.
+- `engine="auto"` may now start Excel: `.xlsb`/`.xls` templates and format
+  conversions go to the win32com engine when Excel is installed. On machines
+  without Excel it still uses openpyxl and reports what is missing.
+- Dates are no longer converted to midnight timestamps. They show as
+  `yyyy-mm-dd` unless the template cell has a date format, and dates before
+  1900-03-01 raise `CellValueError`.
+- New exceptions: `ValueError` when an action would leave no visible sheet or
+  would activate a hidden one, and `RuntimeError` when a sheet that should be
+  deleted cannot be.
+- Lossy-template warnings use `LossyTemplateWarning` and are no longer logged;
+  filter the category to treat them as errors.
 
 ---
 
@@ -175,6 +286,7 @@ Benchmark: **5,000 rows × 20 columns** (list[dict] data).
 - `openpyxl` does not support dynamic arrays, `.xlsb`, or `.xls` files and drops some modern chart types (reported by `on_lossy`).
 - `win32com` requires Windows + Excel.
 - Timezone-aware datetimes are converted to naive (wall-clock preserved).
+- Dates before 1900-03-01 are refused: Excel's calendar is wrong before that day.
 - Tables with a totals row are supported: the totals row stays directly below the data body, keeping its labels, functions and styling. Totals formulas written as explicit ranges (e.g. `SUM(B2:B5)`) are not rewritten.
 - Tables without a header row are supported: Excel names their columns `Column1`, `Column2`, …, so pass those names as the data keys.
 - Strings starting with `=` are written as literal text by default; pass `FillXLConfig(escape_formulas=False)` only when the data is trusted and meant to contain formulas.

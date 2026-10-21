@@ -1,0 +1,35 @@
+name: Parity
+
+# Fills the same template with both engines and compares the workbooks.
+# It needs Windows with Microsoft Excel, which no hosted runner has, so this
+# runs on a self-hosted Windows runner labelled "excel".
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # nightly
+  workflow_dispatch:
+
+jobs:
+  parity:
+    runs-on: [self-hosted, windows, excel]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run the parity suite
+        run: uv run pytest tests/parity -m excel -q
+
+      - name: Run the Excel-only tests
+        run: uv run pytest tests/ -m excel -q

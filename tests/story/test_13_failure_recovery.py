@@ -156,7 +156,7 @@ class TestFailureOnValidation:
 
         data = [{"WrongColumn": 123}]
 
-        with pytest.raises(ValueError, match="Missing columns"):
+        with pytest.raises(ValueError, match="missing columns"):
             fill(
                 template=output_path.with_name("tmpl.xlsx"),
                 output=output_path,

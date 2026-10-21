@@ -206,8 +206,15 @@ class TabularAdapter:
             return
 
         if isinstance(data, dict):
-            first_value: Any = next(iter(data.values()))
-            if _is_column_values(first_value):
+            scalars = [str(key) for key, value in data.items() if not _is_column_values(value)]
+            if scalars and len(scalars) < len(data):
+                msg = (
+                    f"dict[str, column] data mixes columns and scalars: {scalars} are not "
+                    "columns. Wrap a single value in a list, or pass it through values= if "
+                    "it belongs in a named cell."
+                )
+                raise TypeError(msg)
+            if not scalars:
                 keys = list(data)
                 self._columns = _normalize_column_names(keys)
                 # Materialise each column positionally: list(Series) ignores
@@ -217,6 +224,11 @@ class TabularAdapter:
                 self._rows = [list(row) for row in zip(*column_values, strict=True)]
                 logger.debug("Detected dict[str, column] with %d columns", len(keys))
                 return
+            msg = (
+                "A dict of scalars is not tabular data. Pass it as values= to fill named "
+                "cells, or wrap every value in a list to make a one-row table."
+            )
+            raise TypeError(msg)
 
         # If we get here, it's not tabular data
         msg = (
@@ -250,29 +262,3 @@ class TabularAdapter:
             msg = "Rows not initialized"
             raise RuntimeError(msg)
         return self._rows
-
-    @property
-    def iter_rows(self) -> Iterable[Sequence[Any]]:
-        """Get a fresh iterator over the rows."""
-        return iter(self.rows)
-
-    @staticmethod
-    def is_tabular(data: Any) -> bool:  # noqa: ANN401
-        """Check if data appears to be tabular.
-
-        Args:
-            data: Data to check
-
-        Returns:
-            True if data is likely tabular, False otherwise
-
-        """
-        # Quick check without importing heavy dependencies.  Empty payloads
-        # are valid tabular data — they clear a table.
-        if isinstance(data, list):
-            return not data or isinstance(data[0], dict)
-        if isinstance(data, dict):
-            return not data or _is_column_values(next(iter(data.values())))
-
-        # Check for known DataFrame types by class name to avoid imports
-        return type(data).__name__ in ("DataFrame", "DuckDBPyRelation")

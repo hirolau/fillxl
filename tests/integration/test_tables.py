@@ -378,3 +378,76 @@ def test_an_empty_dataframe_leaves_one_cleared_body_row(output_path: Path) -> No
         ]
     finally:
         wb.close()
+
+
+def _sales_template(path: Path) -> Path:
+    """A workbook with a table called ``Sales`` on a sheet called ``Data``."""
+    from tests.parity.builders import table_template
+
+    return table_template(path, name="Sales", sheet="Data")
+
+
+def test_a_column_mismatch_names_the_table_it_happened_in(tmp_path: Path) -> None:
+    """The error says which table has the mismatch, not just that one exists."""
+    template = _sales_template(tmp_path / "template.xlsx")
+
+    with pytest.raises(ValueError, match=r"table 'Sales'"):
+        fill(
+            template=template,
+            output=tmp_path / "out.xlsx",
+            engine="openpyxl",
+            tables={"Sales": [{"fund": "A"}]},
+            config=FillXLConfig(column_validation_strategy="strict"),
+        )
+
+
+def test_dropping_columns_logs_which_table_they_came_from(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The drop strategy says which table lost which columns."""
+    template = _sales_template(tmp_path / "template.xlsx")
+
+    with caplog.at_level("INFO", logger="fillxl._validation"):
+        fill(
+            template=template,
+            output=tmp_path / "out.xlsx",
+            engine="openpyxl",
+            tables={"Sales": [{"fund": "A", "region": "EU"}]},
+            config=FillXLConfig(column_validation_strategy="drop"),
+        )
+
+    assert "Table 'Sales'" in caplog.text
+
+
+def test_a_header_with_a_line_break_matches_the_data_column_of_the_same_name(
+    tmp_path: Path,
+) -> None:
+    """The file format stores ``_x000a_``; the data column is named as shown."""
+    from openpyxl.utils.escape import unescape
+
+    from tests.parity.builders import table_template
+
+    template = table_template(
+        tmp_path / "template.xlsx",
+        header=("fund", "NAV_x000a_SEK"),
+        header_cells=("fund", "NAV\nSEK"),
+    )
+    output = tmp_path / "out.xlsx"
+
+    fill(
+        template=template,
+        output=output,
+        engine="openpyxl",
+        tables={"Sales": [{"fund": "A", "NAV\nSEK": 42}]},
+        config=FillXLConfig(column_validation_strategy="strict"),
+    )
+
+    wb = openpyxl.load_workbook(output)
+    try:
+        ws = wb["Data"]
+        table = ws.tables["Sales"]
+        assert unescape(str(table.tableColumns[1].name)) == "NAV\nSEK"
+        assert ws["B1"].value == "NAV\nSEK"
+        assert ws["B2"].value == 42
+    finally:
+        wb.close()

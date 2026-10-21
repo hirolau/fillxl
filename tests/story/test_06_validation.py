@@ -79,7 +79,7 @@ class TestAllButFormulasStrategy:
         # Missing 'City'
         data = [{"Name": "Alice", "Age": 30}]
 
-        with pytest.raises(ValueError, match="Missing columns"):
+        with pytest.raises(ValueError, match="no data column"):
             fill(
                 template=output_path.with_name("tmpl.xlsx"),
                 output=output_path,
@@ -433,7 +433,7 @@ class TestValidateColumnsFunction:
 
     def test_all_but_formulas_strict_rejects_extra_data_columns(self) -> None:
         """Extra data columns not in the table → error in strict mode."""
-        with pytest.raises(ValueError, match="Extra columns"):
+        with pytest.raises(ValueError, match="extra columns"):
             validate_columns(
                 table_columns=["A", "B"],
                 data_columns=["A", "B", "C"],

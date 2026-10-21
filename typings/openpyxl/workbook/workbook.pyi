@@ -74,3 +74,4 @@ class Workbook:
     _sheets: list[Any]
     _active_sheet_index: int
     style: Any
+    security: Any

@@ -4,7 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from fillxl._config import FillXLConfig
 from fillxl._core import fill
-from fillxl._lossy import LossyTemplateError
+from fillxl._lossy import LossyTemplateError, LossyTemplateWarning
 from fillxl._normalize import CellValueError
 from fillxl._types import Engine
 from fillxl._validation import ColumnValidationStrategy
@@ -15,6 +15,7 @@ __all__ = [
     "Engine",
     "FillXLConfig",
     "LossyTemplateError",
+    "LossyTemplateWarning",
     "__version__",
     "fill",
 ]

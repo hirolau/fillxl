@@ -49,7 +49,7 @@ def test_validate_columns_all_but_formulas_allows_extra_and_omits_formula() -> N
 
 def test_validate_columns_all_but_formulas_raises_when_non_formula_column_missing() -> None:
     """Missing a non-formula column raises."""
-    with pytest.raises(ValueError, match="Missing columns"):
+    with pytest.raises(ValueError, match="no data column"):
         validate_columns(["A", "B"], ["A"], "all_but_formulas")
 
 
@@ -65,7 +65,7 @@ def test_validate_columns_all_but_formulas_strict_passes_with_exact_non_formula(
 
 def test_validate_columns_all_but_formulas_strict_raises_for_extra_column() -> None:
     """Extra column in strict mode raises."""
-    with pytest.raises(ValueError, match="Extra columns"):
+    with pytest.raises(ValueError, match="extra columns"):
         validate_columns(
             ["A", "B", "FormulaCol"],
             ["A", "B", "Extra"],
@@ -76,7 +76,7 @@ def test_validate_columns_all_but_formulas_strict_raises_for_extra_column() -> N
 
 def test_validate_columns_all_but_formulas_strict_raises_for_missing_column() -> None:
     """Missing a non-formula column in strict mode raises."""
-    with pytest.raises(ValueError, match="Missing columns"):
+    with pytest.raises(ValueError, match="missing columns"):
         validate_columns(
             ["A", "B", "FormulaCol"],
             ["A"],
@@ -97,7 +97,8 @@ def test_validate_columns_drop_logs_info_about_dropped_columns(
     caplog.set_level("INFO")
     validate_columns(["A", "B"], ["A", "C", "D"], "drop")
     assert any(
-        record.levelname == "INFO" and "Dropping" in record.message for record in caplog.records
+        record.levelname == "INFO" and "dropping extra data columns" in record.message
+        for record in caplog.records
     )
 
 

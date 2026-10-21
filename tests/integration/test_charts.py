@@ -120,23 +120,17 @@ def test_a_chart_on_sheet_Data2_is_untouched_when_Data_is_filled(  # noqa: N802
 
 @pytest.mark.filterwarnings("ignore:.*chartEx.*:UserWarning")
 def test_fill_with_chartex_template_emits_warning(
-    output_path: Path,
-    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
 ) -> None:
-    """fill() should emit a warning when the template contains chartEx charts."""
-    caplog.set_level("WARNING")
+    """fill() should warn when the template contains chartEx charts."""
+    from fillxl import LossyTemplateWarning, fill
 
-    fill(
-        template=CHARTS_TEMPLATE_2,
-        output=output_path,
-        tables={"WaterfallChartTable": [{"Category": "A", "Amount": 100}]},
-    )
-
-    assert any(
-        "chartEx" in record.message or "waterfall" in record.message
-        for record in caplog.records
-        if record.levelname == "WARNING"
-    ), f"Logger warning not found. Captured: {[r.message for r in caplog.records]}"
+    with pytest.warns(LossyTemplateWarning, match="chartEx"):
+        fill(
+            template=CHARTS_TEMPLATE_2,
+            output=tmp_path / "out.xlsx",
+            tables={"WaterfallChartTable": [{"Category": "A", "Amount": 100}]},
+        )
 
 
 @pytest.mark.filterwarnings("ignore:.*chartEx.*:UserWarning")

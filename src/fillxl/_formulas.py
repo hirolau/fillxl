@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._normalize import normalize_value
+from fillxl._utils import table_column_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -58,7 +59,7 @@ def formula_definitions(table: Table) -> dict[str, str]:
         formula = column.calculatedColumnFormula
         text = getattr(formula, "attr_text", None) if formula is not None else None
         if text:
-            definitions[str(column.name)] = str(text)
+            definitions[table_column_name(column)] = str(text)
     return definitions
 
 
@@ -133,7 +134,7 @@ def openpyxl_formula_columns(
     first_col = CellRange(table.ref).min_col
     formulas: dict[str, str] = {}
     for offset, column in enumerate(table.tableColumns):
-        name = str(column.name)
+        name = table_column_name(column)
         definition = definitions.get(name)
         if definition is None:
             continue

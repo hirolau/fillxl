@@ -1,6 +1,6 @@
 [project]
 name = "fillxl"
-version = "0.5.0"
+version = "0.6.0"
 description = "Fill Excel templates with data from Python."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -175,6 +175,7 @@ pythonpath = ["tests"]
 markers = [
 	"xlwings: tests that require xlwings / Excel COM (skipped on CI without Excel)",
 	"win32com: tests that require pywin32 / Excel COM (skipped on CI without Excel)",
+	"excel: needs Windows with Microsoft Excel",
 	"slow: tests that are intentionally slow (large data, stress tests)",
 	"story: narrative chapter tests (ordered progression)",
 ]

@@ -33,6 +33,17 @@ def _unquote_sheet_name(sheet_name: str) -> str:
 
 _MISSING = object()
 _SERIES_PARTS = ("cat", "val", "xVal", "yVal")
+_FORMAT_ESCAPE_RE = re.compile(r"\\(.)")
+
+
+def _number_format(cell: Any) -> str:  # noqa: ANN401
+    """The cell's number format without Excel's backslash escapes.
+
+    Excel escapes literal characters, so it writes the ISO date format as
+    ``yyyy\\-mm\\-dd`` where openpyxl writes ``yyyy-mm-dd``.  The two spell
+    the same format.
+    """
+    return _FORMAT_ESCAPE_RE.sub(r"\1", str(cell.number_format))
 
 
 @functools.cache
@@ -80,7 +91,7 @@ def _cell(cell: Any) -> tuple[Any, ...]:  # noqa: ANN401
         value = ("formula", text.replace("_xlfn.", "").replace("_xlpm.", "").replace(" ", ""))
     elif isinstance(value, CellRichText):
         value = ("rich text", str(value))
-    return (value, cell.data_type, cell.number_format)
+    return (value, cell.data_type, _number_format(cell))
 
 
 def _chart_references(sheet: Any) -> dict[str, list[str]]:  # noqa: ANN401

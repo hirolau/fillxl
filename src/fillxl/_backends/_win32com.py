@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 import sys
 import threading
 import time
@@ -22,6 +23,7 @@ from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._cells import named_cell_target
 from fillxl._charts import TableChangeSpecs, split_formula_arguments, update_reference_text
+from fillxl._formats import needs_temporal_format, temporal_format
 from fillxl._formulas import (
     BodyState,
     ColumnFormulaEvidence,
@@ -207,10 +209,28 @@ class Win32ComBackend:
         check_cell_value(normalized, name=name)
         prepared = com_value_from_normalized(normalized, escape_formulas=config.escape_formulas)
         try:
-            self._workbook.Worksheets(sheet_name).Range(address).Value = prepared
+            target_range = self._workbook.Worksheets(sheet_name).Range(address)
+            # Read the format first: Excel changes a General cell when a date arrives.
+            existing_format = self._existing_number_format(target_range)
+            target_range.Value = prepared
+            fmt = temporal_format(normalized)
+            if fmt is not None and needs_temporal_format(existing_format):
+                set_number_format(target_range, fmt)
         except Exception as exc:
             msg = f"Could not write named cell '{name}' ({sheet_name}!{address}): {exc}"
             raise RuntimeError(msg) from exc
+
+    def _existing_number_format(self, target: Any) -> Any:  # noqa: ANN401
+        """The range's format, with Excel's name for General spelled ``General``.
+
+        Excel names the General format in the language of its object model
+        (``Standard`` in Swedish, for instance), and openpyxl cannot tell such
+        a name from a date format.
+        """
+        existing = target.NumberFormat
+        if isinstance(existing, str) and existing == _general_format_name(self._app):
+            return "General"
+        return existing
 
     def fill_table(
         self,
@@ -663,6 +683,57 @@ class Win32ComBackend:
 
 
 # ── Standalone helpers ──────────────────────────────────────────────────────
+
+_EN_US_LCID = 1033
+_FORMAT_ESCAPE_RE = re.compile(r"\\(.)")
+_XL_GENERAL_FORMAT_NAME = 26  # XlApplicationInternational.xlGeneralFormatName
+
+
+def _general_format_name(app: Any) -> str:  # noqa: ANN401
+    """Excel's own name for the General format (``General``, ``Standard``, …).
+
+    ``Application.International`` is a method on a typed Excel, but pywin32
+    exposes it as a tuple ordered by the ``XlApplicationInternational``
+    constants.
+    """
+    try:
+        international = app.International
+        if callable(international):
+            return str(international(_XL_GENERAL_FORMAT_NAME))
+        return str(international[_XL_GENERAL_FORMAT_NAME - 1])
+    except Exception:  # an unknown name simply never matches
+        return "General"
+
+
+def _unescaped_format(format_code: str) -> str:
+    """*format_code* without its backslash escapes (``yyyy\\-mm`` is ``yyyy-mm``).
+
+    Examples:
+        >>> _unescaped_format(r"yyyy\\-mm\\-dd\\ h:mm:ss")
+        'yyyy-mm-dd h:mm:ss'
+
+    """
+    return _FORMAT_ESCAPE_RE.sub(r"\1", format_code)
+
+
+def set_number_format(target: Any, format_code: str) -> None:  # noqa: ANN401
+    """Apply an English *format_code* to a COM range, whatever Excel's language.
+
+    Excel parses a format code in the language of the installed product, so a
+    Swedish Excel reads ``yyyy`` as four literal ``y`` characters.  The
+    property is set under an en-US locale so the code is read as written; a
+    plain assignment is the fallback when the COM object has no low-level
+    property access.
+    """
+    try:
+        ole = target._oleobj_
+        dispid = ole.GetIDsOfNames("NumberFormat")
+    except Exception:  # e.g. a wrapper without COM internals
+        target.NumberFormat = format_code
+        return
+    import pythoncom
+
+    ole.Invoke(dispid, _EN_US_LCID, pythoncom.DISPATCH_PROPERTYPUT, 0, format_code)
 
 
 def _com_has_totals_row(list_obj: Any) -> bool:  # noqa: ANN401

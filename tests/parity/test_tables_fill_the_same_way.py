@@ -86,7 +86,6 @@ def test_strings_excel_likes_to_reinterpret_are_stored_the_same_way(
     )
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in WP4")
 def test_named_cells_of_every_scalar_type_end_up_the_same_in_both_engines(
     tmp_path: Path, parity: Parity
 ) -> None:

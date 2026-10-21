@@ -599,15 +599,15 @@ def test_a_control_character_raises_with_context(
 
 
 @pytest.mark.parametrize("engine", ENGINES)
-def test_a_pre_1900_date_raises(
+def test_a_date_before_march_1900_raises(
     equivalence_template: Path,
     output_path: Path,
     engine: Engine,
 ) -> None:
-    """Excel cannot store dates before 1900-01-01."""
-    rows = [{"Name": "a", "Value": dt.datetime(1899, 12, 31), "Notes": "n"}]
+    """Excel counts a 29 February 1900, so earlier dates are unreliable."""
+    rows = [{"Name": "a", "Value": dt.date(1900, 2, 28), "Notes": "n"}]
 
-    with pytest.raises(CellValueError, match="before 1900-01-01"):
+    with pytest.raises(CellValueError, match="before 1900-03-01"):
         _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
 
 

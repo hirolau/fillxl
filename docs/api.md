@@ -14,13 +14,17 @@ from fillxl import fill
 fill(
     template: str | Path,
     output: str | Path,
+    *,
     values: dict[str, Any] | None = None,
     tables: dict[str, TabularData] | None = None,
-    *,
     engine: Engine = "auto",
     config: FillXLConfig | None = None,
 ) -> Path
 ```
+
+`values` and `tables` are keyword-only. The 0.5 call
+`fill(template, output, values, tables)` still works with a
+`DeprecationWarning` and stops working in 0.7.0.
 
 ### Parameters
 
@@ -30,7 +34,7 @@ fill(
 | `output` | `str \| Path` | Path where the filled workbook will be saved. |
 | `values` | `dict[str, Any] \| None` | Map of named cell → value to fill. |
 | `tables` | `dict[str, TabularData] \| None` | Map of table name → data to fill. |
-| `engine` | `Engine` | Backend engine: `"auto"`, `"openpyxl"`, or `"win32com"`. Default: `"auto"` (openpyxl). |
+| `engine` | `Engine` | Backend engine: `"auto"`, `"openpyxl"`, or `"win32com"`. Default: `"auto"` (see below). |
 | `config` | `FillXLConfig \| None` | Advanced configuration (see below). |
 
 ### Returns
@@ -39,11 +43,16 @@ fill(
 
 ### Which engine does `"auto"` pick?
 
-`"auto"` selects the **openpyxl** backend: it works everywhere and needs no
-Excel installation. It fills `.xlsx` and `.xlsm` templates (keeping VBA).
-Pass `engine="win32com"` explicitly to drive Microsoft Excel through COM —
-that is the engine to use for `.xlsb`/`.xls` templates and for chart types
-openpyxl cannot write.
+| Template → output | Engine |
+|-------------------|--------|
+| `.xlsx` → `.xlsx`, `.xlsm` → `.xlsm` | `openpyxl` — no Excel needed |
+| `.xlsb`/`.xls` template, or a different output format | `win32com`, when Excel automation is available |
+| the same, without Excel | `openpyxl`, whose error explains what is missing |
+
+Pass `engine="win32com"` explicitly to drive Microsoft Excel through COM — that
+is the engine to use for chart types openpyxl cannot write. Both engines produce
+the same workbook for the same template and data; a parity test suite fills one
+template with both and compares the results.
 
 ---
 
@@ -121,6 +130,39 @@ engines store the same wall-clock time.
 `date`, `timedelta`, `Decimal`, pandas/NumPy scalars and NumPy date/time
 scalars are all normalised, so nothing is silently written as text.
 
+### Dates
+
+A `date` gets the number format `yyyy-mm-dd` and a `datetime` gets
+`yyyy-mm-dd h:mm:ss`, in both engines, matching what openpyxl does on its own.
+A cell that already has a date format keeps it — format the cell in Excel and
+fillxl leaves it alone.
+
+Dates before **1900-03-01** raise `CellValueError`. Excel counts a 29 February
+1900 that never existed, and the two engines cannot agree on what a serial
+number before that day means.
+
+### Sheets
+
+`FillXLConfig` can hide, delete and activate sheets after filling:
+
+```python
+FillXLConfig(
+    hide_underscore_sheets=True,   # hide visible sheets named "_…"
+    delete_sheets=["RawData"],
+    active_sheet="Report",
+)
+```
+
+- Hiding or deleting every visible sheet raises `ValueError`; Excel requires at
+  least one visible sheet.
+- When the active sheet is hidden or deleted, the first remaining visible sheet
+  becomes active. Exactly one tab is left selected.
+- Making a hidden sheet active raises `ValueError`.
+- A sheet whose deletion fails raises `RuntimeError`: it must not silently stay
+  in the report.
+- `veryHidden` sheets stay `veryHidden`, and chart sheets can be deleted or
+  activated.
+
 ### Ragged `list[dict]` data
 
 The columns of a `list[dict]` are the ordered union of the keys of **all**
@@ -140,7 +182,7 @@ A default or filtered integer index is silent.
 
 | Exception | Meaning |
 |-----------|---------|
-| `CellValueError` | A value Excel cannot store: text longer than 32,767 characters, an illegal control character, or a date before 1900-01-01. It is a `ValueError` and carries the table, data row and column (or the named cell). |
+| `CellValueError` | A value Excel cannot store: text longer than 32,767 characters, an illegal control character, or a date before 1900-03-01. It is a `ValueError` and carries the table, data row and column (or the named cell). |
 | `LossyTemplateError` | The openpyxl engine dropped template features and `FillXLConfig(on_lossy="raise")` was set. Raise it before swapping in the output, so the previous output file is left untouched. |
 
 Integers with more than 15 significant digits are not errors: Excel rounds
@@ -154,4 +196,15 @@ first destination is a multi-cell range raises `ValueError`; a write failure
 The openpyxl engine runs a lossy-feature check against the staging file before
 the atomic swap. It compares part and element **counts** (modern charts,
 slicers, shapes, VBA, …), so it catches dropped parts but cannot prove that a
-preserved part is unchanged.
+preserved part is unchanged. The check reports with `LossyTemplateWarning`, a
+`UserWarning` subclass that can be filtered by category:
+
+```python
+import warnings
+from fillxl import LossyTemplateWarning
+
+warnings.filterwarnings("error", category=LossyTemplateWarning)
+```
+
+Batch jobs that only read logs can route warnings into `logging` with
+`logging.captureWarnings(True)`.

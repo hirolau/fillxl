@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-10-21
+
+The two engines now produce the same workbook for the same template and data,
+and a parity test suite checks it.
+
+### Fixed
+- win32com: pivot tables refreshed before formulas were recalculated, so pivots on
+  calculated columns showed stale results. Formulas are now also calculated before saving.
+- win32com: tables on a sheet other than the active one could not be resized.
+- win32com: charts on chart sheets were not updated.
+- Both: charts on sheets with non-ASCII or apostrophe names, non-contiguous series, and
+  one-row tables (single-cell references) were not updated correctly.
+- Both: dates showed as midnight timestamps (openpyxl) or in a locale-dependent format
+  (win32com). Dates now get `yyyy-mm-dd` and datetimes `yyyy-mm-dd h:mm:ss`, unless the
+  template cell already has a date format.
+- openpyxl: rich text in templates (partly bold cells) was flattened to plain text.
+- Both: table columns whose names contain line breaks now match data columns.
+- Hiding sheets: a hidden sheet could stay active, very hidden sheets became merely
+  hidden, and openpyxl outputs could open with sheets grouped.
+- Deleting sheets could leave the wrong sheet active; win32com reported every failure
+  as "not found".
+- `set_active_sheet` picked the wrong sheet (openpyxl) when chart sheets came first.
+
+### Changed
+- `engine="auto"` uses Excel (win32com) on Windows when openpyxl cannot do the job:
+  `.xlsb`/`.xls` templates, or saving in another format.
+- Dates before 1900-03-01 raise `CellValueError` (Excel's calendar is wrong before then).
+- `datetime.date` values stay dates through normalisation.
+- Column validation errors and logs name the table.
+- A `dict[str, column]` that mixes columns and scalars raises `TypeError` instead of
+  splitting strings into characters.
+- Hiding or deleting every visible sheet raises `ValueError`; making a hidden sheet
+  active raises `ValueError`; a failed sheet deletion raises `RuntimeError`.
+- win32com matches table names case-sensitively, like openpyxl.
+- Lossy-template warnings use the new `LossyTemplateWarning` category and are reported
+  once (they are no longer also logged, and the load-time chartEx warning is gone).
+- Requires openpyxl >= 3.1.
+
+### Deprecated
+- Passing `values` and `tables` to `fill()` positionally. Use keywords; positional use
+  stops working in 0.7.0.
+
+### Removed
+- `TabularAdapter.is_tabular` and `TabularAdapter.iter_rows` (internal, unused).
+
 ## [0.5.0] — 2026-10-20
 
 ### Changed (breaking)

@@ -22,12 +22,18 @@ pip install fillxl[all]      # pandas + polars + duckdb
 1. In Excel, create **named cells** (Name Manager) for single values and **Excel Tables** (`Ctrl + T`) for tabular data.
 2. Fill the template — tables are automatically resized, charts updated, and formatting preserved.
 
-### Choosing a backend
+### Choosing an engine
 
 ```python
-fill(..., engine="openpyxl")   # default, cross-platform
+fill(..., engine="auto")       # default: openpyxl unless Excel is needed
+fill(..., engine="openpyxl")   # cross-platform, no Excel needed
 fill(..., engine="win32com")   # Windows + Excel (maximum fidelity)
 ```
+
+`"auto"` uses openpyxl for `.xlsx`/`.xlsm` templates saved in the same format,
+and Excel when it is needed (`.xlsb`/`.xls` templates, format conversion) and
+available. Both engines produce the same workbook for the same template and
+data.
 
 ## Visual Example
 
@@ -70,7 +76,8 @@ fill(
 - Populate named cells and Excel tables
 - Automatic table resizing + chart range updates
 - Conditional formatting and pivot table refresh
-- Two backends: `openpyxl` (default) and `win32com` (Windows + Excel)
+- Two backends that agree: `openpyxl` (default) and `win32com` (Windows + Excel)
+- Dates, sheets and warnings behave the same in both engines
 - Supports list, dict, pandas, polars, and duckdb data
 
 ## Supported Data Sources

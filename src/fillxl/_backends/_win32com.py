@@ -392,6 +392,8 @@ class Win32ComBackend:
         workbook is up to date whichever engine produced it.
         """
         self._ensure_workbook()
+        # Calculation is manual while filling; pivots must read up-to-date formulas.
+        self._app.Calculate()
         for pcache in self._workbook.PivotCaches():
             try:
                 pcache.Refresh()
@@ -484,6 +486,8 @@ class Win32ComBackend:
         # from the Excel process working directory, not the Python CWD.
         abs_path = path.resolve()
         abs_path.parent.mkdir(parents=True, exist_ok=True)
+        # Never save stale results, even if the workbook's own mode is manual.
+        self._app.Calculate()
         if self._previous_calculation is not None:
             self._app.Calculation = self._previous_calculation
             self._previous_calculation = None

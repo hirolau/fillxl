@@ -10,15 +10,12 @@ from __future__ import annotations
 
 import re
 import zipfile
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import openpyxl
 import pytest
 
 from fillxl import Engine, FillXLConfig, fill
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 SALES_ROWS: list[dict[str, object]] = [
     {"Region": region, "Product": product, "Sales Rep": rep, "Quarter": quarter, "Amount": amount}
@@ -128,3 +125,21 @@ def test_the_pivot_still_reports_the_filled_data(
         assert ws.cell(row=7, column=5).value == 9200
     finally:
         wb.close()
+
+
+FIXTURES = Path(__file__).parent.parent / "fixtures"
+
+
+@pytest.mark.excel
+def test_a_pivot_on_a_calculated_column_shows_the_new_data_not_stale_results(
+    tmp_path: Path,
+) -> None:
+    """Refreshing a pivot before recalculation leaves it showing the old numbers."""
+    template = FIXTURES / "pivot_on_calculated_column.xlsx"
+    rows = [{"fund": "A", "amount": 10}, {"fund": "B", "amount": 5}]
+
+    output = fill(template, tmp_path / "out.xlsx", engine="win32com", tables={"Sales": rows})
+
+    pivot = openpyxl.load_workbook(output, data_only=True)["Pivot"]
+    grand_total = next(c for row in pivot.iter_rows() for c in row if c.value == "Grand Total")
+    assert pivot.cell(row=grand_total.row, column=grand_total.column + 1).value == 30

@@ -145,3 +145,37 @@ def chart_template(
         workbook.create_sheet("Charts").add_chart(chart, "A1")
     workbook.save(path)
     return path
+
+
+def sheets_template(
+    path: Path,
+    *sheets: str,
+    active: str | None = None,
+    very_hidden: tuple[str, ...] = (),
+) -> Path:
+    """A workbook with *sheets*; the first one is active unless *active* says otherwise."""
+    workbook = Workbook()
+    workbook.active.title = sheets[0]
+    for name in sheets[1:]:
+        workbook.create_sheet(name)
+    active_title = active or sheets[0]
+    workbook.active = workbook.sheetnames.index(active_title)
+    for position, name in enumerate(workbook.sheetnames):
+        workbook[name].sheet_view.tabSelected = position == workbook.sheetnames.index(active_title)
+    for name in very_hidden:
+        workbook[name].sheet_state = "veryHidden"
+    workbook.save(path)
+    return path
+
+
+def chart_sheet_first_template(path: Path) -> Path:
+    """A workbook whose first sheet is a chart sheet, followed by a worksheet."""
+    workbook = Workbook()
+    workbook.active.title = "Report"
+    chart_sheet = workbook.create_chartsheet("Chart")
+    workbook.move_sheet("Chart", offset=-1)
+    chart = BarChart()
+    chart.title = "Chart"
+    chart_sheet.add_chart(chart)
+    workbook.save(path)
+    return path

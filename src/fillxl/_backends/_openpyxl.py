@@ -6,7 +6,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import openpyxl
-from openpyxl.worksheet.worksheet import Worksheet
 
 from fillxl._adapters import TabularAdapter
 from fillxl._cells import populate_named_cells
@@ -14,6 +13,7 @@ from fillxl._charts import (
     TableChangeSpecs,
     update_chart_data_ranges,
 )
+from fillxl._sheets import first_remaining, require_a_visible_sheet
 from fillxl._tables import populate_table
 from fillxl._validation import ColumnValidationStrategy, validate_columns
 
@@ -147,52 +147,70 @@ class OpenpyxlBackend:
         logger.debug("Set all pivot tables to refresh on load")
 
     def hide_sheets(self, prefix: str) -> None:
-        """Hide worksheets whose names start with *prefix*.
+        """Hide visible sheets whose names start with *prefix*.
 
         Args:
             prefix: Sheet name prefix (e.g. ``"_"``).
 
         """
         workbook = self._require_workbook()
-        for sheet_name in workbook.sheetnames:
-            if sheet_name.startswith(prefix):
-                workbook[sheet_name].sheet_state = "hidden"
-                logger.debug("Hidden worksheet '%s'", sheet_name)
+        visible = _visible_titles(workbook)
+        to_hide = [title for title in visible if title.startswith(prefix)]
+        if not to_hide:
+            return
+        require_a_visible_sheet(visible, to_hide, "Hiding")
+        active = _active_title(workbook)
+        for title in to_hide:
+            workbook[title].sheet_state = "hidden"
+            logger.debug("Hidden sheet '%s'", title)
+        if active is None or active in to_hide:
+            _activate(workbook, first_remaining(visible, to_hide))
 
     def delete_sheets(self, names: Sequence[str]) -> None:
-        """Delete the worksheets named in *names*.
+        """Delete the sheets named in *names*.
 
         Args:
             names: Sheet names to remove.
 
         """
         workbook = self._require_workbook()
-        for sheet_name in names:
-            if sheet_name in workbook.sheetnames:
-                ws = workbook[sheet_name]
-                if isinstance(ws, Worksheet):
-                    workbook.remove(ws)
-                    logger.debug("Deleted worksheet '%s'", sheet_name)
-                else:
-                    logger.warning("Sheet '%s' is not a regular worksheet, skipping", sheet_name)
-            else:
-                logger.warning("Sheet '%s' not found, skipping deletion", sheet_name)
+        present = [name for name in dict.fromkeys(names) if name in workbook.sheetnames]
+        for name in names:
+            if name not in workbook.sheetnames:
+                logger.warning("Sheet '%s' not found, skipping deletion", name)
+        if not present:
+            return
+        visible = _visible_titles(workbook)
+        require_a_visible_sheet(visible, present, "Deleting")
+        active = _active_title(workbook)
+        for name in present:
+            workbook.remove(workbook[name])
+            logger.debug("Deleted sheet '%s'", name)
+        # openpyxl keeps the active *index*, which now points at another sheet.
+        if active is not None and active not in present:
+            _activate(workbook, active)
+        else:
+            _activate(workbook, first_remaining(visible, present))
 
     def set_active_sheet(self, name: str) -> None:
-        """Set the active (displayed) worksheet.
+        """Set the active (displayed) sheet.
 
         Args:
-            name: Name of the worksheet to activate.
+            name: Name of the sheet to activate.
+
+        Raises:
+            ValueError: If the sheet is hidden.
 
         """
         workbook = self._require_workbook()
-        if name in workbook.sheetnames:
-            ws = workbook[name]
-            if isinstance(ws, Worksheet):
-                workbook.active = workbook.index(ws)
-            logger.debug("Set active worksheet to '%s'", name)
-        else:
+        if name not in workbook.sheetnames:
             logger.warning("Sheet '%s' not found, keeping default active sheet", name)
+            return
+        if workbook[name].sheet_state != "visible":
+            msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
+            raise ValueError(msg)
+        _activate(workbook, name)
+        logger.debug("Set active sheet to '%s'", name)
 
     def save(self, path: Path) -> None:
         """Save the workbook to *path*.
@@ -227,6 +245,38 @@ class OpenpyxlBackend:
         if self._workbook is not None:
             self._workbook.close()
             self._workbook = None
+
+
+def _active_title(workbook: openpyxl.Workbook) -> str | None:
+    active = workbook.active
+    return None if active is None else str(active.title)
+
+
+def _visible_titles(workbook: openpyxl.Workbook) -> list[str]:
+    return [name for name in workbook.sheetnames if workbook[name].sheet_state == "visible"]
+
+
+def _activate(workbook: openpyxl.Workbook, title: str) -> None:
+    """Make *title* the active sheet and the only selected tab.
+
+    A second selected tab makes Excel open the workbook with sheets grouped.
+    Indices are positions in ``sheetnames``, which includes chart sheets.
+    """
+    names = workbook.sheetnames
+    index = names.index(title)
+    workbook.active = index
+    for position, name in enumerate(names):
+        _set_tab_selected(workbook[name], selected=position == index)
+
+
+def _set_tab_selected(sheet: Any, *, selected: bool) -> None:  # noqa: ANN401
+    views = getattr(sheet, "views", None)  # Worksheet
+    if views is None:
+        views = getattr(sheet, "sheetViews", None)  # Chartsheet
+    if views is None:
+        return
+    for view in views.sheetView:
+        view.tabSelected = selected
 
 
 def _validate_table_columns(

@@ -37,6 +37,7 @@ from fillxl._normalize import (
     prepare_cell_value,
 )
 from fillxl._plan import TableGeometry, plan_table_fill
+from fillxl._sheets import first_remaining, require_a_visible_sheet
 from fillxl._utils import col_to_excel
 from fillxl._validation import validate_columns
 
@@ -52,6 +53,7 @@ _is_windows = sys.platform == "win32"
 
 # COM constants (fallback if early binding is unavailable)
 _XL_SHEET_HIDDEN = 0
+_XL_SHEET_VERY_HIDDEN = 2
 _XL_FILL_FORMATS = 3
 
 _MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
@@ -408,53 +410,64 @@ class Win32ComBackend:
                 logger.exception("Failed to mark pivot cache for refresh on open")
         logger.debug("Refreshed all pivot caches")
 
+    def _sheet_names(self) -> list[str]:
+        return [str(sheet.Name) for sheet in self._workbook.Sheets]
+
+    def _visible_sheet_names(self) -> list[str]:
+        return [str(sheet.Name) for sheet in self._workbook.Sheets if _com_is_visible(sheet)]
+
     def hide_sheets(self, prefix: str) -> None:
-        """Hide worksheets whose names start with *prefix*.
-
-        Args:
-            prefix: Sheet name prefix (e.g. ``"_"``).
-
-        """
+        """Hide visible sheets whose names start with *prefix*."""
         self._ensure_workbook()
-        for sheet in self._workbook.Sheets:
+        visible = self._visible_sheet_names()
+        to_hide = [name for name in visible if name.startswith(prefix)]
+        if not to_hide:
+            return
+        require_a_visible_sheet(visible, to_hide, "Hiding")
+        if str(self._workbook.ActiveSheet.Name) in to_hide:
+            self._workbook.Sheets(first_remaining(visible, to_hide)).Activate()
+        for name in to_hide:
             try:
-                name = str(sheet.Name)
-                if name.startswith(prefix):
-                    sheet.Visible = _XL_SHEET_HIDDEN
-                    logger.debug("Hidden worksheet '%s'", name)
-            except Exception:
-                logger.exception("Failed to hide sheet")
+                self._workbook.Sheets(name).Visible = _XL_SHEET_HIDDEN
+            except Exception as exc:
+                msg = f"Could not hide sheet '{name}': {exc}"
+                raise RuntimeError(msg) from exc
+            logger.debug("Hidden sheet '%s'", name)
 
     def delete_sheets(self, names: Sequence[str]) -> None:
-        """Delete the worksheets named in *names*.
-
-        Args:
-            names: Sheet names to remove.
-
-        """
+        """Delete the sheets named in *names*."""
         self._ensure_workbook()
-        for sheet_name in names:
+        existing = set(self._sheet_names())
+        present = [name for name in dict.fromkeys(names) if name in existing]
+        for name in names:
+            if name not in existing:
+                logger.warning("Sheet '%s' not found, skipping deletion", name)
+        if not present:
+            return
+        visible = self._visible_sheet_names()
+        require_a_visible_sheet(visible, present, "Deleting")
+        if str(self._workbook.ActiveSheet.Name) in present:
+            self._workbook.Sheets(first_remaining(visible, present)).Activate()
+        for name in present:
             try:
-                sheet = self._workbook.Sheets(sheet_name)
-                sheet.Delete()
-                logger.debug("Deleted worksheet '%s'", sheet_name)
-            except Exception:
-                logger.warning("Sheet '%s' not found, skipping deletion", sheet_name)
+                self._workbook.Sheets(name).Delete()
+            except Exception as exc:
+                msg = f"Could not delete sheet '{name}': {exc}"
+                raise RuntimeError(msg) from exc
+            logger.debug("Deleted sheet '%s'", name)
 
     def set_active_sheet(self, name: str) -> None:
-        """Set the active (displayed) worksheet.
-
-        Args:
-            name: Name of the worksheet to activate.
-
-        """
+        """Set the active (displayed) sheet."""
         self._ensure_workbook()
-        try:
-            sheet = self._workbook.Sheets(name)
-            sheet.Activate()
-            logger.debug("Set active worksheet to '%s'", name)
-        except Exception:
+        if name not in self._sheet_names():
             logger.warning("Sheet '%s' not found, keeping default active sheet", name)
+            return
+        sheet = self._workbook.Sheets(name)
+        if not _com_is_visible(sheet):
+            msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
+            raise ValueError(msg)
+        sheet.Activate()
+        logger.debug("Set active sheet to '%s'", name)
 
     def save(self, path: Path) -> None:
         """Save the workbook to *path*.
@@ -531,6 +544,11 @@ class Win32ComBackend:
 
 
 # ── Standalone helpers ──────────────────────────────────────────────────────
+
+
+def _com_is_visible(sheet: Any) -> bool:  # noqa: ANN401
+    return sheet.Visible not in (_XL_SHEET_HIDDEN, _XL_SHEET_VERY_HIDDEN)
+
 
 _EN_US_LCID = 1033
 _FORMAT_ESCAPE_RE = re.compile(r"\\(.)")

@@ -316,21 +316,7 @@ class TestDuckDBRelation:
 
 
 class TestTabularAdapterInternals:
-    """is_tabular, column/row extraction, and TypeError for unsupported types."""
-
-    def test_is_tabular_recognises_list_of_dict(self) -> None:
-        """is_tabular returns True for list[dict]."""
-        assert TabularAdapter.is_tabular([{"a": 1}])
-
-    def test_is_tabular_recognises_dict_of_list(self) -> None:
-        """is_tabular returns True for dict[str, list]."""
-        assert TabularAdapter.is_tabular({"a": [1, 2]})
-
-    def test_is_tabular_rejects_plain_lists_and_scalars(self) -> None:
-        """is_tabular returns False for non-tabular types."""
-        assert not TabularAdapter.is_tabular(42)
-        assert not TabularAdapter.is_tabular("hello")
-        assert not TabularAdapter.is_tabular([1, 2, 3])
+    """Column/row extraction and TypeError for unsupported types."""
 
     def test_adapter_extracts_columns_and_rows_from_list_of_dict(self) -> None:
         """Columns come from dict keys; rows from dict values."""

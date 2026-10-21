@@ -309,6 +309,7 @@ class Win32ComBackend:
             data_columns=data_columns,
             strategy=config.column_validation_strategy,
             formula_columns=list(formulas),
+            table_name=name,
         )
         warn_about_ignored_formula_data(name, data_columns, rows, formulas)
 

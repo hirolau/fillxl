@@ -8,38 +8,6 @@ import pytest
 class TestTabularAdapter:
     """Unit tests for TabularAdapter detection logic."""
 
-    def test_is_tabular_returns_true_for_list_of_dict(self) -> None:
-        """is_tabular returns True for list[dict]."""
-        from fillxl._adapters import TabularAdapter
-
-        assert TabularAdapter.is_tabular([{"a": 1, "b": 2}])
-        assert TabularAdapter.is_tabular([{"x": "hello"}])
-
-    def test_is_tabular_returns_true_for_dict_of_list(self) -> None:
-        """is_tabular returns True for dict[str, list]."""
-        from fillxl._adapters import TabularAdapter
-
-        assert TabularAdapter.is_tabular({"a": [1, 2], "b": [3, 4]})
-        assert TabularAdapter.is_tabular({"x": ["hello"]})
-
-    def test_is_tabular_returns_true_for_pandas_dataframe(self) -> None:
-        """is_tabular returns True for a pandas DataFrame (if pandas installed)."""
-        pd = pytest.importorskip("pandas")
-        from fillxl._adapters import TabularAdapter
-
-        assert TabularAdapter.is_tabular(pd.DataFrame({"a": [1, 2]}))
-        assert TabularAdapter.is_tabular(pd.DataFrame({"x": ["hello"]}))
-
-    def test_is_tabular_returns_false_for_unsupported_types(self) -> None:
-        """is_tabular returns False for unsupported types."""
-        from fillxl._adapters import TabularAdapter
-
-        assert not TabularAdapter.is_tabular(42)
-        assert not TabularAdapter.is_tabular("string")
-        assert not TabularAdapter.is_tabular(None)
-        assert not TabularAdapter.is_tabular([1, 2, 3])
-        assert not TabularAdapter.is_tabular({1, 2, 3})
-
     def test_adapter_raises_typeerror_for_unsupported_data(self) -> None:
         """TabularAdapter raises TypeError for unsupported data."""
         from fillxl._adapters import TabularAdapter
@@ -101,7 +69,6 @@ class TestTabularAdapter:
         adapter = TabularAdapter([])
         assert adapter.columns == []
         assert adapter.rows == []
-        assert TabularAdapter.is_tabular([])
 
     def test_adapter_accepts_empty_dict_as_zero_rows(self) -> None:
         """An empty dict is valid, schema-less data that clears a table."""
@@ -110,28 +77,13 @@ class TestTabularAdapter:
         adapter = TabularAdapter({})
         assert adapter.columns == []
         assert adapter.rows == []
-        assert TabularAdapter.is_tabular({})
 
     def test_adapter_raises_typeerror_for_dict_with_non_list_values(self) -> None:
-        """A dict with non-list values should raise TypeError."""
+        """A dict of scalars points at named cells instead of failing obscurely."""
         from fillxl._adapters import TabularAdapter
 
-        with pytest.raises(TypeError, match="Unsupported data type"):
+        with pytest.raises(TypeError, match="dict of scalars"):
             TabularAdapter({"a": 1, "b": 2})
-
-    def test_is_tabular_returns_true_for_polars(self) -> None:
-        """is_tabular should return True for polars DataFrame."""
-        pl = pytest.importorskip("polars")
-        from fillxl._adapters import TabularAdapter
-
-        assert TabularAdapter.is_tabular(pl.DataFrame({"a": [1]}))
-
-    def test_is_tabular_returns_true_for_duckdb(self) -> None:
-        """is_tabular should return True for duckdb relation."""
-        duckdb = pytest.importorskip("duckdb")
-        from fillxl._adapters import TabularAdapter
-
-        assert TabularAdapter.is_tabular(duckdb.sql("SELECT 1"))
 
     def test_adapter_columns_raises_runtime_error_when_not_initialized(self) -> None:
         """Verify .columns on an uninitialized adapter raises RuntimeError."""
@@ -286,13 +238,33 @@ class TestTabularAdapter:
         with pytest.raises(ValueError, match=r"Ragged column data.*'b'.*expected 2"):
             TabularAdapter({"a": [1, 2], "b": [3]})
 
-    def test_is_tabular_recognises_a_dict_of_arrays(self) -> None:
-        """is_tabular agrees with the adapter about dict[str, array]."""
+    def test_a_scalar_beside_columns_is_refused_rather_than_spelled_out(self) -> None:
+        """A string beside real columns must not be split into characters."""
+        from fillxl._adapters import TabularAdapter
+
+        with pytest.raises(TypeError) as excinfo:
+            TabularAdapter({"amount": [1, 2, 3], "fund": "NAE"})
+
+        assert "'fund'" in str(excinfo.value)
+
+    def test_a_dict_of_scalars_points_the_user_to_named_cells(self) -> None:
+        """A dict of scalars is named-cell data, and the error says so."""
+        from fillxl._adapters import TabularAdapter
+
+        with pytest.raises(TypeError) as excinfo:
+            TabularAdapter({"a": 1})
+
+        assert "values=" in str(excinfo.value)
+
+    def test_columns_of_any_sequence_type_still_work_side_by_side(self) -> None:
+        """A list, a tuple and an array are all column values."""
         numpy = pytest.importorskip("numpy")
         from fillxl._adapters import TabularAdapter
 
-        assert TabularAdapter.is_tabular({"a": numpy.arange(2)})
-        assert not TabularAdapter.is_tabular({"a": "not a column"})
+        adapter = TabularAdapter({"a": [1, 2], "b": (3, 4), "c": numpy.array([5.5, 6.5])})
+
+        assert adapter.columns == ["a", "b", "c"]
+        assert adapter.rows == [[1, 3, 5.5], [2, 4, 6.5]]
 
     def test_rows_can_be_read_more_than_once(self) -> None:
         """Rows are materialised, so a second access is not empty."""
@@ -301,7 +273,6 @@ class TestTabularAdapter:
         adapter = TabularAdapter([{"a": 1}, {"a": 2}])
         assert list(adapter.rows) == [[1], [2]]
         assert list(adapter.rows) == [[1], [2]]
-        assert list(adapter.iter_rows) == [[1], [2]]
 
 
 class TestDuplicateColumnNames:

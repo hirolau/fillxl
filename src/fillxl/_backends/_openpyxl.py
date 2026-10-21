@@ -283,6 +283,7 @@ def _validate_table_columns(
         data_columns=data_columns,
         strategy=strategy,
         formula_columns=formula_columns,
+        table_name=table_name,
     )
 
 

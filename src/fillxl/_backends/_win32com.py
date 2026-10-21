@@ -11,7 +11,6 @@ Only works on **Windows** with Microsoft Excel installed.
 from __future__ import annotations
 
 import logging
-import re
 import sys
 import threading
 import time
@@ -555,7 +554,6 @@ def _com_is_visible(sheet: Any) -> bool:  # noqa: ANN401
 
 
 _EN_US_LCID = 1033
-_FORMAT_ESCAPE_RE = re.compile(r"\\(.)")
 _XL_GENERAL_FORMAT_NAME = 26  # XlApplicationInternational.xlGeneralFormatName
 
 
@@ -580,17 +578,6 @@ def _number_format_of(existing: Any, general_format: str) -> Any:  # noqa: ANN40
     if isinstance(existing, str) and existing == general_format:
         return "General"
     return existing
-
-
-def _unescaped_format(format_code: str) -> str:
-    """*format_code* without its backslash escapes (``yyyy\\-mm`` is ``yyyy-mm``).
-
-    Examples:
-        >>> _unescaped_format(r"yyyy\\-mm\\-dd\\ h:mm:ss")
-        'yyyy-mm-dd h:mm:ss'
-
-    """
-    return _FORMAT_ESCAPE_RE.sub(r"\1", format_code)
 
 
 def set_number_format(target: Any, format_code: str) -> None:  # noqa: ANN401

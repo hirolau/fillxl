@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.7.0] — 2026-10-27
+
+Breaking, but safer. Every breaking change is grouped into this one release, so
+0.8 can be additive. See [Migrating from 0.6 to 0.7](docs/migrating.md).
+
+### Changed (breaking)
+- `fill()` takes `values` and `tables` as keyword-only arguments. The
+  positional call announced as deprecated in 0.6.0 no longer works.
+- A named cell given a `list`, `tuple`, `set`, `dict`, `bytes` or a tabular
+  object (DataFrame, Series, relation) raises `TypeError` pointing at
+  `tables=`, instead of writing its `repr` into the cell. Table cells refuse
+  the same values with a `CellValueError` naming the table, data row and
+  column.
+- Problems a caller can act on are warnings instead of log records, and every
+  warning is a `fillxl.FillXLWarning`: `PrecisionLossWarning`,
+  `IgnoredDataWarning`, `TimezoneWarning` and `LossyTemplateWarning` (now a
+  `FillXLWarning`). Warnings are attributed to the caller of `fill()`, so
+  `pytest.warns`, `filterwarnings` and `-W error` match them.
+- Empty data no longer clears calculated columns: the single remaining body
+  row keeps its formula, as Excel does.
+- `Enum` members are written as their `value`; `date` and `datetime`
+  subclasses are written as the exact built-in type (openpyxl looks number
+  formats up by type).
+- A `Decimal` that is NaN, sNaN, infinite or too large for a float becomes an
+  empty cell instead of `nan`/`inf`, which made Excel offer to repair the file.
+- `fill()` refuses `output` equal to `template`: the template is never
+  overwritten.
+- A format the chosen engine cannot write is refused before the template is
+  loaded, not at `save()` after the fill has run.
+- `engine=` is validated along with `config`, `values` and `tables` types
+  before any file is touched: a non-`FillXLConfig` config and non-string
+  `values`/`tables` keys raise `TypeError`.
+- `delete_sheets` must be a list of names; a bare string raised or deleted
+  sheets named `S`, `h`, `e`, …
+- `active_sheet` starting with `_` together with `hide_underscore_sheets=True`
+  is refused when the config is built.
+- The message for an unsupported template format now says the engine "cannot
+  read" it, and for a format conversion that it "cannot write" it.
+
+### Fixed
+- openpyxl: a table growing into another table or into merged cells is
+  refused with the same `ValueError` win32com raises, instead of producing an
+  overlapping table or an openpyxl "read-only" `AttributeError`.
+- win32com: an empty payload no longer clears calculated columns, which could
+  make Excel drop the calculated-column definition.
+- openpyxl: shrinking a table with a totals row resets the formatting of the
+  old totals row instead of leaving bold text and rules below the table.
+- openpyxl: chart updates now include bubble sizes, multi-level category
+  ranges and custom error-bar ranges, matching what win32com rewrites.
+- Text containing a lone surrogate raises `CellValueError` with the position,
+  instead of `UnicodeEncodeError` at save time.
+- Integers at or beyond `1e308` raise `CellValueError`; integers outside
+  ±2³¹ are handed to COM as floats, which loses nothing Excel can store.
+- win32com: `TemporaryDirectory` cleanup no longer fails when Excel still
+  holds the temporary copy.
+- A `PermissionError` from the final rename explains that the output is
+  probably open in Excel.
+- The lossy check counts pictures (`xl/media/*`, `<xdr:pic>`), chart styles and
+  chart colour schemes, so a template that loses them now warns.
+- A 0-d NumPy array in a `dict[str, column]` payload is treated as a scalar
+  instead of failing with "iteration over a 0-d array".
+- `_normalize` rule numbering in the docstrings matches the code.
+
+### Added
+- `FillXLWarning`, `IgnoredDataWarning`, `PrecisionLossWarning` and
+  `TimezoneWarning`, exported from `fillxl`.
+- `docs/parity.md`: which features each engine supports, and the known gaps.
+- `docs/warnings.md`: every warning and error fillxl raises, and how to filter
+  them.
+- `docs/migrating.md`: 0.6 → 0.7 migration notes.
+
+### Verified, not changed
+- A sorted table's `sortState` is left exactly as the template had it. Excel 16
+  does the same when it resizes a table (in either direction), and the
+  workbook still opens without a repair prompt, so rewriting the reference
+  would only make the engines disagree.
+
 ## [0.6.0] — 2026-10-21
 
 The two engines now produce the same workbook for the same template and data,

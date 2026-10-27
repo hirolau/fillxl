@@ -32,11 +32,13 @@ from fillxl._formulas import (
 )
 from fillxl._normalize import (
     check_cell_value,
+    check_named_cell_scalar,
+    check_table_cell_scalar,
     com_value_from_normalized,
     prepare_cell_value,
 )
-from fillxl._plan import TableGeometry, plan_table_fill
-from fillxl._sheets import first_remaining, require_a_visible_sheet
+from fillxl._plan import BlockedRegion, TableGeometry, blocked_area, plan_table_fill
+from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
 from fillxl._utils import col_to_excel
 from fillxl._validation import validate_columns
 
@@ -209,6 +211,7 @@ class Win32ComBackend:
         if target is None:
             return
         sheet_name, address = target
+        check_named_cell_scalar(name, value)
         normalized = prepare_cell_value(value)
         check_cell_value(normalized, name=name)
         prepared = com_value_from_normalized(normalized, escape_formulas=config.escape_formulas)
@@ -299,6 +302,16 @@ class Win32ComBackend:
         last_letter = col_to_excel(geometry.last_col)
 
         if plan.overflow_rows is not None:
+            _check_overflow_regions_com(
+                worksheet,
+                table_name=name,
+                list_obj=list_obj,
+                first_col=geometry.first_col,
+                last_col=geometry.last_col,
+                first_row=plan.overflow_rows[0],
+                last_row=plan.overflow_rows[1],
+                num_data_rows=len(rows),
+            )
             _check_overflow_com(
                 worksheet,
                 table_name=name,
@@ -311,7 +324,9 @@ class Win32ComBackend:
             )
 
         if not rows:
-            _clear_body_com(list_obj.DataBodyRange, headerless=geometry.header_rows == 0)
+            # Calculated columns are left alone: clearing them can make Excel
+            # drop the calculated-column definition with them.
+            _clear_body_columns_com(list_obj, table_columns, formulas)
 
         # Resize first: Excel fills calculated columns into new rows itself.
         # worksheet.Range, not Application.Range: the latter means the ACTIVE sheet.
@@ -441,7 +456,7 @@ class Win32ComBackend:
         present = [name for name in dict.fromkeys(names) if name in existing]
         for name in names:
             if name not in existing:
-                logger.warning("Sheet '%s' not found, skipping deletion", name)
+                warn_sheet_not_found(name, "nothing was deleted")
         if not present:
             return
         visible = self._visible_sheet_names()
@@ -460,7 +475,7 @@ class Win32ComBackend:
         """Set the active (displayed) sheet."""
         self._ensure_workbook()
         if name not in self._sheet_names():
-            logger.warning("Sheet '%s' not found, keeping default active sheet", name)
+            warn_sheet_not_found(name, "the workbook keeps its active sheet")
             return
         sheet = self._workbook.Sheets(name)
         if not _com_is_visible(sheet):
@@ -793,25 +808,120 @@ def _com_table_geometry(list_obj: Any) -> TableGeometry:  # noqa: ANN401
     )
 
 
-def _clear_body_com(body: Any, *, headerless: bool) -> None:  # noqa: ANN401
-    """Clear a table body's values.
+def _clear_body_columns_com(
+    list_obj: Any,  # noqa: ANN401
+    table_columns: Sequence[str],
+    formulas: Mapping[str, str],
+) -> None:
+    """Clear the values in every data column of the body, keeping calculated columns.
 
-    Clearing a headerless table's whole body in one call drops the ListObject.
-    Sub-ranges are safe, so such bodies are cleared row by row (cell by cell
-    for a single row).
+    Clearing a headerless table's whole body in one call drops the ListObject,
+    so each column is cleared on its own: a sub-range is always safe.
     """
-    if body is None:
+    for index, name in enumerate(table_columns, start=1):
+        if name in formulas:
+            continue
+        body = list_obj.ListColumns(index).DataBodyRange
+        if body is not None:
+            body.ClearContents()
+
+
+def _clean_address(target: Any) -> str:  # noqa: ANN401
+    """A COM range address without the ``$`` markers, matching openpyxl's ``ref``."""
+    return str(target.Address).replace("$", "")
+
+
+def _table_regions_com(worksheet: Any, current: Any) -> list[BlockedRegion]:  # noqa: ANN401
+    """Every other table on *worksheet* as a region a table must not grow into."""
+    regions: list[BlockedRegion] = []
+    for list_obj in worksheet.ListObjects:
+        if str(list_obj.Name) == str(current.Name):
+            continue
+        table_range = list_obj.Range
+        regions.append(
+            BlockedRegion(
+                description=f"table {str(list_obj.Name)!r} at {_clean_address(table_range)}",
+                first_row=int(table_range.Row),
+                last_row=int(table_range.Row + table_range.Rows.Count - 1),
+                first_col=int(table_range.Column),
+                last_col=int(table_range.Column + table_range.Columns.Count - 1),
+            )
+        )
+    return regions
+
+
+def _merged_regions_com(
+    worksheet: Any,  # noqa: ANN401
+    *,
+    first_row: int,
+    last_row: int,
+    first_col: int,
+    last_col: int,
+) -> list[BlockedRegion]:
+    """Merged ranges touching the rows a table wants to grow into."""
+    regions: list[BlockedRegion] = []
+    seen: set[str] = set()
+    for row in range(first_row, last_row + 1):
+        for col in range(first_col, last_col + 1):
+            merged = worksheet.Cells(row, col).MergeArea
+            if int(merged.Cells.Count) <= 1:
+                continue
+            address = _clean_address(merged)
+            if address in seen:
+                continue
+            seen.add(address)
+            regions.append(
+                BlockedRegion(
+                    description=f"the merged range {address}",
+                    first_row=int(merged.Row),
+                    last_row=int(merged.Row + merged.Rows.Count - 1),
+                    first_col=int(merged.Column),
+                    last_col=int(merged.Column + merged.Columns.Count - 1),
+                )
+            )
+    return regions
+
+
+def _check_overflow_regions_com(
+    worksheet: Any,  # noqa: ANN401
+    *,
+    table_name: str,
+    list_obj: Any,  # noqa: ANN401
+    first_col: int,
+    last_col: int,
+    first_row: int,
+    last_row: int,
+    num_data_rows: int,
+) -> None:
+    """Refuse to grow a table into another table or into merged cells.
+
+    Those cells can look empty and still make ``Resize`` fail with a raw COM
+    error, so they are checked before anything changes.  The message matches
+    the openpyxl engine's word for word.
+    """
+    blocked = blocked_area(
+        (first_row, last_row),
+        first_col,
+        last_col,
+        [
+            *_table_regions_com(worksheet, list_obj),
+            *_merged_regions_com(
+                worksheet,
+                first_row=first_row,
+                last_row=last_row,
+                first_col=first_col,
+                last_col=last_col,
+            ),
+        ],
+    )
+    if blocked is None:
         return
-    if not headerless:
-        body.ClearContents()
-        return
-    row_count = body.Rows.Count
-    if row_count == 1:
-        for col_index in range(1, body.Columns.Count + 1):
-            body.Cells(1, col_index).ClearContents()
-    else:
-        for row_index in range(1, row_count + 1):
-            body.Rows(row_index).ClearContents()
+    msg = (
+        f"Table '{table_name}' cannot expand to {num_data_rows} rows: "
+        f"{blocked.description} is in the way. Move or remove the content below "
+        "the table first."
+    )
+    raise ValueError(msg)
 
 
 def _write_rows_com(
@@ -845,6 +955,12 @@ def _write_rows_com(
             source = sources[col_idx]
             normalized = None
             if source is not None:
+                check_table_cell_scalar(
+                    row[source],
+                    table=table_name,
+                    row=row_number,
+                    column=table_columns[col_idx],
+                )
                 normalized = prepare_cell_value(row[source])
                 check_cell_value(
                     normalized,

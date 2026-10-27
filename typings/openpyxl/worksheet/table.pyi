@@ -66,6 +66,7 @@ class Table:
     totalsRowCount: int | None
     totalsRowShown: bool | None
     autoFilter: Any
+    sortState: Any
     tableColumns: list[TableColumn]
     tableStyleInfo: TableStyleInfo | None
     def __init__(

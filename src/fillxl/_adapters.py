@@ -7,6 +7,8 @@ import sys
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from fillxl._warnings import IgnoredDataWarning, warn_user
+
 # Optional dependencies are looked up in ``sys.modules`` instead of imported:
 # an object of one of these types can only exist if the module has already
 # been imported, and a per-call ``import`` is both slow and repeatedly fails
@@ -21,7 +23,8 @@ def _is_column_values(values: Any) -> bool:  # noqa: ANN401
     """Whether *values* is a column of data (list, tuple, array, Series, …).
 
     Strings and mappings are excluded: ``{"a": "hello"}`` is a single value,
-    not a column.
+    not a column.  A 0-d array is a single value as well — it has a ``tolist``
+    method and a ``__len__``, but ``len()`` on it raises.
 
     Examples:
         >>> _is_column_values([1, 2, 3])
@@ -32,9 +35,17 @@ def _is_column_values(values: Any) -> bool:  # noqa: ANN401
         False
         >>> _is_column_values({"a": 1})
         False
+        >>> import numpy as np
+        >>> _is_column_values(np.array([1, 2]))
+        True
+        >>> _is_column_values(np.array(5))
+        False
 
     """
     if isinstance(values, (str, bytes, bytearray, dict)):
+        return False
+    numpy = sys.modules.get("numpy")
+    if numpy is not None and isinstance(values, numpy.ndarray) and values.ndim == 0:
         return False
     if isinstance(values, Sequence):
         return True
@@ -154,10 +165,10 @@ class TabularAdapter:
         pd = sys.modules.get("pandas")
         if pd is not None and isinstance(data, pd.DataFrame):
             if _pandas_index_carries_data(data.index):
-                logger.warning(
-                    "The DataFrame index %s is not written to Excel; "
+                warn_user(
+                    f"The DataFrame index {list(data.index.names)} is not written to Excel; "
                     "call df.reset_index() to include it.",
-                    list(data.index.names),
+                    IgnoredDataWarning,
                 )
             self._columns = _normalize_column_names(data.columns)
             self._rows = list(data.itertuples(index=False, name=None))

@@ -38,3 +38,23 @@ class StrData:
     ptCount: int | None
     pt: Any
     def __init__(self, **kw: Any) -> None: ...
+
+class AxDataSource:
+    strRef: Any
+    numRef: Any
+    multiLvlStrRef: Any
+    numLit: Any
+    strLit: Any
+    def __init__(self, **kw: Any) -> None: ...
+
+class MultiLevelStrRef:
+    f: str | None
+    multiLvlStrCache: Any
+    def __init__(
+        self, f: str | None = ..., multiLvlStrCache: Any = ..., extLst: Any = ...
+    ) -> None: ...
+
+class MultiLevelStrData:
+    ptCount: int | None
+    lvl: Any
+    def __init__(self, ptCount: int | None = ..., lvl: Any = ..., extLst: Any = ...) -> None: ...

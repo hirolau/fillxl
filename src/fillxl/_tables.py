@@ -13,11 +13,24 @@ from openpyxl.worksheet.cell_range import CellRange
 from ._adapters import TabularAdapter
 from ._charts import TableChangeSpecs
 from ._formulas import openpyxl_formula_columns, warn_about_ignored_formula_data
-from ._normalize import check_cell_value, is_text_cell_value, prepare_cell_value
-from ._plan import RowSpan, TableGeometry, plan_table_fill
+from ._normalize import (
+    check_cell_value,
+    check_table_cell_scalar,
+    is_text_cell_value,
+    prepare_cell_value,
+)
+from ._plan import (
+    BlockedRegion,
+    RowSpan,
+    TableGeometry,
+    blocked_area,
+    plan_table_fill,
+)
 from ._utils import find_worksheet_and_table, table_column_name
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from openpyxl.workbook.workbook import Workbook
     from openpyxl.worksheet.table import Table
     from openpyxl.worksheet.worksheet import Worksheet
@@ -61,14 +74,85 @@ def openpyxl_table_geometry(table: Table) -> TableGeometry:
     )
 
 
-def _clear_rows(worksheet: Worksheet, rows: RowSpan, first_col: int, last_col: int) -> None:
-    """Clear values (not styles) in *rows* between *first_col* and *last_col*."""
+def _clear_rows(
+    worksheet: Worksheet,
+    rows: RowSpan,
+    first_col: int,
+    last_col: int,
+    *,
+    keep: Sequence[int] = (),
+) -> None:
+    """Clear values (not styles) in *rows* between *first_col* and *last_col*.
+
+    Columns in *keep* are left alone: a calculated column keeps its formula,
+    which is what Excel does when it shrinks a table.
+    """
     first_row, last_row = rows
+    skipped = set(keep)
     for row in range(first_row, last_row + 1):
         for col in range(first_col, last_col + 1):
+            if col in skipped:
+                continue
             cell = worksheet._cells.get((row, col))
             if cell is not None and is_single_cell(cell):
                 cell.value = None
+
+
+def _check_overflow_region(
+    worksheet: Worksheet,
+    table_name: str,
+    table: Table,
+    rows: RowSpan,
+    first_col: int,
+    last_col: int,
+    data_rows: int,
+) -> None:
+    """Refuse to grow a table into another table or into merged cells.
+
+    Those cells can look empty and still break the file: an overlapping table
+    makes Excel repair the workbook, and writing to a merged cell raises
+    openpyxl's "read-only" ``AttributeError``.
+    """
+    blocked = blocked_area(
+        rows,
+        first_col,
+        last_col,
+        _occupied_regions(worksheet, table),
+    )
+    if blocked is None:
+        return
+    msg = (
+        f"Table '{table_name}' cannot expand to {data_rows} rows: "
+        f"{blocked.description} is in the way. Move or remove the content below "
+        "the table first."
+    )
+    raise ValueError(msg)
+
+
+def _occupied_regions(worksheet: Worksheet, table: Table) -> list[BlockedRegion]:
+    """Everything on *worksheet* that a table must not grow into."""
+    regions = [
+        BlockedRegion(
+            description=f"table {other.name!r} at {other.ref}",
+            first_row=CellRange(other.ref).min_row,
+            last_row=CellRange(other.ref).max_row,
+            first_col=CellRange(other.ref).min_col,
+            last_col=CellRange(other.ref).max_col,
+        )
+        for other in worksheet.tables.values()
+        if other is not table
+    ]
+    regions.extend(
+        BlockedRegion(
+            description=f"the merged range {merged}",
+            first_row=merged.min_row,
+            last_row=merged.max_row,
+            first_col=merged.min_col,
+            last_col=merged.max_col,
+        )
+        for merged in worksheet.merged_cells.ranges
+    )
+    return regions
 
 
 def _check_overflow(
@@ -151,6 +235,15 @@ def populate_table(
     )
 
     if plan.overflow_rows is not None:
+        _check_overflow_region(
+            worksheet,
+            table_name,
+            table,
+            plan.overflow_rows,
+            first_col,
+            last_col,
+            len(rows),
+        )
         _check_overflow(worksheet, table_name, plan.overflow_rows, first_col, last_col, len(rows))
 
     # The autoFilter must stay in step with the table, or Excel repairs the file.
@@ -165,8 +258,15 @@ def populate_table(
         msg = "Expected a single cell! This should never happen in a table."
         raise ValueError(msg)
 
+    # Calculated columns keep their formulas, including when the data is empty.
+    formula_column_offsets = {
+        offset
+        for offset, column in enumerate(table.tableColumns)
+        if table_column_name(column) in formula_columns
+    }
+    keep_columns = [first_col + offset for offset in formula_column_offsets]
     if plan.unused_body_rows is not None:
-        _clear_rows(worksheet, plan.unused_body_rows, first_col, last_col)
+        _clear_rows(worksheet, plan.unused_body_rows, first_col, last_col, keep=keep_columns)
     if geometry.totals_rows:
         _clear_rows(worksheet, (geometry.last_row, geometry.last_row), first_col, last_col)
 
@@ -189,11 +289,15 @@ def populate_table(
             data_col_idx = data_column_map[column_name]
             for row_ix, row_values in enumerate(rows):
                 cell = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
+                raw_value = row_values[data_col_idx]
+                check_table_cell_scalar(
+                    raw_value, table=table_name, row=row_ix + 1, column=column_name
+                )
                 # Style first: a date format must be in place before the value
                 # arrives, or openpyxl replaces it with its default date format.
                 if copy_style_in_tables:
                     cell._style = copy(first_row_style)
-                value = prepare_cell_value(row_values[data_col_idx])
+                value = prepare_cell_value(raw_value)
                 check_cell_value(
                     value, table=table_name, row=row_ix + 1, column=column_name, warned=warned
                 )
@@ -215,6 +319,16 @@ def populate_table(
 
     if totals_row_cells is not None:
         _write_row(worksheet, plan.new_last_row, first_col, totals_row_cells)
+        if plan.vacated_rows is not None:
+            # The old totals row keeps its bold text and rules unless the style
+            # goes too; Excel moves the row up and leaves a plain row behind.
+            _reset_row_style(
+                worksheet,
+                geometry.last_row,
+                plan.first_data_row,
+                first_col,
+                last_col,
+            )
 
     if extend_conditional_formatting:
         _extend_conditional_formatting(
@@ -226,6 +340,25 @@ def populate_table(
         )
 
     return plan.change_spec(str(worksheet.title))
+
+
+def _reset_row_style(
+    worksheet: Worksheet,
+    row: int,
+    template_row: int,
+    first_col: int,
+    last_col: int,
+) -> None:
+    """Give *row* the style of *template_row*, so no leftover formatting remains."""
+    if row == template_row:
+        return
+    for col in range(first_col, last_col + 1):
+        target = worksheet._cells.get((row, col))
+        source = worksheet._cells.get((template_row, col))
+        if target is None or not is_single_cell(target):
+            continue
+        if source is not None and is_single_cell(source):
+            target._style = copy(source._style)
 
 
 def _totals_row_count(table: Table) -> int:

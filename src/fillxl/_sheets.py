@@ -4,8 +4,28 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from fillxl._warnings import IgnoredDataWarning, warn_user
+
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
+
+
+def warn_sheet_not_found(name: str, consequence: str) -> None:
+    """Warn that a configured sheet name matched nothing.
+
+    Both engines emit the same text, because a name that silently does
+    nothing is a config bug the caller needs to see.
+
+    Examples:
+        >>> import warnings
+        >>> with warnings.catch_warnings(record=True) as caught:
+        ...     warnings.simplefilter("always")
+        ...     warn_sheet_not_found("Data", "nothing was deleted")
+        >>> caught[0].category.__name__
+        'IgnoredDataWarning'
+
+    """
+    warn_user(f"Sheet {name!r} not found; {consequence}", IgnoredDataWarning)
 
 
 def require_a_visible_sheet(visible: Sequence[str], removed: Collection[str], action: str) -> None:

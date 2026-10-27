@@ -45,3 +45,31 @@ class TestFrozenConfigAttributes:
     def test_formula_escaping_is_on_by_default(self) -> None:
         """Strings starting with "=" stay literal unless the caller opts out."""
         assert FillXLConfig().escape_formulas is True
+
+
+class TestSheetNameValidation:
+    """Sheet names are text, and a bare string is not a list of names."""
+
+    def test_a_bare_string_for_delete_sheets_is_refused(self) -> None:
+        """``tuple("Sheet1")`` would try to delete sheets named S, h, e and so on."""
+        with pytest.raises(TypeError, match=r"did you mean \['Sheet1'\]"):
+            FillXLConfig(delete_sheets=cast(Any, "Sheet1"))
+
+    def test_a_non_string_sheet_name_is_refused(self) -> None:
+        with pytest.raises(TypeError, match="must contain sheet names"):
+            FillXLConfig(delete_sheets=cast(Any, ["ok", 1]))
+
+    def test_a_list_of_names_is_frozen_into_a_tuple(self) -> None:
+        config = FillXLConfig(delete_sheets=["Report", "Notes"])
+
+        assert config.delete_sheets == ("Report", "Notes")
+
+    def test_an_underscore_sheet_cannot_be_active_while_underscores_are_hidden(self) -> None:
+        """This combination can only fail at the end of a fill, so it fails here."""
+        with pytest.raises(ValueError, match="hide_underscore_sheets is True"):
+            FillXLConfig(active_sheet="_Data")
+
+    def test_an_underscore_sheet_can_be_active_when_underscores_stay_visible(self) -> None:
+        config = FillXLConfig(active_sheet="_Data", hide_underscore_sheets=False)
+
+        assert config.active_sheet == "_Data"

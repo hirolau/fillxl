@@ -114,3 +114,49 @@ def test_raise_policy_raises(tmp_path: Path) -> None:
 
     with pytest.raises(LossyTemplateError, match="slicers"):
         check_lossy(template, output, "raise")
+
+
+def test_pictures_are_counted_when_the_drawing_loses_them(tmp_path: Path) -> None:
+    """openpyxl drops images when Pillow is missing, so they must be counted."""
+    drawing = b"<xdr:wsDr><xdr:pic><xdr:blipFill/></xdr:pic></xdr:wsDr>"
+    template = _package(
+        tmp_path / "template.xlsx",
+        {
+            "xl/drawings/drawing1.xml": drawing,
+            "xl/media/image1.png": b"png",
+        },
+    )
+    output = _package(tmp_path / "output.xlsx", {"xl/workbook.xml": b"<workbook/>"})
+
+    lost = find_lost_features(template, output)
+
+    assert any("pictures" in item for item in lost)
+    assert any("images (xl/media)" in item for item in lost)
+
+
+def test_chart_style_and_colour_parts_are_counted(tmp_path: Path) -> None:
+    """openpyxl writes neither part back, and both carry visible formatting."""
+    template = _package(
+        tmp_path / "template.xlsx",
+        {
+            "xl/charts/style1.xml": b"<cs:chartStyle/>",
+            "xl/charts/colors1.xml": b"<cs:colorStyle/>",
+        },
+    )
+    output = _package(tmp_path / "output.xlsx", {"xl/workbook.xml": b"<workbook/>"})
+
+    lost = find_lost_features(template, output)
+
+    assert any("chart styles" in item for item in lost)
+    assert any("chart colour schemes" in item for item in lost)
+
+
+def test_the_lossy_warning_belongs_to_the_fillxl_warning_hierarchy(tmp_path: Path) -> None:
+    """One ``warnings.simplefilter`` can turn every fillxl warning into an error."""
+    from fillxl import FillXLWarning
+
+    template = _package(tmp_path / "template.xlsx", {"xl/slicers/slicer1.xml": b"<slicer/>"})
+    output = _package(tmp_path / "output.xlsx", {"xl/workbook.xml": b"<workbook/>"})
+
+    with pytest.warns(FillXLWarning, match="slicers"):
+        check_lossy(template, output, "warn")

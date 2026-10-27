@@ -11,7 +11,6 @@ runners), so the same suite protects local runs and CI pipelines with Excel.
 from __future__ import annotations
 
 import datetime as dt
-import logging
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +21,14 @@ import pytest
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
-from fillxl import CellValueError, Engine, FillXLConfig, fill
+from fillxl import (
+    CellValueError,
+    Engine,
+    FillXLConfig,
+    IgnoredDataWarning,
+    PrecisionLossWarning,
+    fill,
+)
 from tests._assets import TEMPLATE
 from tests._engines import ENGINES, _fill_output, _win32com_available
 
@@ -616,16 +622,16 @@ def test_a_large_integer_warns_once_per_column(
     equivalence_template: Path,
     output_path: Path,
     engine: Engine,
-    caplog: pytest.LogCaptureFixture,
+    recwarn: pytest.WarningsRecorder,
 ) -> None:
     """Excel rounds integers above 15 significant digits; say so once."""
     rows = [{"Name": f"r{i}", "Value": 1234567890123456, "Notes": "n"} for i in range(3)]
 
-    with caplog.at_level(logging.WARNING, logger="fillxl._normalize"):
-        _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
+    _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
 
-    warnings = [record for record in caplog.records if "significant digits" in record.getMessage()]
-    assert len(warnings) == 1
+    precision = [w for w in recwarn if issubclass(w.category, PrecisionLossWarning)]
+    assert len(precision) == 1
+    assert "significant digits" in str(precision[0].message)
 
 
 @pytest.mark.parametrize("engine", ENGINES)
@@ -732,16 +738,15 @@ def test_a_multi_destination_name_updates_only_the_first_cell(
     multi_dest_name_template: Path,
     output_path: Path,
     engine: Engine,
-    caplog: pytest.LogCaptureFixture,
+    recwarn: pytest.WarningsRecorder,
 ) -> None:
     """Both engines write to the first destination and point out the rest."""
-    with caplog.at_level(logging.WARNING, logger="fillxl._cells"):
-        output = _fill_output(
-            multi_dest_name_template,
-            output_path,
-            engine,
-            values={"multi_dest": "new"},
-        )
+    output = _fill_output(
+        multi_dest_name_template,
+        output_path,
+        engine,
+        values={"multi_dest": "new"},
+    )
 
     wb = openpyxl.load_workbook(output)
     try:
@@ -749,7 +754,8 @@ def test_a_multi_destination_name_updates_only_the_first_cell(
         assert wb["Sheet2"]["B2"].value == "Second dest"
     finally:
         wb.close()
-    assert "multiple destinations" in caplog.text
+    ignored = [w for w in recwarn if issubclass(w.category, IgnoredDataWarning)]
+    assert any("destinations" in str(w.message) for w in ignored)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -869,7 +875,7 @@ def test_real_data_for_a_calculated_column_is_ignored_with_a_warning(
     calculated_column_template: Path,
     output_path: Path,
     engine: Engine,
-    caplog: pytest.LogCaptureFixture,
+    recwarn: pytest.WarningsRecorder,
 ) -> None:
     """Real data for a formula column is dropped, and the user is told."""
     rows = [
@@ -882,10 +888,9 @@ def test_real_data_for_a_calculated_column_is_ignored_with_a_warning(
         },
     ]
 
-    with caplog.at_level(logging.WARNING, logger="fillxl._formulas"):
-        output = _fill_output(
-            calculated_column_template, output_path, engine, tables={"TableTest": rows}
-        )
+    output = _fill_output(
+        calculated_column_template, output_path, engine, tables={"TableTest": rows}
+    )
 
     wb = openpyxl.load_workbook(output)
     try:
@@ -894,7 +899,8 @@ def test_real_data_for_a_calculated_column_is_ignored_with_a_warning(
         assert str(cell.value).startswith("=")
     finally:
         wb.close()
-    assert "keep their formulas" in caplog.text
+    ignored = [w for w in recwarn if issubclass(w.category, IgnoredDataWarning)]
+    assert any("keep their formulas" in str(w.message) for w in ignored)
 
 
 @pytest.mark.parametrize("engine", ENGINES)

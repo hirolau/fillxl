@@ -4,7 +4,7 @@ Both the ``openpyxl`` and ``win32com`` backends route ALL cell values
 through :func:`normalize_value` so that they produce **identical results**
 for the same input data.
 
-Normalisation rules (applied in order):
+Normalisation rules, in the order :func:`normalize_value` applies them:
     1. ``pd.NA`` / ``pd.NaT`` → ``None`` (pandas sentinels — cannot be
        represented in Excel).
     2. Empty strings → ``None``.  openpyxl cannot round-trip an empty text
@@ -15,38 +15,47 @@ Normalisation rules (applied in order):
        Excel stores anything it does not recognise as text, which is how
        numpy scalars used to end up with the "number stored as text"
        marker.
-    4. ``float('nan')``, ``float('inf'), float('-inf')`` → ``None``
-       (Excel cannot represent IEEE-754 special values).
-    5. ``datetime.date`` stays a ``date`` so it can get a date-only number
-        format; the COM edge converts it.
+    4. ``Decimal`` → ``float`` (Excel has no native ``Decimal`` type).
+        ``Decimal`` NaN, sNaN and infinities → ``None``, and a ``Decimal``
+        too large for a float becomes an empty cell too, because the IEEE
+        check below then sees the ``inf``.
+    5. ``float('nan')``, ``float('inf'), float('-inf')`` → ``None``
+        (Excel cannot represent IEEE-754 special values).
     6. ``datetime.time`` → ``float`` (fraction of a 24-hour day), which is
-       Excel's own time representation, so arithmetic such as ``=A2*24``
-       works.  The template's number format controls the display.
+        Excel's own time representation, so arithmetic such as ``=A2*24``
+        works.  The template's number format controls the display.
     7. ``datetime.timedelta`` → ``float`` (fraction of a 24-hour day).
-       Excel has no native ``timedelta`` type.
-    8. ``Decimal`` → ``float``.  Excel has no native ``Decimal`` type.
-    9. Timezone-aware ``datetime`` → naive ``datetime`` (tzinfo stripped,
-       wall-clock preserved).  ``pd.Timestamp`` (subclass of ``datetime``)
-       is handled identically.
-   10. Unrecognised objects → ``str(obj)`` via ``__str__``.
+        Excel has no native ``timedelta`` type.
+    8. Timezone-aware ``datetime`` → naive ``datetime`` (tzinfo stripped,
+        wall-clock preserved), with a :class:`TimezoneWarning`.
+    9. ``datetime`` and ``date`` subclasses (``pendulum``, ``arrow``, …) →
+        the exact built-in type, so openpyxl recognises them and the date
+        stays a ``date`` rather than becoming a datetime.
+   10. ``enum.Enum`` members → their ``value`` (``str(Color.RED)`` is
+        ``"Color.RED"``, which is never what the caller meant).
+   11. Recognised primitives pass through unchanged.
+   12. Unrecognised objects → ``str(obj)`` via ``__str__``.
 
 Values Excel cannot store faithfully (text longer than 32,767 characters,
-illegal control characters, dates before 1900-03-01, integers with more than
-15 significant digits) are reported by :func:`check_cell_value`.
+illegal control characters, lone surrogates, dates before 1900-03-01,
+integers with more than 15 significant digits or outside the double range)
+are reported by :func:`check_cell_value`.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import enum
 import logging
 import math
 import sys
-import warnings
 from contextvars import ContextVar
 from decimal import Decimal
 from typing import Any, Literal, TypeVar
 
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+from fillxl._warnings import PrecisionLossWarning, TimezoneWarning, warn_user
 
 T = TypeVar("T")
 
@@ -55,6 +64,11 @@ logger = logging.getLogger(__name__)
 _MAX_TEXT_LENGTH = 32_767
 _MAX_SIGNIFICANT_DIGITS = 15
 _SIGNIFICANT_DIGIT_FLOOR = 10**_MAX_SIGNIFICANT_DIGITS
+# Beyond this Excel stores nothing: a number that large is not a double.
+_MAX_DOUBLE = 1e308
+# pywin32 marshals a Python int as VT_I4 when it fits, and Excel holds
+# numbers as doubles anyway, so wider integers are handed over as floats.
+_MAX_COM_INT = 2**31
 _FIRST_EXCEL_DATE = dt.date(1900, 3, 1)
 
 Severity = Literal["error", "warning"]
@@ -116,6 +130,10 @@ def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN4
         'warning'
         >>> cell_value_problem(10**15) is None
         True
+        >>> cell_value_problem(10**400)[0]
+        'error'
+        >>> cell_value_problem("\\ud800")[0]
+        'error'
         >>> cell_value_problem(dt.datetime(1899, 12, 31))[0]
         'error'
 
@@ -134,8 +152,23 @@ def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN4
                     f"text contains the control character {match.group()!r} at position "
                     f"{match.start()}, which Excel cannot store"
                 )
+            # A lone surrogate is non-printable but is not a control
+            # character, so the regex above misses it.  It cannot be encoded
+            # as UTF-8, which is what openpyxl does while saving.
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                return "error", (
+                    f"text contains the lone surrogate {value[exc.start]!r} at position "
+                    f"{exc.start}, which cannot be stored as UTF-8"
+                )
         return None
     if isinstance(value, int) and not isinstance(value, bool):
+        if abs(value) >= _MAX_DOUBLE:
+            return "error", (
+                f"integer {value} is too large for an Excel cell; Excel stores numbers as "
+                "doubles and cannot hold values at or beyond 1e308"
+            )
         if abs(value) >= _SIGNIFICANT_DIGIT_FLOOR and (
             len(str(abs(value)).rstrip("0")) > _MAX_SIGNIFICANT_DIGITS
         ):
@@ -176,7 +209,10 @@ def check_cell_value(
         if key in warned:
             return
         warned.add(key)
-    logger.warning("%s: %s", describe_cell(table=table, row=row, column=column, name=name), text)
+    warn_user(
+        f"{describe_cell(table=table, row=row, column=column, name=name)}: {text}",
+        PrecisionLossWarning,
+    )
 
 
 # ── Per-fill-session state ──────────────────────────────────────────────────
@@ -217,6 +253,7 @@ def normalize_datetime(value: T) -> T:
 
     Examples:
         >>> import datetime as dt
+        >>> import warnings
         >>> reset_tz_warning_state()
         >>> naive = dt.datetime(2025, 6, 15, 14, 30)
         >>> normalize_datetime(naive) is naive
@@ -233,11 +270,10 @@ def normalize_datetime(value: T) -> T:
     """
     if isinstance(value, dt.datetime) and value.tzinfo is not None:
         if not _tz_warning_issued.get():
-            warnings.warn(
+            warn_user(
                 "Timezone-aware datetimes were provided. Excel does not "
                 "support timezones — the tzinfo will be stripped.",
-                UserWarning,
-                stacklevel=2,
+                TimezoneWarning,
             )
             _tz_warning_issued.set(True)
         return value.replace(tzinfo=None)
@@ -261,13 +297,16 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     1. ``pd.NA`` / ``pd.NaT`` → ``None`` (pandas sentinels).
     2. Empty strings → ``None`` (openpyxl cannot round-trip them).
     3. NumPy scalars → native Python values.
-    4. IEEE-754 special floats (NaN, Inf, -Inf) → ``None``.
-    5. ``date`` stays a ``date`` (the COM edge converts it).
+    4. ``Decimal`` → ``float``; NaN, sNaN, infinity and values too large for
+       a float → ``None``.
+    5. IEEE-754 special floats (NaN, Inf, -Inf) → ``None``.
     6. ``time`` → ``float`` (fraction of a day).
     7. ``timedelta`` → ``float`` (fraction of a 24-hour day).
-    8. ``Decimal`` → ``float``.
-    9. Timezone-aware ``datetime`` → naive ``datetime``.
-    10. Unrecognised objects → ``str(obj)``.
+    8. Timezone-aware ``datetime`` → naive ``datetime`` (with a warning).
+    9. ``datetime``/``date`` subclasses → the exact built-in type.
+    10. ``enum.Enum`` members → their ``value``.
+    11. Recognised primitives pass through unchanged.
+    12. Unrecognised objects → ``str(obj)``.
 
     Args:
         value: Any Python value to write to an Excel cell.
@@ -303,11 +342,22 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
         >>> from decimal import Decimal
         >>> normalize_value(Decimal('12.34'))
         12.34
+        >>> normalize_value(Decimal('NaN')) is None
+        True
+        >>> normalize_value(Decimal('Infinity')) is None
+        True
+        >>> normalize_value(Decimal('1e400')) is None
+        True
         >>> class Greeting:
         ...     def __str__(self) -> str:
         ...         return "Hello!"
         >>> normalize_value(Greeting())
         'Hello!'
+        >>> import enum
+        >>> class Color(enum.Enum):
+        ...     RED = "red"
+        >>> normalize_value(Color.RED)
+        'red'
 
     """
     # ── 1. pd.NA / pd.NaT → None (before any other type checks) ───────────
@@ -328,13 +378,17 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     if _is_numpy_scalar(value):
         value = _numpy_scalar_to_python(value)
 
-    # ── 4. IEEE-754 special floats → None ─────────────────────────────────
+    # ── 4. Decimal → float ────────────────────────────────────────────────
+    # Before the IEEE check, so that a Decimal that is NaN, infinite or too
+    # large for a float is caught instead of reaching the file as nan/inf.
+    if isinstance(value, Decimal):
+        if not value.is_finite():  # NaN, sNaN, ±Infinity
+            return None
+        value = float(value)
+
+    # ── 5. IEEE-754 special floats → None ─────────────────────────────────
     if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
         return None
-
-    # ── 5. date stays a date so it can get a date-only format ─────────────
-    # Excel has no date type, but openpyxl (and the COM edge) need the
-    # distinction to choose between ``yyyy-mm-dd`` and ``yyyy-mm-dd h:mm:ss``.
 
     # ── 6. time → fraction of a day (Excel's own representation) ──────────
     if isinstance(value, dt.time):
@@ -346,18 +400,42 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
     if isinstance(value, dt.timedelta):
         value = value.total_seconds() / 86400.0
 
-    # ── 8. Decimal → float ────────────────────────────────────────────────
-    if isinstance(value, Decimal):
-        value = float(value)
-
-    # ── 9. Strip timezone from datetime (must come after date→datetime) ───
+    # ── 8. Strip timezone from datetime ───────────────────────────────────
     value = normalize_datetime(value)
 
-    # ── 10. Recognised Excel-compatible primitives pass through unchanged ─
+    # ── 9. datetime/date subclasses → the exact built-in type ─────────────
+    # A ``date`` stays a ``date`` so it can get a date-only format: Excel has
+    # no date type, but openpyxl and the COM edge need the distinction to
+    # choose between ``yyyy-mm-dd`` and ``yyyy-mm-dd h:mm:ss``.  Subclasses
+    # are flattened because openpyxl looks number formats up by exact type.
+    if isinstance(value, dt.datetime) and type(value) is not dt.datetime:
+        value = dt.datetime(
+            value.year,
+            value.month,
+            value.day,
+            value.hour,
+            value.minute,
+            value.second,
+            value.microsecond,
+            value.tzinfo,
+            fold=value.fold,
+        )
+    elif (
+        isinstance(value, dt.date)
+        and not isinstance(value, dt.datetime)
+        and type(value) is not dt.date
+    ):
+        value = dt.date(value.year, value.month, value.day)
+
+    # ── 10. Enum members → their value ────────────────────────────────────
+    if isinstance(value, enum.Enum):
+        return normalize_value(value.value)
+
+    # ── 11. Recognised Excel-compatible primitives pass through unchanged ─
     if value is None or isinstance(value, (str, int, float, bool, dt.date)):
         return value
 
-    # ── 11. Unrecognised → string ────────────────────────────────────────
+    # ── 12. Unrecognised → string ────────────────────────────────────────
     return str(value)
 
 
@@ -428,6 +506,112 @@ def _to_python_datetime(value: Any) -> Any:  # noqa: ANN401
     if pd is not None and isinstance(value, pd.Timestamp):
         return value.to_pydatetime()
     return value
+
+
+def scalar_value_problem(value: Any) -> str | None:  # noqa: ANN401
+    """Why *value* is not something one Excel cell can hold, or ``None``.
+
+    Containers, binary data and tabular objects used to reach the file as
+    their ``repr``: a DataFrame in a named cell became its text dump and
+    ``b"abc"`` became ``"b'abc'"``.  They are refused instead, because the
+    caller almost always meant to pass them through ``tables=``.
+
+    Examples:
+        >>> scalar_value_problem("text") is None
+        True
+        >>> scalar_value_problem(42) is None
+        True
+        >>> scalar_value_problem([1, 2])
+        'list is not a single cell value'
+        >>> scalar_value_problem(b"abc")
+        'bytes is not a single cell value; decode it to text first'
+
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return f"{type(value).__name__} is not a single cell value; decode it to text first"
+    if isinstance(value, (list, tuple, set, frozenset, dict)):
+        return f"{type(value).__name__} is not a single cell value"
+    if _is_tabular(value):
+        return (
+            f"{type(value).__name__} is not a single cell value; "
+            "pass tabular data through tables= instead"
+        )
+    return None
+
+
+def check_named_cell_scalar(name: str, value: Any) -> None:  # noqa: ANN401
+    """Refuse a named-cell value that is not a single Excel value.
+
+    Raises:
+        TypeError: If *value* is a container, binary data or tabular.
+
+    Examples:
+        >>> check_named_cell_scalar("report_date", 42)
+        >>> check_named_cell_scalar("report", [1, 2])  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        TypeError: Named cell 'report': list is not a single cell value; ...
+
+    """
+    problem = scalar_value_problem(value)
+    if problem is not None:
+        msg = f"Named cell {name!r}: {problem}; put rows and columns in tables= instead."
+        raise TypeError(msg)
+
+
+def check_table_cell_scalar(
+    value: Any,  # noqa: ANN401
+    *,
+    table: str,
+    row: int,
+    column: str,
+) -> None:
+    """Refuse a table cell value that is not a single Excel value.
+
+    Raises:
+        CellValueError: If *value* is a container, binary data or tabular.
+
+    """
+    problem = scalar_value_problem(value)
+    if problem is not None:
+        raise CellValueError(
+            f"{problem}; use one row per call and pass tabular data through tables=",
+            table=table,
+            row=row,
+            column=column,
+        )
+
+
+_TABULAR_TYPES: tuple[tuple[str, str], ...] = (
+    ("pandas", "DataFrame"),
+    ("pandas", "Series"),
+    ("polars", "DataFrame"),
+    ("polars", "Series"),
+    ("polars", "LazyFrame"),
+    ("duckdb", "DuckDBPyRelation"),
+)
+
+
+def _is_tabular(value: Any) -> bool:  # noqa: ANN401
+    """Whether *value* is a DataFrame, Series or query relation.
+
+    The modules are looked up in :data:`sys.modules`: the object can only
+    exist if its library was already imported.
+
+    Examples:
+        >>> _is_tabular([[1, 2]])
+        False
+
+    """
+    if isinstance(value, (str, bytes, bytearray)):
+        return False
+    for module_name, type_name in _TABULAR_TYPES:
+        module = sys.modules.get(module_name)
+        candidate = getattr(module, type_name, None) if module is not None else None
+        if isinstance(candidate, type) and isinstance(value, candidate):
+            return True
+    numpy = sys.modules.get("numpy")
+    return numpy is not None and isinstance(value, numpy.ndarray) and value.ndim > 0
 
 
 def is_formula_string(value: Any) -> bool:  # noqa: ANN401
@@ -537,9 +721,17 @@ def prepare_com_value(value: Any, *, escape_formulas: bool = False) -> Any:  # n
 def com_value_from_normalized(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
     """The COM-specific part of :func:`prepare_com_value` for an already normalised value.
 
+    Integers outside the 32-bit range are handed over as floats: pywin32
+    marshals a wider Python int as VT_I8 or fails outright, while Excel holds
+    every number as a double anyway.
+
     Examples:
         >>> com_value_from_normalized(dt.date(2025, 6, 15)).isoformat()
         '2025-06-15T00:00:00+00:00'
+        >>> com_value_from_normalized(2**31)
+        2147483648.0
+        >>> com_value_from_normalized(2**31 - 1)
+        2147483647
 
     """
     if isinstance(value, str):
@@ -550,4 +742,6 @@ def com_value_from_normalized(value: Any, *, escape_formulas: bool = False) -> A
         return value.replace(tzinfo=dt.UTC)
     if isinstance(value, dt.date):
         return dt.datetime(value.year, value.month, value.day, tzinfo=dt.UTC)
+    if isinstance(value, int) and not isinstance(value, bool) and abs(value) >= _MAX_COM_INT:
+        return float(value)
     return value

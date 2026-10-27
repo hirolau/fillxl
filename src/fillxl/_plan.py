@@ -7,13 +7,79 @@ so the arithmetic is tested once, without Excel.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from attrs import define
 from openpyxl.utils import get_column_letter
 
 from ._charts import TableChangeSpecs
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 RowSpan = tuple[int, int]
 """Inclusive ``(first_row, last_row)`` range of worksheet rows."""
+
+
+@define(frozen=True, kw_only=True)
+class BlockedRegion:
+    """A worksheet rectangle that a growing table must not write into.
+
+    Attributes:
+        description: How to name the region in an error message, e.g.
+            ``"table 'Other'"`` or ``"the merged range A5:C6"``.
+        first_row: First row of the region.
+        last_row: Last row of the region.
+        first_col: First column of the region.
+        last_col: Last column of the region.
+
+    """
+
+    description: str
+    first_row: int
+    last_row: int
+    first_col: int
+    last_col: int
+
+    def overlaps(self, rows: RowSpan, first_col: int, last_col: int) -> bool:
+        """Whether the rectangle overlaps *rows* between *first_col* and *last_col*."""
+        first_row, last_row = rows
+        return (
+            self.first_col <= last_col
+            and self.last_col >= first_col
+            and self.first_row <= last_row
+            and self.last_row >= first_row
+        )
+
+
+def blocked_area(
+    rows: RowSpan,
+    first_col: int,
+    last_col: int,
+    regions: Iterable[BlockedRegion],
+) -> BlockedRegion | None:
+    """The first region a table growing into *rows* would overlap, or ``None``.
+
+    Examples:
+        >>> merged = BlockedRegion(
+        ...     description="the merged range C15:D16",
+        ...     first_row=15,
+        ...     last_row=16,
+        ...     first_col=3,
+        ...     last_col=4,
+        ... )
+        >>> blocked_area((14, 20), 1, 13, [merged]) is merged
+        True
+        >>> blocked_area((14, 20), 5, 6, [merged]) is None
+        True
+        >>> blocked_area((20, 22), 1, 13, [merged]) is None
+        True
+
+    """
+    return next(
+        (region for region in regions if region.overlaps(rows, first_col, last_col)),
+        None,
+    )
 
 
 @define(frozen=True, kw_only=True)

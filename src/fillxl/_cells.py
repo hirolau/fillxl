@@ -7,7 +7,13 @@ from typing import TYPE_CHECKING, Any
 
 from openpyxl.worksheet.worksheet import Worksheet
 
-from fillxl._normalize import check_cell_value, is_text_cell_value, prepare_cell_value
+from fillxl._normalize import (
+    check_cell_value,
+    check_named_cell_scalar,
+    is_text_cell_value,
+    prepare_cell_value,
+)
+from fillxl._warnings import IgnoredDataWarning, warn_user
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -32,7 +38,9 @@ def named_cell_target(
 
     """
     if not destinations:
-        logger.warning("Named cell '%s' has no destinations, skipping", name)
+        warn_user(
+            f"Named cell {name!r} has no destinations, so nothing was written", IgnoredDataWarning
+        )
         return None
     sheet_name, address = destinations[0]
     if ":" in address:
@@ -43,11 +51,10 @@ def named_cell_target(
         )
         raise ValueError(msg)
     if len(destinations) > 1:
-        logger.warning(
-            "Named cell '%s' has multiple destinations, only the first one (%s!%s) was updated",
-            name,
-            sheet_name,
-            address,
+        warn_user(
+            f"Named cell {name!r} has {len(destinations)} destinations; only the first "
+            f"one ({sheet_name}!{address}) was updated",
+            IgnoredDataWarning,
         )
     return sheet_name.replace("''", "'"), address
 
@@ -103,10 +110,17 @@ def populate_named_cells(
         defined_name = find_defined_name(workbook, name)
         if defined_name is None:
             if allow_missing:
-                logger.warning("Named cell '%s' not found in workbook, skipping", name)
+                warn_user(
+                    f"Named cell {name!r} not found in workbook, nothing was written",
+                    IgnoredDataWarning,
+                )
                 continue
             msg = f"Named cell '{name}' not found in workbook"
             raise KeyError(msg)
+
+        # Refuse containers before normalisation: str(value) would otherwise
+        # write a DataFrame or list as its repr.
+        check_named_cell_scalar(name, value)
 
         # Normalise value for Excel compatibility
         normalised_value = prepare_cell_value(value)

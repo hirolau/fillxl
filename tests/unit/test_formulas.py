@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 import pytest
 from openpyxl import Workbook
 from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
+from fillxl import IgnoredDataWarning
 from fillxl._formulas import (
     formula_definitions,
     openpyxl_formula_columns,
@@ -82,23 +82,20 @@ def test_openpyxl_formula_columns_keeps_a_column_whose_body_holds_formulas() -> 
 
 
 def test_warn_about_ignored_formula_data_is_silent_for_blank_values(
-    caplog: pytest.LogCaptureFixture,
+    recwarn: pytest.WarningsRecorder,
 ) -> None:
     """Blank data for a calculated column is ignored without a warning."""
-    with caplog.at_level(logging.WARNING, logger="fillxl._formulas"):
-        ignored = warn_about_ignored_formula_data("T", ["C"], [[None], [float("nan")]], {"C": "=1"})
+    ignored = warn_about_ignored_formula_data("T", ["C"], [[None], [float("nan")]], {"C": "=1"})
 
     assert ignored == []
-    assert caplog.records == []
+    assert [w for w in recwarn if issubclass(w.category, IgnoredDataWarning)] == []
 
 
-def test_warn_about_ignored_formula_data_names_the_columns(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_warn_about_ignored_formula_data_names_the_columns() -> None:
     """Real data supplied for calculated columns is reported once per table."""
-    with caplog.at_level(logging.WARNING, logger="fillxl._formulas"):
+    with pytest.warns(IgnoredDataWarning, match="keep their formulas") as caught:
         ignored = warn_about_ignored_formula_data("T", ["C", "D"], [[1, 2]], {"C": "=1", "D": "=2"})
 
     assert ignored == ["C", "D"]
-    assert len(caplog.records) == 1
-    assert "keep their formulas" in caplog.text
+    assert len(caught) == 1
+    assert "['C', 'D']" in str(caught[0].message)

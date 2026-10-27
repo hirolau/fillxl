@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, cast
 import openpyxl
 import pytest
 
-from fillxl import FillXLConfig, fill
+from fillxl import FillXLConfig, IgnoredDataWarning, fill
 from fillxl._cells import populate_named_cells
 from fillxl._types import Engine
 
@@ -147,10 +147,7 @@ class TestNamedCellErrors:
         finally:
             wb.close()
 
-    def test_a_warning_is_logged_when_a_named_cell_has_no_destinations(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
+    def test_a_warning_is_raised_when_a_named_cell_has_no_destinations(self) -> None:
         """A defined name holding a constant (not a range) has no cell destination."""
         from openpyxl.workbook.defined_name import DefinedName
 
@@ -163,15 +160,12 @@ class TestNamedCellErrors:
         dn = DefinedName("pi_value", attr_text="3.14159")
         wb.defined_names.add(dn)
 
-        caplog.set_level("WARNING")
-        populate_named_cells(wb, {"pi_value": "ignored"})
+        with pytest.warns(IgnoredDataWarning, match="no destinations"):
+            populate_named_cells(wb, {"pi_value": "ignored"})
 
-        assert any("no destinations" in r.message for r in caplog.records)
-
-    def test_a_warning_is_logged_when_a_named_cell_points_to_multiple_ranges(
+    def test_a_warning_is_raised_when_a_named_cell_points_to_multiple_ranges(
         self,
         output_path: Path,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Only the first destination is updated; the rest are skipped with a warning."""
         wb = openpyxl.Workbook()
@@ -189,7 +183,7 @@ class TestNamedCellErrors:
         wb.save(tmpl)
         wb.close()
 
-        with caplog.at_level("WARNING", logger="fillxl._cells"):
+        with pytest.warns(IgnoredDataWarning, match="destinations"):
             fill(template=tmpl, output=output_path, values={"multi": "UPDATED"})
 
         wb2 = openpyxl.load_workbook(output_path)
@@ -198,7 +192,6 @@ class TestNamedCellErrors:
             assert wb2["Sheet2"]["B2"].value == "second"
         finally:
             wb2.close()
-        assert "multiple destinations" in caplog.text
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

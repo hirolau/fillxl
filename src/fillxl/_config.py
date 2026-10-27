@@ -50,16 +50,38 @@ def _to_sheet_tuple(value: list[str] | tuple[str, ...] | None) -> tuple[str, ...
     ``FillXLConfig`` is frozen, so a mutable list attribute would let callers
     mutate configuration after construction.
 
+    A bare string is refused: iterating it yields the characters of the name,
+    so ``delete_sheets="Sheet1"`` would try to delete sheets named ``S``,
+    ``h``, ``e`` and so on.
+
     Examples:
         >>> _to_sheet_tuple(["a", "b"])
         ('a', 'b')
         >>> _to_sheet_tuple(None) is None
         True
+        >>> _to_sheet_tuple("Sheet1")  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        TypeError: delete_sheets must be a list of sheet names, not a string; did you mean ...
+        >>> _to_sheet_tuple(["ok", 1])
+        Traceback (most recent call last):
+            ...
+        TypeError: delete_sheets must contain sheet names, not int
 
     """
     if value is None:
         return None
-    return tuple(value)
+    if isinstance(value, str):
+        msg = (
+            f"delete_sheets must be a list of sheet names, not a string; did you mean [{value!r}]?"
+        )
+        raise TypeError(msg)
+    names = tuple(value)
+    for name in names:
+        if not isinstance(name, str):
+            msg = f"delete_sheets must contain sheet names, not {type(name).__name__}"
+            raise TypeError(msg)
+    return names
 
 
 @define(frozen=True, kw_only=True)
@@ -99,3 +121,25 @@ class FillXLConfig:
     delete_sheets: tuple[str, ...] | None = field(default=None, converter=_to_sheet_tuple)
     active_sheet: str | None = field(default=None)
     on_lossy: OnLossy = field(default="warn", validator=in_(get_args(OnLossy)))
+
+    def __attrs_post_init__(self) -> None:
+        """Reject a combination that can only fail at the end of a fill.
+
+        Examples:
+            >>> FillXLConfig(active_sheet="_Data", hide_underscore_sheets=True)
+            Traceback (most recent call last):
+                ...
+            ValueError: active_sheet '_Data' starts with '_' and hide_underscore_sheets is True, ...
+
+        """
+        if (
+            self.active_sheet is not None
+            and self.hide_underscore_sheets
+            and self.active_sheet.startswith("_")
+        ):
+            msg = (
+                f"active_sheet {self.active_sheet!r} starts with '_' and "
+                "hide_underscore_sheets is True, so the sheet would be hidden before it "
+                "is activated. Set hide_underscore_sheets=False or pick another sheet."
+            )
+            raise ValueError(msg)

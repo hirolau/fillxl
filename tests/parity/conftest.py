@@ -115,6 +115,7 @@ def _sheet(sheet: Any) -> dict[str, Any]:  # noqa: ANN401
         table.name: {
             "ref": table.ref,
             "autofilter": table.autoFilter.ref if table.autoFilter is not None else None,
+            "sortstate": table.sortState.ref if table.sortState is not None else None,
             "totals": table.totalsRowCount or 0,
             "columns": [unescape(str(column.name)) for column in table.tableColumns],
         }

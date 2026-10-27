@@ -14,6 +14,7 @@ from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._normalize import normalize_value
 from fillxl._utils import table_column_name
+from fillxl._warnings import IgnoredDataWarning, warn_user
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -171,10 +172,9 @@ def warn_about_ignored_formula_data(
         if column in formulas and any(normalize_value(row[index]) is not None for row in rows)
     ]
     if ignored:
-        logger.warning(
-            "Table '%s': calculated column(s) %s keep their formulas; "
+        warn_user(
+            f"Table {table_name!r}: calculated column(s) {ignored} keep their formulas; "
             "the data supplied for them was ignored.",
-            table_name,
-            ignored,
+            IgnoredDataWarning,
         )
     return ignored

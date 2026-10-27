@@ -23,8 +23,8 @@ fill(
 ```
 
 `values` and `tables` are keyword-only. The 0.5 call
-`fill(template, output, values, tables)` still works with a
-`DeprecationWarning` and stops working in 0.7.0.
+`fill(template, output, values, tables)` was removed in 0.7.0; see
+[Migrating from 0.6 to 0.7](migrating.md).
 
 ### Parameters
 

@@ -15,8 +15,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from fillxl import PrecisionLossWarning, TimezoneWarning
 from fillxl._normalize import (
     check_cell_value,
+    check_named_cell_scalar,
+    check_table_cell_scalar,
     is_formula_string,
     normalize_value,
     prepare_cell_value,
@@ -207,7 +210,7 @@ class TestTimezoneHandling:
     def test_an_aware_datetime_loses_its_timezone(self) -> None:
         reset_tz_warning_state()
         aware = dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.timezone(dt.timedelta(hours=2)))
-        with pytest.warns(UserWarning, match="Timezone-aware datetimes"):
+        with pytest.warns(TimezoneWarning, match="Timezone-aware datetimes"):
             result = normalize_value(aware)
         assert result == dt.datetime(2025, 6, 15, 14, 30)
         assert result.tzinfo is None
@@ -216,7 +219,7 @@ class TestTimezoneHandling:
         """Each fill session warns once; a new session starts over."""
         reset_tz_warning_state()
         aware = dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.UTC)
-        with pytest.warns(UserWarning):
+        with pytest.warns(TimezoneWarning):
             normalize_value(aware)
 
         with warnings.catch_warnings():
@@ -224,7 +227,7 @@ class TestTimezoneHandling:
             normalize_value(aware)  # already warned in this session
 
         reset_tz_warning_state()
-        with pytest.warns(UserWarning):
+        with pytest.warns(TimezoneWarning):
             normalize_value(aware)  # a new session warns again
 
 
@@ -297,3 +300,164 @@ class TestFormulaDetection:
         assert not is_formula_string("a=b")
         assert not is_formula_string(123)
         assert not is_formula_string(None)
+
+
+class TestDecimalSpecialValues:
+    """A Decimal that Excel cannot represent becomes an empty cell.
+
+    ``float()`` runs before the IEEE check, so a NaN, an infinity or a value
+    too large for a double never reaches the file as ``nan``/``inf`` ? which
+    is what makes Excel offer to repair the workbook.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(Decimal("NaN"), id="nan"),
+            pytest.param(Decimal("sNaN"), id="signal_nan"),
+            pytest.param(Decimal("Infinity"), id="infinity"),
+            pytest.param(Decimal("-Infinity"), id="minus_infinity"),
+            pytest.param(Decimal("1e400"), id="too_large_for_a_float"),
+        ],
+    )
+    def test_a_decimal_excel_cannot_store_becomes_an_empty_cell(self, value: Decimal) -> None:
+        assert normalize_value(value) is None
+
+    def test_an_ordinary_decimal_keeps_its_value(self) -> None:
+        assert normalize_value(Decimal("0.1")) == 0.1
+
+
+class TestValuesExcelCannotStore:
+    """Some values cannot go into a cell at all; they are refused with a location."""
+
+    def test_text_with_a_lone_surrogate_is_refused_with_its_position(self) -> None:
+        """A surrogate survives every control-character check but not UTF-8."""
+        from fillxl import CellValueError
+
+        with pytest.raises(CellValueError, match="lone surrogate") as caught:
+            check_cell_value("bad \ud800 text", table="Sales", row=2, column="Notes")
+
+        assert "position 4" in str(caught.value)
+        assert "Table 'Sales', data row 2, column 'Notes'" in str(caught.value)
+
+    def test_text_with_a_tab_is_still_allowed(self) -> None:
+        check_cell_value("a\tb")
+
+    def test_an_integer_beyond_the_double_range_is_refused(self) -> None:
+        """Trailing zeros used to hide the size: 10**400 counted as one digit."""
+        from fillxl import CellValueError
+
+        with pytest.raises(CellValueError, match="too large for an Excel cell"):
+            check_cell_value(10**400)
+
+    def test_a_large_integer_that_excel_can_hold_only_warns(
+        self, recwarn: pytest.WarningsRecorder
+    ) -> None:
+        check_cell_value(1234567890123456, table="Sales", row=1, column="Id")
+
+        precision = [w for w in recwarn if issubclass(w.category, PrecisionLossWarning)]
+        assert len(precision) == 1
+        assert "significant digits" in str(precision[0].message)
+
+    def test_the_precision_warning_is_raised_once_per_column(self) -> None:
+        warned: set[tuple[str | None, str | None]] = set()
+
+        with pytest.warns(PrecisionLossWarning) as caught:
+            for row in (1, 2, 3):
+                check_cell_value(
+                    1234567890123456, table="Sales", row=row, column="Id", warned=warned
+                )
+
+        assert len(caught) == 1
+
+
+class TestContainerValues:
+    """A cell holds one value; containers are refused, not stringified."""
+
+    def test_a_named_cell_refuses_a_list_and_suggests_tables(self) -> None:
+        with pytest.raises(TypeError, match="tables="):
+            check_named_cell_scalar("report", [1, 2])
+
+    def test_a_named_cell_refuses_bytes(self) -> None:
+        with pytest.raises(TypeError, match="decode it to text"):
+            check_named_cell_scalar("report", b"abc")
+
+    def test_a_named_cell_refuses_a_dataframe(self) -> None:
+        with pytest.raises(TypeError, match="tables="):
+            check_named_cell_scalar("report", pd.DataFrame({"a": [1]}))
+
+    def test_a_named_cell_accepts_a_scalar(self) -> None:
+        check_named_cell_scalar("report", "text")
+        check_named_cell_scalar("report", 3)
+        check_named_cell_scalar("report", None)
+
+    def test_a_table_cell_refuses_a_dict_with_the_column_name(self) -> None:
+        from fillxl import CellValueError
+
+        with pytest.raises(CellValueError, match=r"column 'Notes'"):
+            check_table_cell_scalar({"a": 1}, table="Sales", row=3, column="Notes")
+
+    def test_a_zero_dimensional_array_is_still_a_scalar(self) -> None:
+        """``np.array(5)`` is a number, not a container."""
+        assert normalize_value(np.array(5)) == 5
+
+
+class TestSubclassesAndEnums:
+    """Values that are nearly a basic type are flattened to exactly one."""
+
+    def test_a_naive_datetime_subclass_is_written_as_a_datetime(self) -> None:
+        """openpyxl looks number formats up by exact type, so subclasses crash it."""
+
+        class Clock(dt.datetime):
+            pass
+
+        result = normalize_value(Clock(2025, 6, 15, 14, 30))
+
+        assert type(result) is dt.datetime
+        assert result == dt.datetime(2025, 6, 15, 14, 30)
+
+    def test_a_date_subclass_stays_a_date(self) -> None:
+        class Day(dt.date):
+            pass
+
+        result = normalize_value(Day(2025, 6, 15))
+
+        assert type(result) is dt.date
+
+    def test_an_enum_member_is_written_as_its_value(self) -> None:
+        """``str(Color.RED)`` is "Color.RED", which is never what the caller meant."""
+        import enum
+
+        class Color(enum.Enum):
+            RED = "red"
+
+        assert normalize_value(Color.RED) == "red"
+
+    def test_an_integer_enum_member_is_written_as_an_integer(self) -> None:
+        import enum
+
+        class Level(enum.IntEnum):
+            HIGH = 3
+
+        result = normalize_value(Level.HIGH)
+
+        assert result == 3
+        assert isinstance(result, int)
+
+    def test_an_enum_of_unsupported_values_still_normalises(self) -> None:
+        import enum
+
+        class When(enum.Enum):
+            NOW = dt.date(2025, 6, 15)
+
+        assert normalize_value(When.NOW) == dt.date(2025, 6, 15)
+
+
+class TestComIntegerWidth:
+    """pywin32 cannot marshal a Python int wider than 32 bits reliably."""
+
+    def test_an_integer_beyond_int32_is_handed_over_as_a_float(self) -> None:
+        assert prepare_com_value(5_000_000_000) == 5e9
+
+    def test_an_integer_that_fits_stays_an_integer(self) -> None:
+        assert prepare_com_value(2**31 - 1) == 2**31 - 1

@@ -14,7 +14,7 @@ from fillxl._charts import (
     update_chart_data_ranges,
 )
 from fillxl._lossy import check_lossy
-from fillxl._sheets import first_remaining, require_a_visible_sheet
+from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
 from fillxl._tables import populate_table
 from fillxl._validation import ColumnValidationStrategy, validate_columns
 
@@ -179,7 +179,7 @@ class OpenpyxlBackend:
         present = [name for name in dict.fromkeys(names) if name in workbook.sheetnames]
         for name in names:
             if name not in workbook.sheetnames:
-                logger.warning("Sheet '%s' not found, skipping deletion", name)
+                warn_sheet_not_found(name, "nothing was deleted")
         if not present:
             return
         visible = _visible_titles(workbook)
@@ -206,7 +206,7 @@ class OpenpyxlBackend:
         """
         workbook = self._require_workbook()
         if name not in workbook.sheetnames:
-            logger.warning("Sheet '%s' not found, keeping default active sheet", name)
+            warn_sheet_not_found(name, "the workbook keeps its active sheet")
             return
         if workbook[name].sheet_state != "visible":
             msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
@@ -250,8 +250,7 @@ class OpenpyxlBackend:
 
     def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
         """Report template features openpyxl did not write back."""
-        # Frames: check_lossy -> check_output -> fill -> the caller of fill.
-        check_lossy(template, output, policy, stacklevel=4)
+        check_lossy(template, output, policy)
 
 
 def _active_title(workbook: openpyxl.Workbook) -> str | None:

@@ -16,8 +16,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import openpyxl
+import pytest
 
-from fillxl import FillXLConfig, fill
+from fillxl import FillXLConfig, IgnoredDataWarning, fill
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -98,20 +99,18 @@ class TestDeletingSheets:
         finally:
             wb.close()
 
-    def test_deleting_a_nonexistent_sheet_logs_a_warning_not_an_error(
+    def test_deleting_a_nonexistent_sheet_warns_not_errors(
         self,
         output_path: Path,
         hidden_sheets_template: Path,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """If you ask to delete a sheet that doesn't exist, fill() warns and continues."""
-        fill(
-            template=hidden_sheets_template,
-            output=output_path,
-            config=FillXLConfig(delete_sheets=["GhostSheet"]),
-        )
-
-        assert any("not found" in r.message for r in caplog.records if r.levelname == "WARNING")
+        with pytest.warns(IgnoredDataWarning, match="not found"):
+            fill(
+                template=hidden_sheets_template,
+                output=output_path,
+                config=FillXLConfig(delete_sheets=["GhostSheet"]),
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -140,20 +139,18 @@ class TestActiveSheet:
         finally:
             wb.close()
 
-    def test_setting_active_sheet_to_a_nonexistent_name_logs_a_warning(
+    def test_setting_active_sheet_to_a_nonexistent_name_warns(
         self,
         output_path: Path,
         hidden_sheets_template: Path,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A bad active_sheet name does not crash — just a warning."""
-        fill(
-            template=hidden_sheets_template,
-            output=output_path,
-            config=FillXLConfig(active_sheet="NoSuchSheet"),
-        )
-
-        assert any("not found" in r.message for r in caplog.records if r.levelname == "WARNING")
+        with pytest.warns(IgnoredDataWarning, match="not found"):
+            fill(
+                template=hidden_sheets_template,
+                output=output_path,
+                config=FillXLConfig(active_sheet="NoSuchSheet"),
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -142,8 +142,10 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
 
     ``"auto"`` picks openpyxl when it can do the job: an ``.xlsx``/``.xlsm``
     template saved in the same format.  Otherwise it picks win32com when Excel
-    automation is available (``.xlsb``/``.xls`` templates, format conversion),
-    and falls back to openpyxl so its error explains what is missing.
+    automation is available (``.xlsb``/``.xls`` templates, format conversion).
+
+    A format openpyxl cannot write raises here, before the template is loaded,
+    instead of at ``save()`` after all the filling work is done.
 
     Examples:
         >>> from pathlib import Path
@@ -151,21 +153,49 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
         'openpyxl'
         >>> resolve_engine("win32com", Path("t.xlsx"), Path("o.xlsx"))
         'win32com'
+        >>> resolve_engine("openpyxl", Path("t.xlsx"), Path("o.xlsb"))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: The openpyxl engine cannot write a '.xlsb' file ...
 
     """
     if engine not in _KNOWN_ENGINES:
         known = ", ".join(sorted(_KNOWN_ENGINES))
         msg = f"Unknown engine {engine!r}. Known engines: {known}."
         raise ValueError(msg)
-    if engine != "auto":
+    if engine == "win32com":
         return engine
-    suffix = template.suffix.lower()
-    if suffix in _OPENPYXL_SUFFIXES and output.suffix.lower() == suffix:
-        return "openpyxl"
-    if _win32com_available():
+    if engine == "auto" and _needs_excel(template, output) and _win32com_available():
         logger.debug("engine='auto' chose win32com for %s -> %s", template, output)
         return "win32com"
+    _reject_impossible_output(template, output)
     return "openpyxl"
+
+
+def _needs_excel(template: Path, output: Path) -> bool:
+    """Whether openpyxl cannot turn *template* into *output*."""
+    suffix = template.suffix.lower()
+    return suffix not in _OPENPYXL_SUFFIXES or output.suffix.lower() != suffix
+
+
+def _reject_impossible_output(template: Path, output: Path) -> None:
+    """Raise when openpyxl is about to be asked for a file it cannot write."""
+    if not _needs_excel(template, output):
+        return
+    suffix = template.suffix.lower()
+    if suffix not in _OPENPYXL_SUFFIXES:
+        msg = (
+            f"The openpyxl engine cannot read a '{suffix}' template "
+            "(it reads .xlsx and .xlsm). Use engine='win32com', which needs Windows "
+            "with Microsoft Excel installed, or save the template as .xlsx."
+        )
+        raise ValueError(msg)
+    msg = (
+        f"The openpyxl engine cannot write a '{output.suffix.lower()}' file from a "
+        f"'{suffix}' template. Save to a '{suffix}' path, or use engine='win32com', "
+        "which needs Windows with Microsoft Excel installed, to convert between formats."
+    )
+    raise ValueError(msg)
 
 
 def get_backend(engine: Engine) -> Backend:

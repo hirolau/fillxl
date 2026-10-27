@@ -119,9 +119,18 @@ def test_deleting_every_visible_sheet_is_refused(tmp_path: Path) -> None:
 def test_a_hidden_sheet_cannot_be_made_active(tmp_path: Path) -> None:
     """Asking for a hidden active sheet is a mistake worth reporting."""
     template = sheets_template(tmp_path / "template.xlsx", "_data", "Report")
+    workbook = openpyxl.load_workbook(template)
+    workbook["_data"].sheet_state = "hidden"
+    workbook.save(template)
+    workbook.close()
 
     with pytest.raises(ValueError, match="hidden and cannot be the active sheet"):
-        _fill(template, tmp_path / "out.xlsx", active_sheet="_data")
+        _fill(
+            template,
+            tmp_path / "out.xlsx",
+            active_sheet="_data",
+            hide_underscore_sheets=False,
+        )
 
 
 def test_choosing_the_active_sheet_leaves_exactly_one_tab_selected(tmp_path: Path) -> None:

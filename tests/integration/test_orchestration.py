@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from fillxl import LossyTemplateWarning, fill
+from fillxl import LossyTemplateWarning, PrecisionLossWarning, fill
 from fillxl._backend import resolve_engine
 from tests._assets import CHARTS_TEMPLATE_2
-from tests.parity.builders import table_template
+from tests.parity.builders import named_cells_template, table_template
 
 _XLSB_TEMPLATE = Path(__file__).parent.parent / "assets" / "test_template_1_xlsb.xlsb"
 _ROWS = [{"fund": "A", "nav": 1}]
@@ -75,23 +75,20 @@ def test_an_unknown_engine_is_refused_before_any_file_is_touched(tmp_path: Path)
     assert not output.exists()
 
 
-def test_values_and_tables_passed_positionally_still_work_but_warn(tmp_path: Path) -> None:
-    """0.5 callers keep working until 0.7.0, with a warning."""
+def test_values_and_tables_are_keyword_only(tmp_path: Path) -> None:
+    """0.6 deprecated the positional call; 0.7.0 removed it."""
     template = _xlsx_template(tmp_path)
-    output = tmp_path / "out.xlsx"
 
-    with pytest.warns(DeprecationWarning, match="positionally"):
-        fill(template, output, {}, {"Sales": _ROWS})
-
-    assert output.exists()
+    with pytest.raises(TypeError, match="positional argument"):
+        fill(template, tmp_path / "out.xlsx", {}, {"Sales": _ROWS})  # type: ignore[call-arg]
 
 
 def test_values_passed_both_positionally_and_by_keyword_is_an_error(tmp_path: Path) -> None:
-    """The call is ambiguous, so it is refused the way Python refuses it."""
+    """The call is ambiguous, so Python refuses it as it would for any keyword-only name."""
     template = _xlsx_template(tmp_path)
 
-    with pytest.raises(TypeError, match="multiple values for argument 'values'"):
-        fill(template, tmp_path / "out.xlsx", {}, values={})
+    with pytest.raises(TypeError, match="positional argument"):
+        fill(template, tmp_path / "out.xlsx", {}, values={})  # type: ignore[misc]
 
 
 def test_lost_template_features_warn_with_a_category_that_can_be_filtered(
@@ -158,3 +155,68 @@ def test_the_win32com_engine_never_runs_the_openpyxl_lossy_check(
     )
 
     assert calls == []
+
+
+def test_a_format_the_engine_cannot_write_fails_before_the_template_is_loaded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The error used to arrive at save(), after the whole fill had run."""
+    template = _xlsx_template(tmp_path)
+
+    def refuse_load(_self: object, _path: Path) -> None:
+        msg = "the template must not be loaded"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("fillxl._backend._win32com_available", lambda: False)
+    monkeypatch.setattr("fillxl._backends._openpyxl.OpenpyxlBackend.load", refuse_load)
+
+    with pytest.raises(ValueError, match=r"cannot write a '\.xlsb' file"):
+        fill(template, tmp_path / "out.xlsb", tables={"Sales": _ROWS})
+
+    assert not (tmp_path / "out.xlsb").exists()
+
+
+def test_a_locked_output_says_the_file_is_probably_open_in_excel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare PermissionError from the final rename is the most common Windows error."""
+    template = _xlsx_template(tmp_path)
+
+    def locked(_self: Path, _target: Path) -> Path:
+        msg = "in use"
+        raise PermissionError(msg)
+
+    monkeypatch.setattr(Path, "replace", locked)
+
+    with pytest.raises(PermissionError, match="Is the file open in Excel"):
+        fill(template, tmp_path / "out.xlsx", tables={"Sales": _ROWS})
+
+
+def test_a_named_cell_refuses_tabular_data_and_points_at_tables(tmp_path: Path) -> None:
+    """A DataFrame in a named cell used to be written as its text dump."""
+    pd = pytest.importorskip("pandas")
+    template = named_cells_template(tmp_path / "template.xlsx", cells={"report": ("A1", 0)})
+
+    with pytest.raises(TypeError, match="tables="):
+        fill(template, tmp_path / "out.xlsx", values={"report": pd.DataFrame({"a": [1]})})
+
+
+def test_a_precision_warning_from_deep_inside_fillxl_points_at_the_caller(
+    tmp_path: Path,
+) -> None:
+    """pytest.warns and -W error match on the caller of fill, not on internals."""
+    template = _xlsx_template(tmp_path)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fill(
+            template,
+            tmp_path / "out.xlsx",
+            tables={"Sales": [{"fund": "A", "nav": 1234567890123456}]},
+        )
+
+    precision = [w for w in caught if issubclass(w.category, PrecisionLossWarning)]
+    assert len(precision) == 1
+    assert Path(precision[0].filename).name == Path(__file__).name

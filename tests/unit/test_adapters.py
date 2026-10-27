@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from fillxl import IgnoredDataWarning
+
 
 class TestTabularAdapter:
     """Unit tests for TabularAdapter detection logic."""
@@ -154,27 +156,20 @@ class TestTabularAdapter:
         with pytest.raises(TypeError, match="row 2 is int"):
             TabularAdapter([{"a": 1}, 5])
 
-    def test_a_named_pandas_index_logs_a_warning(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
+    def test_a_named_pandas_index_warns_that_it_is_dropped(self) -> None:
         """A named index is probably data the user meant to write."""
         pd = pytest.importorskip("pandas")
         from fillxl._adapters import TabularAdapter
 
         df = pd.DataFrame({"x": [1, 2]}, index=pd.Index(["a", "b"], name="Date"))
 
-        with caplog.at_level("WARNING", logger="fillxl._adapters"):
+        with pytest.warns(IgnoredDataWarning, match="is not written to Excel") as caught:
             adapter = TabularAdapter(df)
 
         assert adapter.columns == ["x"]
-        assert "is not written to Excel" in caplog.text
-        assert "Date" in caplog.text
+        assert "Date" in str(caught[0].message)
 
-    def test_a_datetime_index_logs_a_warning(
-        self,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
+    def test_a_datetime_index_warns_that_it_is_dropped(self) -> None:
         """A datetime index is data too, not just row numbers."""
         pd = pytest.importorskip("pandas")
         from fillxl._adapters import TabularAdapter
@@ -185,23 +180,21 @@ class TestTabularAdapter:
         )
         resampled = df.resample("2D").sum()
 
-        with caplog.at_level("WARNING", logger="fillxl._adapters"):
+        with pytest.warns(IgnoredDataWarning, match="is not written to Excel"):
             TabularAdapter(resampled)
 
-        assert "is not written to Excel" in caplog.text
-
-    def test_a_default_index_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_a_default_index_is_silent(self, recwarn: pytest.WarningsRecorder) -> None:
         """A RangeIndex is row numbering, not data."""
         pd = pytest.importorskip("pandas")
         from fillxl._adapters import TabularAdapter
 
-        with caplog.at_level("WARNING", logger="fillxl._adapters"):
-            adapter = TabularAdapter(pd.DataFrame({"x": [1, 2]}))
+        adapter = TabularAdapter(pd.DataFrame({"x": [1, 2]}))
+
+        assert [w for w in recwarn if not issubclass(w.category, DeprecationWarning)] == []
 
         assert adapter.columns == ["x"]
-        assert caplog.records == []
 
-    def test_a_filtered_integer_index_is_silent(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_a_filtered_integer_index_is_silent(self, recwarn: pytest.WarningsRecorder) -> None:
         """Filtering keeps an integer index; it is still row numbering."""
         pd = pytest.importorskip("pandas")
         from fillxl._adapters import TabularAdapter
@@ -209,11 +202,10 @@ class TestTabularAdapter:
         df = pd.DataFrame({"x": [1, -2, 3]})
         filtered = df[df.x > 0]
 
-        with caplog.at_level("WARNING", logger="fillxl._adapters"):
-            adapter = TabularAdapter(filtered)
+        adapter = TabularAdapter(filtered)
 
         assert adapter.columns == ["x"]
-        assert caplog.records == []
+        assert [w for w in recwarn if issubclass(w.category, IgnoredDataWarning)] == []
 
     def test_a_series_with_a_non_default_index_is_read_positionally(self) -> None:
         """Series values are positional; their index labels must not be used."""

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import openpyxl
 import pytest
 
-from fillxl import FillXLConfig, fill
+from fillxl import CellValueError, FillXLConfig, fill
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -487,81 +487,55 @@ class TestStringValues:
 
 
 class TestUnsupportedTypes:
-    """Complex types that cannot be written to Excel are rejected."""
+    """A cell holds one value, so containers are refused instead of stringified."""
 
-    def test_polars_list_column_is_converted_to_string(
+    def test_a_polars_list_column_is_refused_with_its_column_name(
         self,
         output_path: Path,
     ) -> None:
-        """A polars DataFrame with a List column is written as string."""
+        """A polars List column is several values; naming the column is the useful error."""
         pl = pytest.importorskip("polars")
         _make_dtype_template(output_path.with_name("tmpl.xlsx"))
 
         df = pl.DataFrame({"Name": ["list"], "Value": [[1, 2, 3]]})
 
-        fill(
-            template=output_path.with_name("tmpl.xlsx"),
-            output=output_path,
-            tables={"DtypeTable": df},
-            config=_PERMISSIVE,
-        )
+        with pytest.raises(CellValueError, match=r"data row 1, column 'Value'"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"DtypeTable": df},
+                config=_PERMISSIVE,
+            )
 
-        wb = openpyxl.load_workbook(output_path)
-        try:
-            val = wb["Types"]["B4"].value
-            # List values are converted to their string representation
-            assert isinstance(val, str)
-            assert "1" in val
-            assert "2" in val
-            assert "3" in val
-        finally:
-            wb.close()
-
-    def test_polars_struct_column_is_converted_to_string(
+    def test_a_polars_struct_column_is_refused_with_its_column_name(
         self,
         output_path: Path,
     ) -> None:
-        """A polars DataFrame with a Struct column is written as string."""
+        """A polars Struct column used to become the text dump of a dict."""
         pl = pytest.importorskip("polars")
         _make_dtype_template(output_path.with_name("tmpl.xlsx"))
 
         df = pl.DataFrame({"Name": ["struct"], "Value": [{"a": 1, "b": 2}]})
 
-        fill(
-            template=output_path.with_name("tmpl.xlsx"),
-            output=output_path,
-            tables={"DtypeTable": df},
-            config=_PERMISSIVE,
-        )
+        with pytest.raises(CellValueError, match=r"column 'Value'"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"DtypeTable": df},
+                config=_PERMISSIVE,
+            )
 
-        wb = openpyxl.load_workbook(output_path)
-        try:
-            val = wb["Types"]["B4"].value
-            # Struct values are converted to their string representation
-            assert isinstance(val, str)
-            assert "a" in val
-            assert "1" in val
-        finally:
-            wb.close()
-
-    def test_nested_dict_in_list_of_dict_is_converted_to_string(
+    def test_a_nested_dict_in_list_of_dict_is_refused(
         self,
         output_path: Path,
     ) -> None:
-        """A nested dict value in list[dict] is converted to its string repr."""
+        """A dict value used to be written as its repr; it is refused now."""
         _make_dtype_template(output_path.with_name("tmpl.xlsx"))
 
-        fill(
-            template=output_path.with_name("tmpl.xlsx"),
-            output=output_path,
-            tables={"DtypeTable": [{"Name": "nested", "Value": {"key": "val"}}]},
-            config=_PERMISSIVE,
-        )
-
-        wb = openpyxl.load_workbook(output_path)
-        try:
-            val = wb["Types"]["B4"].value
-            assert isinstance(val, str)
-            assert "key" in val
-        finally:
-            wb.close()
+        with pytest.raises(CellValueError, match=r"column 'Value'"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"DtypeTable": [{"Name": "nested", "Value": {"key": "val"}}]},
+                config=_PERMISSIVE,
+            )

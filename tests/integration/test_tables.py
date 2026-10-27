@@ -351,7 +351,7 @@ def test_empty_data_leaves_one_blank_row_in_a_headerless_table(output_path: Path
 
 
 def test_an_empty_dataframe_leaves_one_cleared_body_row(output_path: Path) -> None:
-    """Empty data keeps a single empty row so the table stays valid."""
+    """Empty data keeps a single blank row, and calculated columns keep their formula."""
     import pandas as pd
 
     columns = ["Col1", "Col2", "ColNotFilled", "TestFormattedPct"]
@@ -369,13 +369,13 @@ def test_an_empty_dataframe_leaves_one_cleared_body_row(output_path: Path) -> No
         table = next(iter(ws.tables.values()))
         assert table.ref == "A1:E2"
         assert table.autoFilter.ref == "A1:E2"
-        assert [ws.cell(row=2, column=col).value for col in range(1, 6)] == [
+        assert [ws.cell(row=2, column=col).value for col in range(1, 5)] == [
             None,
             None,
             None,
-            None,
-            None,
+            "=TableTest[[#This Row],[Col1]]+TableTest[[#This Row],[Col2]]",
         ]
+        assert ws.cell(row=2, column=5).value is None
     finally:
         wb.close()
 

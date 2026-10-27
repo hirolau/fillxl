@@ -251,6 +251,27 @@ same template with both engines and compares the workbooks. See
 
 ---
 
+## Upgrading from 0.6
+
+0.7.0 groups its breaking changes into one release. The full list, with
+before/after code, is in [docs/migrating.md](docs/migrating.md); the short
+version:
+
+- `values` and `tables` are keyword-only: `fill(template, output, values, tables)`
+  no longer works.
+- A named cell or table cell given a list, dict, bytes or tabular object raises
+  `TypeError`/`CellValueError` instead of writing its `repr`. Pass tabular data
+  through `tables=`.
+- Warnings about your data (`PrecisionLossWarning`, `IgnoredDataWarning`,
+  `TimezoneWarning`, `LossyTemplateWarning`) are now real warnings, all
+  subclasses of `fillxl.FillXLWarning`, instead of log records.
+- Empty data no longer clears calculated columns; the remaining row keeps its
+  formula, as Excel does.
+- `output` may not be `template`, and a format the chosen engine cannot write
+  fails before the template is loaded.
+
+---
+
 ## Upgrading from 0.5
 
 - `values` and `tables` are keyword-only. `fill(template, output, values, tables)`

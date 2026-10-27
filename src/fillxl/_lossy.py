@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
-import warnings
 import zipfile
 from collections import Counter
 from typing import TYPE_CHECKING, Literal
+
+from fillxl._warnings import FillXLWarning, warn_user
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,12 +19,15 @@ class LossyTemplateError(RuntimeError):
     """The output lost template features and ``on_lossy="raise"`` was set."""
 
 
-class LossyTemplateWarning(UserWarning):
+class LossyTemplateWarning(FillXLWarning):
     """The openpyxl engine dropped template features."""
 
 
+_MEDIA_PREFIX = "xl/media/"
 _PART_FEATURES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^xl/charts/chartEx\d+\.xml$"), "modern charts (chartEx)"),
+    (re.compile(r"^xl/charts/style\d+\.xml$"), "chart styles"),
+    (re.compile(r"^xl/charts/colors\d+\.xml$"), "chart colour schemes"),
     (re.compile(r"^xl/slicers/[^/]+\.xml$"), "slicers"),
     (re.compile(r"^xl/slicerCaches/[^/]+\.xml$"), "slicer caches"),
     (re.compile(r"^xl/timelines/[^/]+\.xml$"), "timelines"),
@@ -43,12 +47,13 @@ _PART_FEATURES: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 _DRAWING_PART = re.compile(r"^xl/drawings/drawing\d+\.xml$")
 _WORKSHEET_PART = re.compile(r"^xl/worksheets/sheet\d+\.xml$")
-_SHAPE_TAG = re.compile(rb"<(?:\w+:)?(sp|cxnSp|grpSp)[\s>/]")
+_SHAPE_TAG = re.compile(rb"<(?:\w+:)?(sp|cxnSp|grpSp|pic)[\s>/]")
 _EXT_URI = re.compile(rb"<(?:\w+:)?ext\b[^>]*?\buri=\"([^\"]+)\"")
 _SHAPE_LABELS = {
     b"sp": "shapes and text boxes",
     b"cxnSp": "connector shapes",
     b"grpSp": "grouped shapes",
+    b"pic": "pictures",
 }
 # Verify against [MS-XLSX] before adding more; unknown URIs are reported raw.
 _EXTENSION_LABELS = {
@@ -67,6 +72,9 @@ def feature_counts(path: Path) -> Counter[str]:
         return counts
     with archive:
         for part in archive.namelist():
+            if part.startswith(_MEDIA_PREFIX):
+                counts["images (xl/media)"] += 1
+                continue
             for pattern, label in _PART_FEATURES:
                 if pattern.match(part):
                     counts[label] += 1
@@ -86,7 +94,7 @@ def find_lost_features(template: Path, output: Path) -> list[str]:
     return [f"{label} ({count} lost)" for label, count in sorted(lost.items())]
 
 
-def check_lossy(template: Path, output: Path, policy: OnLossy, *, stacklevel: int = 2) -> None:
+def check_lossy(template: Path, output: Path, policy: OnLossy) -> None:
     """Apply the ``on_lossy`` policy to a filled *output*."""
     if policy == "ignore":
         return
@@ -100,4 +108,4 @@ def check_lossy(template: Path, output: Path, policy: OnLossy, *, stacklevel: in
     )
     if policy == "raise":
         raise LossyTemplateError(msg)
-    warnings.warn(msg, LossyTemplateWarning, stacklevel=stacklevel)
+    warn_user(msg, LossyTemplateWarning)

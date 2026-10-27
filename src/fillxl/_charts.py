@@ -247,6 +247,53 @@ def all_chart_series(workbook: Workbook) -> Generator[Any, None, None]:
             yield from chart.ser
 
 
+def all_chart_series_parts(workbook: Workbook) -> Generator[Any, None, None]:
+    """Yield every chart data-source object (``cat``, ``val``, …) of every series.
+
+    The labels cover bubble charts (``bubbleSize``) as well as the usual
+    category and value sources, so a table resize reaches every reference a
+    chart holds.
+
+    Args:
+        workbook: openpyxl Workbook instance
+
+    Yields:
+        Chart ``*Ref``/``*Ser`` data-source objects
+
+    """
+    labels = ("cat", "val", "xVal", "yVal", "bubbleSize")
+    for series in all_chart_series(workbook=workbook):
+        for label in labels:
+            part = getattr(series, label, None)
+            if part is not None:
+                yield part
+        yield from _error_bar_parts(series)
+
+
+def _error_bar_parts(series: Any) -> Generator[Any, None, None]:  # noqa: ANN401
+    """The data sources of a series' custom error bars, if it has any."""
+    for direction in ("errBars", "errBarsX", "errBarsY"):
+        error_bars = getattr(series, direction, None)
+        if error_bars is None:
+            continue
+        for side in ("plus", "minus"):
+            part = getattr(error_bars, side, None)
+            if part is not None:
+                yield part
+
+
+def _reference_formulas(part: Any) -> Generator[Any, None, None]:  # noqa: ANN401
+    """Yield the reference object inside one data source.
+
+    A multi-level category source holds its range in a ``multiLvlStrRef``
+    rather than in a ``strRef``, so both spellings are looked for.
+    """
+    for ref_type in ("strRef", "numRef", "multiLvlStrRef"):
+        reference = getattr(part, ref_type, None)
+        if reference is not None:
+            yield reference
+
+
 def all_chart_series_references(workbook: Workbook) -> Generator[Any, None, None]:
     """Yield all chart series data references (strRef/numRef) from all series.
 
@@ -257,21 +304,8 @@ def all_chart_series_references(workbook: Workbook) -> Generator[Any, None, None
         Reference objects (strRef or numRef) that contain chart data ranges
 
     """
-    labels = ("cat", "val", "xVal", "yVal")
-    ref_types = ("strRef", "numRef")
-
-    for series in all_chart_series(workbook=workbook):
-        for label in labels:
-            if not hasattr(series, label):
-                continue
-            chart_label = getattr(series, label)
-            for ref_type in ref_types:
-                if not hasattr(chart_label, ref_type):
-                    continue
-                reference = getattr(chart_label, ref_type)
-                if reference is None:
-                    continue
-                yield reference
+    for part in all_chart_series_parts(workbook):
+        yield from _reference_formulas(part)
 
 
 def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None:
@@ -293,7 +327,7 @@ def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None
         # openpyxl does not update cached point counts; stale counts make Excel
         # drop axis labels (especially on area charts).
         count = point_count(new_ref)
-        for cache_name in ("strCache", "numCache"):
+        for cache_name in ("strCache", "numCache", "multiLvlStrCache"):
             cache = getattr(reference, cache_name, None)
             if cache is not None:
                 cache.ptCount = count

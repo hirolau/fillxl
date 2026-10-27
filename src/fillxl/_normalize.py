@@ -545,12 +545,17 @@ def check_named_cell_scalar(name: str, value: Any) -> None:  # noqa: ANN401
         Traceback (most recent call last):
             ...
         fillxl._normalize.CellValueError: Named cell 'report': list is not a single cell value; ...
+        >>> check_named_cell_scalar("blob", b"abc")  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        fillxl._normalize.CellValueError: Named cell 'blob': bytes is not a single cell value; ...
 
     """
     problem = scalar_value_problem(value)
     if problem is not None:
-        msg = f"{problem}; put rows and columns in tables= instead"
-        raise CellValueError(msg, name=name)
+        # The tables= hint only fits rows-and-columns data, not binary blobs.
+        hint = "" if isinstance(value, (bytes, bytearray, memoryview)) else _TABLES_HINT
+        raise CellValueError(f"{problem}{hint}", name=name)
 
 
 def check_table_cell_scalar(
@@ -570,6 +575,8 @@ def check_table_cell_scalar(
     if problem is not None:
         raise CellValueError(problem, table=table, row=row, column=column)
 
+
+_TABLES_HINT = "; put rows and columns in tables= instead"
 
 _TABULAR_TYPES: tuple[tuple[str, str], ...] = (
     ("pandas", "DataFrame"),

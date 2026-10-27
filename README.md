@@ -1,8 +1,8 @@
 # fillxl
 
 [![PyPI version](https://img.shields.io/pypi/v/fillxl.svg)](https://pypi.org/project/fillxl/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/hirolau/fillxl/blob/main/LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/hirolau/fillxl/blob/main/pyproject.toml)
 [![CI](https://github.com/hirolau/fillxl/actions/workflows/ci.yml/badge.svg)](https://github.com/hirolau/fillxl/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue)](https://hirolau.github.io/fillxl/)
 
@@ -75,11 +75,11 @@ fill(..., engine="win32com")   # Windows + Excel installed (maximum fidelity)
 
 **Before filling:**
 
-![Before fill](docs/screenshots/before_fill.png)
+![Before fill](https://hirolau.github.io/fillxl/screenshots/before_fill.png)
 
 **After filling — data, chart, and values populated:**
 
-![After fill](docs/screenshots/after_fill.png)
+![After fill](https://hirolau.github.io/fillxl/screenshots/after_fill.png)
 
 :book: [See the code that produced this](https://hirolau.github.io/fillxl/#visual-example)
 
@@ -126,7 +126,7 @@ See the full documentation for `FillXLConfig` options.
 
 Pass `engine="openpyxl"` or `engine="win32com"` to choose explicitly. Both
 engines produce the same workbook for the same template and data, and a parity
-test suite checks it — see [Backends](docs/backends.md).
+test suite checks it — see [Backends](https://hirolau.github.io/fillxl/backends/).
 
 ---
 
@@ -178,7 +178,7 @@ fill(
 Problems fillxl can work around are warnings, and every one of them is a
 `fillxl.FillXLWarning` subclass: `warnings.simplefilter("error", FillXLWarning)`
 turns them into errors, and `logging.captureWarnings(True)` puts them in your
-log. Every category and every exception is listed in [docs/warnings.md](docs/warnings.md).
+log. Every category and every exception is listed in [docs/warnings.md](https://hirolau.github.io/fillxl/warnings/).
 
 ---
 
@@ -215,7 +215,7 @@ and is meant to contain formulas.
 | `"=SUM(A1:A2)"` | literal text (formula with `escape_formulas=False`) |
 
 A date format already in the template wins over the defaults, and dates before
-1900-03-01 are refused — see [Dates](#dates).
+1900-03-01 are refused — see *Dates* above.
 
 ---
 
@@ -229,7 +229,7 @@ A date format already in the template wins over the defaults, and dates before
 Both engines write the same values for the same input; the test suite enforces
 this with a cross-backend equivalence suite and a parity suite that fills the
 same template with both engines and compares the workbooks. See
-[Backends](docs/backends.md) for the engine-specific details.
+[Backends](https://hirolau.github.io/fillxl/backends/) for the engine-specific details.
 
 ---
 
@@ -273,4 +273,4 @@ uv run pytest
 **Supported:** Python 3.11–3.15, Windows/Linux (macOS best-effort).  
 **Data backends:** pandas 2–3, polars 0.20–2, duckdb 1.x (duckdb has no
 Python 3.15 wheels yet, so its extra is limited to Python ≤3.14).  
-**License:** [MIT](LICENSE)
+**License:** [MIT](https://github.com/hirolau/fillxl/blob/main/LICENSE)

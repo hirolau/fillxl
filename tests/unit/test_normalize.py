@@ -380,11 +380,23 @@ class TestContainerValues:
         with pytest.raises(CellValueError, match="tables="):
             check_named_cell_scalar("report", [1, 2])
 
-    def test_a_named_cell_refuses_bytes(self) -> None:
+    def test_a_named_cell_refuses_bytes_without_the_tables_hint(self) -> None:
+        """``tables=`` is for rows and columns; a blob needs decoding, not tabulating."""
         from fillxl import CellValueError
 
-        with pytest.raises(CellValueError, match="decode it to text"):
+        with pytest.raises(CellValueError, match="decode it to text") as caught:
             check_named_cell_scalar("report", b"abc")
+
+        assert "tables=" not in str(caught.value)
+
+    def test_a_table_cell_refuses_a_list_without_the_tables_hint(self) -> None:
+        """Inside ``tables=`` a hint to use ``tables=`` would be circular."""
+        from fillxl import CellValueError
+
+        with pytest.raises(CellValueError, match=r"column 'nav'") as caught:
+            check_table_cell_scalar([1], table="Sales", row=1, column="nav")
+
+        assert "tables=" not in str(caught.value)
 
     def test_a_named_cell_refuses_a_dataframe(self) -> None:
         from fillxl import CellValueError

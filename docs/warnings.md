@@ -39,6 +39,7 @@ warning.
 | Exception | When |
 |---|---|
 | `CellValueError` | A value cannot be stored in a cell: text over 32,767 characters, illegal control characters, a lone surrogate, a date before 1900-03-01, an integer at or beyond 1e308, or a container (list, dict, bytes, DataFrame, …) where one value belongs. Carries the table, data row and column — or the named cell. |
+| `TypeError` | The wrong *kind* of input: `delete_sheets` is a bare string or contains a non-name, a `list[dict]` row is not a dict, the data is not tabular at all, or `values`/`tables` were passed positionally. |
 | `ValueError` | Column validation failed, a table would grow into other content, the chosen engine cannot write the requested format, or the sheet settings would leave no visible sheet. `CellValueError` is a `ValueError` as well. |
 | `KeyError` | A table or defined name in `values`/`tables` does not exist in the workbook. |
 | `RuntimeError` | An action Excel refused: a sheet that could not be deleted, a cell written on a protected sheet through COM. |

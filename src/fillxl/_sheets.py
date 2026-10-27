@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fillxl._warnings import IgnoredDataWarning, warn_user
+from fillxl._warnings import warn_user
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Sequence
@@ -22,10 +22,10 @@ def warn_sheet_not_found(name: str, consequence: str) -> None:
         ...     warnings.simplefilter("always")
         ...     warn_sheet_not_found("Data", "nothing was deleted")
         >>> caught[0].category.__name__
-        'IgnoredDataWarning'
+        'FillXLWarning'
 
     """
-    warn_user(f"Sheet {name!r} not found; {consequence}", IgnoredDataWarning)
+    warn_user(f"Sheet {name!r} not found; {consequence}")
 
 
 def require_a_visible_sheet(visible: Sequence[str], removed: Collection[str], action: str) -> None:

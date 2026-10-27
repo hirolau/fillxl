@@ -8,7 +8,7 @@ import pytest
 from openpyxl import Workbook
 from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
-from fillxl import IgnoredDataWarning
+from fillxl import FillXLWarning
 from fillxl._formulas import (
     formula_definitions,
     openpyxl_formula_columns,
@@ -88,12 +88,12 @@ def test_warn_about_ignored_formula_data_is_silent_for_blank_values(
     ignored = warn_about_ignored_formula_data("T", ["C"], [[None], [float("nan")]], {"C": "=1"})
 
     assert ignored == []
-    assert [w for w in recwarn if issubclass(w.category, IgnoredDataWarning)] == []
+    assert [w for w in recwarn if issubclass(w.category, FillXLWarning)] == []
 
 
 def test_warn_about_ignored_formula_data_names_the_columns() -> None:
     """Real data supplied for calculated columns is reported once per table."""
-    with pytest.warns(IgnoredDataWarning, match="keep their formulas") as caught:
+    with pytest.warns(FillXLWarning, match="keep their formulas") as caught:
         ignored = warn_about_ignored_formula_data("T", ["C", "D"], [[1, 2]], {"C": "=1", "D": "=2"})
 
     assert ignored == ["C", "D"]

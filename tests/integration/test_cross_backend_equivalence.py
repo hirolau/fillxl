@@ -21,14 +21,7 @@ import pytest
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
-from fillxl import (
-    CellValueError,
-    Engine,
-    FillXLConfig,
-    IgnoredDataWarning,
-    PrecisionLossWarning,
-    fill,
-)
+from fillxl import CellValueError, Engine, FillXLConfig, FillXLWarning, fill
 from tests._assets import TEMPLATE
 from tests._engines import ENGINES, _fill_output, _win32com_available
 
@@ -629,7 +622,7 @@ def test_a_large_integer_warns_once_per_column(
 
     _fill_output(equivalence_template, output_path, engine, tables={"Items": rows})
 
-    precision = [w for w in recwarn if issubclass(w.category, PrecisionLossWarning)]
+    precision = [w for w in recwarn if issubclass(w.category, FillXLWarning)]
     assert len(precision) == 1
     assert "significant digits" in str(precision[0].message)
 
@@ -754,7 +747,7 @@ def test_a_multi_destination_name_updates_only_the_first_cell(
         assert wb["Sheet2"]["B2"].value == "Second dest"
     finally:
         wb.close()
-    ignored = [w for w in recwarn if issubclass(w.category, IgnoredDataWarning)]
+    ignored = [w for w in recwarn if issubclass(w.category, FillXLWarning)]
     assert any("destinations" in str(w.message) for w in ignored)
 
 
@@ -899,7 +892,7 @@ def test_real_data_for_a_calculated_column_is_ignored_with_a_warning(
         assert str(cell.value).startswith("=")
     finally:
         wb.close()
-    ignored = [w for w in recwarn if issubclass(w.category, IgnoredDataWarning)]
+    ignored = [w for w in recwarn if issubclass(w.category, FillXLWarning)]
     assert any("keep their formulas" in str(w.message) for w in ignored)
 
 

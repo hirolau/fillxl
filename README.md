@@ -126,7 +126,7 @@ See the full documentation for `FillXLConfig` options.
 
 Pass `engine="openpyxl"` or `engine="win32com"` to choose explicitly. Both
 engines produce the same workbook for the same template and data, and a parity
-test suite checks it — see [Backends](backends.md).
+test suite checks it — see [Backends](docs/backends.md).
 
 ---
 
@@ -175,28 +175,10 @@ fill(
 
 ## Warnings
 
-The openpyxl engine cannot write every template feature (modern charts,
-slicers, shapes, …). When it drops one it warns once, after the output has been
-saved:
-
-```python
-import warnings
-from fillxl import LossyTemplateWarning
-
-warnings.filterwarnings("error", category=LossyTemplateWarning)  # fail instead
-```
-
-Batch jobs that only watch logs can route warnings into `logging`:
-
-```python
-import logging
-
-logging.captureWarnings(True)
-```
-
-Set `FillXLConfig(on_lossy="ignore")` to silence them, or `on_lossy="raise"` to
-turn them into `LossyTemplateError`.
-
+Problems fillxl can work around are warnings, and every one of them is a
+`fillxl.FillXLWarning` subclass: `warnings.simplefilter("error", FillXLWarning)`
+turns them into errors, and `logging.captureWarnings(True)` puts them in your
+log. Every category and every exception is listed in [docs/warnings.md](docs/warnings.md).
 
 ---
 
@@ -247,46 +229,7 @@ A date format already in the template wins over the defaults, and dates before
 Both engines write the same values for the same input; the test suite enforces
 this with a cross-backend equivalence suite and a parity suite that fills the
 same template with both engines and compares the workbooks. See
-[Backends](backends.md) for the engine-specific details.
-
----
-
-## Upgrading from 0.6
-
-0.7.0 groups its breaking changes into one release. The full list, with
-before/after code, is in [docs/migrating.md](docs/migrating.md); the short
-version:
-
-- `values` and `tables` are keyword-only: `fill(template, output, values, tables)`
-  no longer works.
-- A named cell or table cell given a list, dict, bytes or tabular object raises
-  `TypeError`/`CellValueError` instead of writing its `repr`. Pass tabular data
-  through `tables=`.
-- Warnings about your data (`PrecisionLossWarning`, `IgnoredDataWarning`,
-  `TimezoneWarning`, `LossyTemplateWarning`) are now real warnings, all
-  subclasses of `fillxl.FillXLWarning`, instead of log records.
-- Empty data no longer clears calculated columns; the remaining row keeps its
-  formula, as Excel does.
-- `output` may not be `template`, and a format the chosen engine cannot write
-  fails before the template is loaded.
-
----
-
-## Upgrading from 0.5
-
-- `values` and `tables` are keyword-only. `fill(template, output, values, tables)`
-  still works but warns (`DeprecationWarning`) and stops working in 0.7.0.
-- `engine="auto"` may now start Excel: `.xlsb`/`.xls` templates and format
-  conversions go to the win32com engine when Excel is installed. On machines
-  without Excel it still uses openpyxl and reports what is missing.
-- Dates are no longer converted to midnight timestamps. They show as
-  `yyyy-mm-dd` unless the template cell has a date format, and dates before
-  1900-03-01 raise `CellValueError`.
-- New exceptions: `ValueError` when an action would leave no visible sheet or
-  would activate a hidden one, and `RuntimeError` when a sheet that should be
-  deleted cannot be.
-- Lossy-template warnings use `LossyTemplateWarning` and are no longer logged;
-  filter the category to treat them as errors.
+[Backends](docs/backends.md) for the engine-specific details.
 
 ---
 

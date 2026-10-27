@@ -66,9 +66,7 @@ nav:
   - Home: index.md
   - API Reference: api.md
   - Backends: backends.md
-  - Engine parity: parity.md
   - Warnings: warnings.md
-  - Migrating to 0.7: migrating.md
   - Development: development.md
 
 copyright: Copyright &copy; 2026 hirolau — MIT License

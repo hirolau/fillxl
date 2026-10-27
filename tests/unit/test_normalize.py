@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fillxl import PrecisionLossWarning, TimezoneWarning
+from fillxl import FillXLWarning, TimezoneWarning
 from fillxl._normalize import (
     check_cell_value,
     check_named_cell_scalar,
@@ -355,14 +355,14 @@ class TestValuesExcelCannotStore:
     ) -> None:
         check_cell_value(1234567890123456, table="Sales", row=1, column="Id")
 
-        precision = [w for w in recwarn if issubclass(w.category, PrecisionLossWarning)]
+        precision = [w for w in recwarn if issubclass(w.category, FillXLWarning)]
         assert len(precision) == 1
         assert "significant digits" in str(precision[0].message)
 
     def test_the_precision_warning_is_raised_once_per_column(self) -> None:
         warned: set[tuple[str | None, str | None]] = set()
 
-        with pytest.warns(PrecisionLossWarning) as caught:
+        with pytest.warns(FillXLWarning) as caught:
             for row in (1, 2, 3):
                 check_cell_value(
                     1234567890123456, table="Sales", row=row, column="Id", warned=warned
@@ -375,15 +375,21 @@ class TestContainerValues:
     """A cell holds one value; containers are refused, not stringified."""
 
     def test_a_named_cell_refuses_a_list_and_suggests_tables(self) -> None:
-        with pytest.raises(TypeError, match="tables="):
+        from fillxl import CellValueError
+
+        with pytest.raises(CellValueError, match="tables="):
             check_named_cell_scalar("report", [1, 2])
 
     def test_a_named_cell_refuses_bytes(self) -> None:
-        with pytest.raises(TypeError, match="decode it to text"):
+        from fillxl import CellValueError
+
+        with pytest.raises(CellValueError, match="decode it to text"):
             check_named_cell_scalar("report", b"abc")
 
     def test_a_named_cell_refuses_a_dataframe(self) -> None:
-        with pytest.raises(TypeError, match="tables="):
+        from fillxl import CellValueError
+
+        with pytest.raises(CellValueError, match="tables="):
             check_named_cell_scalar("report", pd.DataFrame({"a": [1]}))
 
     def test_a_named_cell_accepts_a_scalar(self) -> None:

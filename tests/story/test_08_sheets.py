@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import openpyxl
 import pytest
 
-from fillxl import FillXLConfig, IgnoredDataWarning, fill
+from fillxl import FillXLConfig, FillXLWarning, fill
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -105,7 +105,7 @@ class TestDeletingSheets:
         hidden_sheets_template: Path,
     ) -> None:
         """If you ask to delete a sheet that doesn't exist, fill() warns and continues."""
-        with pytest.warns(IgnoredDataWarning, match="not found"):
+        with pytest.warns(FillXLWarning, match="not found"):
             fill(
                 template=hidden_sheets_template,
                 output=output_path,
@@ -145,7 +145,7 @@ class TestActiveSheet:
         hidden_sheets_template: Path,
     ) -> None:
         """A bad active_sheet name does not crash — just a warning."""
-        with pytest.warns(IgnoredDataWarning, match="not found"):
+        with pytest.warns(FillXLWarning, match="not found"):
             fill(
                 template=hidden_sheets_template,
                 output=output_path,

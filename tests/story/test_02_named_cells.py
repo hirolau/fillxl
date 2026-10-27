@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, cast
 import openpyxl
 import pytest
 
-from fillxl import FillXLConfig, IgnoredDataWarning, fill
+from fillxl import FillXLConfig, FillXLWarning, fill
 from fillxl._cells import populate_named_cells
 from fillxl._types import Engine
 
@@ -160,7 +160,7 @@ class TestNamedCellErrors:
         dn = DefinedName("pi_value", attr_text="3.14159")
         wb.defined_names.add(dn)
 
-        with pytest.warns(IgnoredDataWarning, match="no destinations"):
+        with pytest.warns(FillXLWarning, match="no destinations"):
             populate_named_cells(wb, {"pi_value": "ignored"})
 
     def test_a_warning_is_raised_when_a_named_cell_points_to_multiple_ranges(
@@ -183,7 +183,7 @@ class TestNamedCellErrors:
         wb.save(tmpl)
         wb.close()
 
-        with pytest.warns(IgnoredDataWarning, match="destinations"):
+        with pytest.warns(FillXLWarning, match="destinations"):
             fill(template=tmpl, output=output_path, values={"multi": "UPDATED"})
 
         wb2 = openpyxl.load_workbook(output_path)

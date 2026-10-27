@@ -7,7 +7,7 @@ import sys
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from fillxl._warnings import IgnoredDataWarning, warn_user
+from fillxl._warnings import warn_user
 
 # Optional dependencies are looked up in ``sys.modules`` instead of imported:
 # an object of one of these types can only exist if the module has already
@@ -168,7 +168,6 @@ class TabularAdapter:
                 warn_user(
                     f"The DataFrame index {list(data.index.names)} is not written to Excel; "
                     "call df.reset_index() to include it.",
-                    IgnoredDataWarning,
                 )
             self._columns = _normalize_column_names(data.columns)
             self._rows = list(data.itertuples(index=False, name=None))

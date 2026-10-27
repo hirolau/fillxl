@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from fillxl import LossyTemplateWarning, PrecisionLossWarning, fill
+from fillxl import CellValueError, FillXLWarning, LossyTemplateWarning, fill
 from fillxl._backend import resolve_engine
 from tests._assets import CHARTS_TEMPLATE_2
 from tests.parity.builders import named_cells_template, table_template
@@ -199,7 +199,7 @@ def test_a_named_cell_refuses_tabular_data_and_points_at_tables(tmp_path: Path) 
     pd = pytest.importorskip("pandas")
     template = named_cells_template(tmp_path / "template.xlsx", cells={"report": ("A1", 0)})
 
-    with pytest.raises(TypeError, match="tables="):
+    with pytest.raises(CellValueError, match="tables="):
         fill(template, tmp_path / "out.xlsx", values={"report": pd.DataFrame({"a": [1]})})
 
 
@@ -217,6 +217,6 @@ def test_a_precision_warning_from_deep_inside_fillxl_points_at_the_caller(
             tables={"Sales": [{"fund": "A", "nav": 1234567890123456}]},
         )
 
-    precision = [w for w in caught if issubclass(w.category, PrecisionLossWarning)]
+    precision = [w for w in caught if issubclass(w.category, FillXLWarning)]
     assert len(precision) == 1
     assert Path(precision[0].filename).name == Path(__file__).name

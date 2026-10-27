@@ -23,8 +23,8 @@ fill(
 ```
 
 `values` and `tables` are keyword-only. The 0.5 call
-`fill(template, output, values, tables)` was removed in 0.7.0; see
-[Migrating from 0.6 to 0.7](migrating.md).
+`fill(template, output, values, tables)` was removed in 0.7.0; the CHANGELOG
+lists what else changed.
 
 ### Parameters
 
@@ -173,8 +173,16 @@ naming the row number.
 ### pandas indexes
 
 The DataFrame index is not written. A named, multi-level or non-integer index
-probably carries data, so fillxl logs a warning suggesting `df.reset_index()`.
-A default or filtered integer index is silent.
+probably carries data, so fillxl warns (suggesting `df.reset_index()`) when it
+drops one. A default or filtered integer index is silent.
+
+### Containers
+
+One cell holds one value, so a `list`, `tuple`, `set`, `dict`, `bytes` or a
+tabular object (DataFrame, Series, relation) where a value is expected raises
+`CellValueError` rather than writing its `repr`. The message names the table,
+data row and column, or the named cell — and for a named cell it points at
+`tables=`.
 
 ---
 
@@ -182,12 +190,11 @@ A default or filtered integer index is silent.
 
 | Exception | Meaning |
 |-----------|---------|
-| `CellValueError` | A value Excel cannot store: text longer than 32,767 characters, an illegal control character, or a date before 1900-03-01. It is a `ValueError` and carries the table, data row and column (or the named cell). |
+| `CellValueError` | A value Excel cannot store: text longer than 32,767 characters, an illegal control character, a lone surrogate, a date before 1900-03-01, an integer at or beyond 1e308, or a container where one value belongs. It is a `ValueError` and carries the table, data row and column (or the named cell). |
 | `LossyTemplateError` | The openpyxl engine dropped template features and `FillXLConfig(on_lossy="raise")` was set. Raise it before swapping in the output, so the previous output file is left untouched. |
 
 Integers with more than 15 significant digits are not errors: Excel rounds
-them, so fillxl logs one warning per column (or name). Pass such identifiers
-as text.
+them, so fillxl warns once per column (or name). Pass such identifiers as text.
 
 Named cells raise `KeyError` only when the name does not exist. A name whose
 first destination is a multi-cell range raises `ValueError`; a write failure
@@ -195,9 +202,9 @@ first destination is a multi-cell range raises `ValueError`; a write failure
 
 The openpyxl engine runs a lossy-feature check against the staging file before
 the atomic swap. It compares part and element **counts** (modern charts,
-slicers, shapes, VBA, …), so it catches dropped parts but cannot prove that a
-preserved part is unchanged. The check reports with `LossyTemplateWarning`, a
-`UserWarning` subclass that can be filtered by category:
+slicers, shapes, pictures, VBA, …), so it catches dropped parts but cannot
+prove that a preserved part is unchanged. The check reports a
+`LossyTemplateWarning`:
 
 ```python
 import warnings
@@ -206,5 +213,5 @@ from fillxl import LossyTemplateWarning
 warnings.filterwarnings("error", category=LossyTemplateWarning)
 ```
 
-Batch jobs that only read logs can route warnings into `logging` with
-`logging.captureWarnings(True)`.
+[Warnings](warnings.md) lists every category and every exception fillxl
+raises.

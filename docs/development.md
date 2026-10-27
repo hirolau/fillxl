@@ -18,6 +18,21 @@ uv run pytest -m "not win32com and not xlwings"
 uv run pytest
 ```
 
+Behaviour tests are parametrised over both engines (`tests/_engines.py`): the
+`win32com` case skips itself when Excel is not installed, so the same suite
+protects Linux CI and a developer machine. Tests that genuinely need Excel —
+opening a file, repairing, recalculating — carry the `excel` marker and are
+skipped elsewhere:
+
+```bash
+pytest -m excel        # Windows with Microsoft Excel
+pytest -m "not excel"  # anywhere
+```
+
+When a documented behaviour and Excel disagree, the test wins and the
+documentation is wrong. Add a test that reproduces the difference before
+changing either engine.
+
 ## Code Quality
 
 ```bash

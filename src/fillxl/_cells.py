@@ -13,7 +13,7 @@ from fillxl._normalize import (
     is_text_cell_value,
     prepare_cell_value,
 )
-from fillxl._warnings import IgnoredDataWarning, warn_user
+from fillxl._warnings import warn_user
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -38,9 +38,7 @@ def named_cell_target(
 
     """
     if not destinations:
-        warn_user(
-            f"Named cell {name!r} has no destinations, so nothing was written", IgnoredDataWarning
-        )
+        warn_user(f"Named cell {name!r} has no destinations, so nothing was written")
         return None
     sheet_name, address = destinations[0]
     if ":" in address:
@@ -54,7 +52,6 @@ def named_cell_target(
         warn_user(
             f"Named cell {name!r} has {len(destinations)} destinations; only the first "
             f"one ({sheet_name}!{address}) was updated",
-            IgnoredDataWarning,
         )
     return sheet_name.replace("''", "'"), address
 
@@ -110,10 +107,7 @@ def populate_named_cells(
         defined_name = find_defined_name(workbook, name)
         if defined_name is None:
             if allow_missing:
-                warn_user(
-                    f"Named cell {name!r} not found in workbook, nothing was written",
-                    IgnoredDataWarning,
-                )
+                warn_user(f"Named cell {name!r} not found in workbook, nothing was written")
                 continue
             msg = f"Named cell '{name}' not found in workbook"
             raise KeyError(msg)

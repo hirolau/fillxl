@@ -9,42 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.0] — 2026-10-27
 
-Breaking, but safer. Every breaking change is grouped into this one release, so
-0.8 can be additive. See [Migrating from 0.6 to 0.7](docs/migrating.md).
+Breaking, but safer. The breaking changes are grouped into this one release so
+later releases can be additive where possible.
 
 ### Changed (breaking)
 - `fill()` takes `values` and `tables` as keyword-only arguments. The
-  positional call announced as deprecated in 0.6.0 no longer works.
-- A named cell given a `list`, `tuple`, `set`, `dict`, `bytes` or a tabular
-  object (DataFrame, Series, relation) raises `TypeError` pointing at
-  `tables=`, instead of writing its `repr` into the cell. Table cells refuse
-  the same values with a `CellValueError` naming the table, data row and
-  column.
-- Problems a caller can act on are warnings instead of log records, and every
-  warning is a `fillxl.FillXLWarning`: `PrecisionLossWarning`,
-  `IgnoredDataWarning`, `TimezoneWarning` and `LossyTemplateWarning` (now a
-  `FillXLWarning`). Warnings are attributed to the caller of `fill()`, so
-  `pytest.warns`, `filterwarnings` and `-W error` match them.
-- Empty data no longer clears calculated columns: the single remaining body
-  row keeps its formula, as Excel does.
-- `Enum` members are written as their `value`; `date` and `datetime`
+  positional call announced as deprecated in 0.6.0 is gone:
+
+  ```python
+  fill("template.xlsx", "out.xlsx", values, tables)   # 0.6
+  # TypeError: fill() takes 2 positional arguments but 4 were given
+  fill("template.xlsx", "out.xlsx", values=values, tables=tables)   # 0.7
+  ```
+
+- One cell holds one value: a `list`, `tuple`, `set`, `dict`, `bytes` or a
+  tabular object (DataFrame, Series, relation) raises `CellValueError` with
+  the position, instead of writing its `repr` into the cell. For a named cell
+  the message suggests `tables=`:
+
+  ```python
+  fill(..., values={"report": df})    # 0.6: writes the DataFrame's text dump
+  # 0.7: CellValueError: Named cell 'report': DataFrame is not a single cell
+  #      value; put rows and columns in tables= instead
+  ```
+
+  `Enum` members are written as their `value`, and `date`/`datetime`
   subclasses are written as the exact built-in type (openpyxl looks number
   formats up by type).
+
+- Data problems a caller can act on are warnings instead of log records, and
+  every warning is a `fillxl.FillXLWarning` (with `TimezoneWarning` and the
+  re-parented `LossyTemplateWarning` as subclasses). Lossy output, a DataFrame
+  index that is not written, data supplied for a calculated column, extra
+  destinations of a defined name, a sheet name that matches nothing and an
+  integer Excel will round are all catchable now:
+
+  ```python
+  warnings.simplefilter("error", fillxl.FillXLWarning)
+  ```
+
+- Empty data no longer clears calculated columns: the single remaining body
+  row keeps its formula, as Excel does.
 - A `Decimal` that is NaN, sNaN, infinite or too large for a float becomes an
   empty cell instead of `nan`/`inf`, which made Excel offer to repair the file.
-- `fill()` refuses `output` equal to `template`: the template is never
-  overwritten.
 - A format the chosen engine cannot write is refused before the template is
-  loaded, not at `save()` after the fill has run.
-- `engine=` is validated along with `config`, `values` and `tables` types
-  before any file is touched: a non-`FillXLConfig` config and non-string
-  `values`/`tables` keys raise `TypeError`.
-- `delete_sheets` must be a list of names; a bare string raised or deleted
-  sheets named `S`, `h`, `e`, …
+  loaded, not at `save()` after the fill has run. The message says the engine
+  "cannot read" an unsupported template and "cannot write" an unsupported
+  conversion.
+- `delete_sheets` must be a list of names; a bare string was iterated and
+  deleted sheets named `S`, `h`, `e`, …
 - `active_sheet` starting with `_` together with `hide_underscore_sheets=True`
-  is refused when the config is built.
-- The message for an unsupported template format now says the engine "cannot
-  read" it, and for a format conversion that it "cannot write" it.
+  is refused when the config is built, not at the end of the fill.
 
 ### Fixed
 - openpyxl: a table growing into another table or into merged cells is
@@ -71,12 +86,10 @@ Breaking, but safer. Every breaking change is grouped into this one release, so
 - `_normalize` rule numbering in the docstrings matches the code.
 
 ### Added
-- `FillXLWarning`, `IgnoredDataWarning`, `PrecisionLossWarning` and
-  `TimezoneWarning`, exported from `fillxl`.
-- `docs/parity.md`: which features each engine supports, and the known gaps.
+- `FillXLWarning` and `TimezoneWarning`, exported from `fillxl`.
 - `docs/warnings.md`: every warning and error fillxl raises, and how to filter
   them.
-- `docs/migrating.md`: 0.6 → 0.7 migration notes.
+- `docs/backends.md` now carries the feature-by-feature engine comparison.
 
 ### Verified, not changed
 - A sorted table's `sortState` is left exactly as the template had it. Excel 16

@@ -55,7 +55,7 @@ from typing import Any, Literal, TypeVar
 
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
-from fillxl._warnings import PrecisionLossWarning, TimezoneWarning, warn_user
+from fillxl._warnings import TimezoneWarning, warn_user
 
 T = TypeVar("T")
 
@@ -209,10 +209,7 @@ def check_cell_value(
         if key in warned:
             return
         warned.add(key)
-    warn_user(
-        f"{describe_cell(table=table, row=row, column=column, name=name)}: {text}",
-        PrecisionLossWarning,
-    )
+    warn_user(f"{describe_cell(table=table, row=row, column=column, name=name)}: {text}")
 
 
 # ── Per-fill-session state ──────────────────────────────────────────────────
@@ -513,8 +510,8 @@ def scalar_value_problem(value: Any) -> str | None:  # noqa: ANN401
 
     Containers, binary data and tabular objects used to reach the file as
     their ``repr``: a DataFrame in a named cell became its text dump and
-    ``b"abc"`` became ``"b'abc'"``.  They are refused instead, because the
-    caller almost always meant to pass them through ``tables=``.
+    ``b"abc"`` became ``"b'abc'"``.  They are refused instead, with the same
+    exception for a named cell and for a table cell.
 
     Examples:
         >>> scalar_value_problem("text") is None
@@ -532,10 +529,7 @@ def scalar_value_problem(value: Any) -> str | None:  # noqa: ANN401
     if isinstance(value, (list, tuple, set, frozenset, dict)):
         return f"{type(value).__name__} is not a single cell value"
     if _is_tabular(value):
-        return (
-            f"{type(value).__name__} is not a single cell value; "
-            "pass tabular data through tables= instead"
-        )
+        return f"{type(value).__name__} is not a single cell value"
     return None
 
 
@@ -543,20 +537,20 @@ def check_named_cell_scalar(name: str, value: Any) -> None:  # noqa: ANN401
     """Refuse a named-cell value that is not a single Excel value.
 
     Raises:
-        TypeError: If *value* is a container, binary data or tabular.
+        CellValueError: If *value* is a container, binary data or tabular.
 
     Examples:
         >>> check_named_cell_scalar("report_date", 42)
         >>> check_named_cell_scalar("report", [1, 2])  # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
-        TypeError: Named cell 'report': list is not a single cell value; ...
+        fillxl._normalize.CellValueError: Named cell 'report': list is not a single cell value; ...
 
     """
     problem = scalar_value_problem(value)
     if problem is not None:
-        msg = f"Named cell {name!r}: {problem}; put rows and columns in tables= instead."
-        raise TypeError(msg)
+        msg = f"{problem}; put rows and columns in tables= instead"
+        raise CellValueError(msg, name=name)
 
 
 def check_table_cell_scalar(
@@ -574,12 +568,7 @@ def check_table_cell_scalar(
     """
     problem = scalar_value_problem(value)
     if problem is not None:
-        raise CellValueError(
-            f"{problem}; use one row per call and pass tabular data through tables=",
-            table=table,
-            row=row,
-            column=column,
-        )
+        raise CellValueError(problem, table=table, row=row, column=column)
 
 
 _TABULAR_TYPES: tuple[tuple[str, str], ...] = (

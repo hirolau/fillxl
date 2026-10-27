@@ -8,12 +8,7 @@ from fillxl._lossy import LossyTemplateError, LossyTemplateWarning
 from fillxl._normalize import CellValueError
 from fillxl._types import Engine
 from fillxl._validation import ColumnValidationStrategy
-from fillxl._warnings import (
-    FillXLWarning,
-    IgnoredDataWarning,
-    PrecisionLossWarning,
-    TimezoneWarning,
-)
+from fillxl._warnings import FillXLWarning, TimezoneWarning
 
 __all__ = [
     "CellValueError",
@@ -21,10 +16,8 @@ __all__ = [
     "Engine",
     "FillXLConfig",
     "FillXLWarning",
-    "IgnoredDataWarning",
     "LossyTemplateError",
     "LossyTemplateWarning",
-    "PrecisionLossWarning",
     "TimezoneWarning",
     "__version__",
     "fill",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from fillxl import IgnoredDataWarning
+from fillxl import FillXLWarning
 
 
 class TestTabularAdapter:
@@ -163,7 +163,7 @@ class TestTabularAdapter:
 
         df = pd.DataFrame({"x": [1, 2]}, index=pd.Index(["a", "b"], name="Date"))
 
-        with pytest.warns(IgnoredDataWarning, match="is not written to Excel") as caught:
+        with pytest.warns(FillXLWarning, match="is not written to Excel") as caught:
             adapter = TabularAdapter(df)
 
         assert adapter.columns == ["x"]
@@ -180,7 +180,7 @@ class TestTabularAdapter:
         )
         resampled = df.resample("2D").sum()
 
-        with pytest.warns(IgnoredDataWarning, match="is not written to Excel"):
+        with pytest.warns(FillXLWarning, match="is not written to Excel"):
             TabularAdapter(resampled)
 
     def test_a_default_index_is_silent(self, recwarn: pytest.WarningsRecorder) -> None:
@@ -205,7 +205,7 @@ class TestTabularAdapter:
         adapter = TabularAdapter(filtered)
 
         assert adapter.columns == ["x"]
-        assert [w for w in recwarn if issubclass(w.category, IgnoredDataWarning)] == []
+        assert [w for w in recwarn if issubclass(w.category, FillXLWarning)] == []
 
     def test_a_series_with_a_non_default_index_is_read_positionally(self) -> None:
         """Series values are positional; their index labels must not be used."""

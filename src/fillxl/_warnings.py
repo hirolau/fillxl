@@ -19,22 +19,14 @@ if TYPE_CHECKING:
 
 
 class FillXLWarning(UserWarning):
-    """Base class for the warnings fillxl emits."""
-
-
-class PrecisionLossWarning(FillXLWarning):
-    """A value is stored with less precision than it was supplied with."""
-
-
-class IgnoredDataWarning(FillXLWarning):
-    """Part of the input was not written to the output."""
+    """Base class for the warnings fillxl emits about data or the template."""
 
 
 class TimezoneWarning(FillXLWarning):
     """A timezone was stripped: Excel stores no timezone information."""
 
 
-def warn_user(message: str, category: type[FillXLWarning]) -> None:
+def warn_user(message: str, category: type[FillXLWarning] = FillXLWarning) -> None:
     """Warn about *message*, blaming the first frame outside fillxl.
 
     The warning is raised deep inside the backends, but it belongs to whoever
@@ -45,9 +37,9 @@ def warn_user(message: str, category: type[FillXLWarning]) -> None:
         >>> import warnings
         >>> with warnings.catch_warnings(record=True) as caught:
         ...     warnings.simplefilter("always")
-        ...     warn_user("example", PrecisionLossWarning)
+        ...     warn_user("example")
         >>> caught[0].category.__name__
-        'PrecisionLossWarning'
+        'FillXLWarning'
         >>> str(caught[0].message)
         'example'
 

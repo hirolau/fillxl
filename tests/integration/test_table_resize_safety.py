@@ -1,7 +1,7 @@
 """What happens around a resized table: its neighbours, merged cells, sort state.
 
-A table that grows must not silently overwrite the workbook around it, and
-everything that pointed at the old body must follow the new one.
+A table that grows must not silently overwrite the workbook around it, and the
+sort-state test pins what Excel itself does so the engines keep agreeing.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import pytest
 from openpyxl.styles import Font
 from openpyxl.worksheet.table import Table, TableColumn
 
-from fillxl import fill
 from tests._engines import ENGINES, _fill_output
 from tests.parity.builders import table_template
 
@@ -240,18 +239,3 @@ def test_shrinking_a_totals_table_takes_the_old_totals_formatting_away(
         assert not worksheet["A7"].font.bold, "the old totals row kept its formatting"
     finally:
         workbook.close()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Plain fill() guards
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def test_the_template_is_never_overwritten(tmp_path: Path) -> None:
-    """A report pipeline that points output at its own template is a mistake."""
-    template = table_template(tmp_path / "template.xlsx")
-
-    with pytest.raises(ValueError, match="never overwrites its template"):
-        fill(template, template, tables={"Sales": [{"fund": "A", "nav": 1}]})
-
-    assert template.exists()

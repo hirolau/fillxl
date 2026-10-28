@@ -433,7 +433,13 @@ def normalize_value(value: Any) -> Any:  # noqa: ANN401
         return value
 
     # ── 12. Unrecognised → string ────────────────────────────────────────
-    return str(value)
+    # Re-run the empty-string check on the stringified value so objects whose
+    # ``__str__`` returns an empty string still become blank cells instead of
+    # text with zero length.
+    string_value = str(value)
+    if not string_value:
+        return None
+    return string_value
 
 
 def _is_numpy_scalar(value: Any) -> bool:  # noqa: ANN401

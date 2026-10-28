@@ -200,6 +200,15 @@ def point_count(text: str) -> int:
     return total
 
 
+def point_count_rows(text: str) -> int:
+    """Number of rows covered by a chart reference, for multi-level category caches."""
+    total = 0
+    for match in REFERENCE_RE.finditer(text):
+        size = CellRange(match["area"]).size
+        total += size["rows"]
+    return total
+
+
 def split_formula_arguments(text: str) -> list[str]:
     """Split *text* on commas that are not inside quotes or parentheses.
 
@@ -244,7 +253,9 @@ def all_chart_series(workbook: Workbook) -> Generator[Any, None, None]:
     """
     for sheet in workbook.sheetnames:
         for chart in workbook[sheet]._charts:
-            yield from chart.ser
+            plots = getattr(chart, "_charts", None) or [chart]
+            for plot in plots:
+                yield from plot.ser
 
 
 def all_chart_series_parts(workbook: Workbook) -> Generator[Any, None, None]:
@@ -326,9 +337,13 @@ def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None
         reference.f = new_ref
         # openpyxl does not update cached point counts; stale counts make Excel
         # drop axis labels (especially on area charts).
-        count = point_count(new_ref)
         for cache_name in ("strCache", "numCache", "multiLvlStrCache"):
             cache = getattr(reference, cache_name, None)
-            if cache is not None:
-                cache.ptCount = count
+            if cache is None:
+                continue
+            if cache_name == "multiLvlStrCache":
+                count = point_count_rows(new_ref)
+            else:
+                count = point_count(new_ref)
+            cache.ptCount = count
         logger.debug("Updated chart reference: %s -> %s", ref, new_ref)

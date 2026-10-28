@@ -859,6 +859,25 @@ def _merged_regions_com(
     last_col: int,
 ) -> list[BlockedRegion]:
     """Merged ranges touching the rows a table wants to grow into."""
+    area = worksheet.Range(
+        worksheet.Cells(first_row, first_col),
+        worksheet.Cells(last_row, last_col),
+    )
+    merge_status = area.MergeCells
+    if merge_status is False:
+        return []
+    if merge_status is True:
+        merged = area.MergeArea
+        return [
+            BlockedRegion(
+                description=f"the merged range {_clean_address(merged)}",
+                first_row=int(merged.Row),
+                last_row=int(merged.Row + merged.Rows.Count - 1),
+                first_col=int(merged.Column),
+                last_col=int(merged.Column + merged.Columns.Count - 1),
+            )
+        ]
+
     regions: list[BlockedRegion] = []
     seen: set[str] = set()
     for row in range(first_row, last_row + 1):

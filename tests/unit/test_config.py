@@ -73,3 +73,8 @@ class TestSheetNameValidation:
         config = FillXLConfig(active_sheet="_Data", hide_underscore_sheets=False)
 
         assert config.active_sheet == "_Data"
+
+    def test_an_empty_active_sheet_is_rejected(self) -> None:
+        """A blank sheet name is not a valid activation target."""
+        with pytest.raises(ValueError, match="must not be empty"):
+            FillXLConfig(active_sheet="")

@@ -131,6 +131,7 @@ class Backend(Protocol):
 
 _KNOWN_ENGINES: frozenset[str] = frozenset(get_args(Engine))
 _OPENPYXL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
+_WIN32COM_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xlsb", ".xls"})
 
 
 def _win32com_available() -> bool:
@@ -164,6 +165,12 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
         msg = f"Unknown engine {engine!r}. Known engines: {known}."
         raise ValueError(msg)
     if engine == "win32com":
+        if output.suffix.lower() not in _WIN32COM_SUFFIXES:
+            msg = (
+                f"The win32com engine cannot write a '{output.suffix.lower()}' file. "
+                "Use one of: .xlsx, .xlsm, .xlsb or .xls."
+            )
+            raise ValueError(msg)
         return engine
     if engine == "auto" and _needs_excel(template, output) and _win32com_available():
         logger.debug("engine='auto' chose win32com for %s -> %s", template, output)

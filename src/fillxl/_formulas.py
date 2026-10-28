@@ -8,11 +8,12 @@ is empty).  Both backends apply the same rule, so they keep the same columns.
 from __future__ import annotations
 
 import logging
+import math
+import sys
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from openpyxl.worksheet.cell_range import CellRange
 
-from fillxl._normalize import normalize_value
 from fillxl._utils import table_column_name
 from fillxl._warnings import warn_user
 
@@ -156,6 +157,18 @@ def _cell_kind(cell: Any) -> CellKind:  # noqa: ANN401
     return "formula" if cell.data_type == "f" else "value"
 
 
+def _is_blank_cell_value(value: Any) -> bool:  # noqa: ANN401
+    """Whether *value* should be treated as an empty cell without normalising it."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value == ""
+    pd = sys.modules.get("pandas")
+    if pd is not None and (value is pd.NA or value is pd.NaT):
+        return True
+    return bool(isinstance(value, float) and math.isnan(value))
+
+
 def warn_about_ignored_formula_data(
     table_name: str,
     data_columns: Sequence[str],
@@ -169,7 +182,7 @@ def warn_about_ignored_formula_data(
     ignored = [
         column
         for index, column in enumerate(data_columns)
-        if column in formulas and any(normalize_value(row[index]) is not None for row in rows)
+        if column in formulas and any(not _is_blank_cell_value(row[index]) for row in rows)
     ]
     if ignored:
         warn_user(

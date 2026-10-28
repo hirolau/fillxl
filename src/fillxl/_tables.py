@@ -267,8 +267,18 @@ def populate_table(
     keep_columns = [first_col + offset for offset in formula_column_offsets]
     if plan.unused_body_rows is not None:
         _clear_rows(worksheet, plan.unused_body_rows, first_col, last_col, keep=keep_columns)
+    if plan.vacated_rows is not None:
+        _clear_rows(worksheet, plan.vacated_rows, first_col, last_col)
     if geometry.totals_rows:
         _clear_rows(worksheet, (geometry.last_row, geometry.last_row), first_col, last_col)
+    if plan.data_rows == 0:
+        _clear_rows(
+            worksheet,
+            (plan.first_data_row, plan.first_data_row),
+            first_col,
+            last_col,
+            keep=keep_columns,
+        )
 
     data_column_map = {str(name): idx for idx, name in enumerate(columns)}
     warned: set[tuple[str | None, str | None]] = set()

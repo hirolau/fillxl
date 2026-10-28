@@ -123,7 +123,7 @@ class FillXLConfig:
     on_lossy: OnLossy = field(default="warn", validator=in_(get_args(OnLossy)))
 
     def __attrs_post_init__(self) -> None:
-        """Reject a combination that can only fail at the end of a fill.
+        """Reject combinations that can only fail at the end of a fill.
 
         Examples:
             >>> FillXLConfig(active_sheet="_Data", hide_underscore_sheets=True)
@@ -132,6 +132,12 @@ class FillXLConfig:
             ValueError: active_sheet '_Data' starts with '_' and hide_underscore_sheets is True, ...
 
         """
+        if self.active_sheet == "":
+            msg = (
+                "active_sheet must not be empty; pass None to leave the workbook's "
+                "current sheet alone."
+            )
+            raise ValueError(msg)
         if (
             self.active_sheet is not None
             and self.hide_underscore_sheets

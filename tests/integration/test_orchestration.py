@@ -64,6 +64,12 @@ def test_auto_falls_back_to_openpyxl_without_excel_so_the_error_explains_why(
         fill(_XLSB_TEMPLATE, tmp_path / "out.xlsb", tables={"TableTest": []})
 
 
+def test_win32com_rejects_an_output_format_excel_cannot_save_before_any_work_is_done() -> None:
+    """The backend must reject impossible output formats before it launches Excel."""
+    with pytest.raises(ValueError, match=".csv"):
+        resolve_engine("win32com", Path("t.xlsx"), Path("o.csv"))
+
+
 def test_an_unknown_engine_is_refused_before_any_file_is_touched(tmp_path: Path) -> None:
     """A typo in the engine name must not leave a half-written output behind."""
     template = _xlsx_template(tmp_path)

@@ -93,7 +93,7 @@ def fill(
                     backend.hide_sheets("_")
                 if cfg.delete_sheets:
                     backend.delete_sheets(cfg.delete_sheets)
-                if cfg.active_sheet:
+                if cfg.active_sheet is not None:
                     backend.set_active_sheet(cfg.active_sheet)
                 backend.save(staging_path)
             finally:

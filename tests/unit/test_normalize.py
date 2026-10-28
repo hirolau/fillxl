@@ -184,6 +184,13 @@ class TestValueNormalisation:
 
         assert normalize_value(Greeting()) == "Hello!"
 
+    def test_an_object_whose_string_value_is_empty_becomes_a_blank_cell(self) -> None:
+        class EmptyString:
+            def __str__(self) -> str:
+                return ""
+
+        assert normalize_value(EmptyString()) is None
+
     def test_cell_value_error_is_a_value_error(self) -> None:
         """Callers can catch the documented Value error."""
         from fillxl import CellValueError

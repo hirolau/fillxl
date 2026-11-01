@@ -66,7 +66,7 @@ def test_auto_falls_back_to_openpyxl_without_excel_so_the_error_explains_why(
 
 def test_win32com_rejects_an_output_format_excel_cannot_save_before_any_work_is_done() -> None:
     """The backend must reject impossible output formats before it launches Excel."""
-    with pytest.raises(ValueError, match=".csv"):
+    with pytest.raises(ValueError, match=r"\.csv"):
         resolve_engine("win32com", Path("t.xlsx"), Path("o.csv"))
 
 
@@ -86,7 +86,7 @@ def test_values_and_tables_are_keyword_only(tmp_path: Path) -> None:
     template = _xlsx_template(tmp_path)
 
     with pytest.raises(TypeError, match="positional argument"):
-        fill(template, tmp_path / "out.xlsx", {}, {"Sales": _ROWS})  # type: ignore[call-arg]
+        fill(template, tmp_path / "out.xlsx", {}, {"Sales": _ROWS})  # type: ignore[call-arg]  # ty: ignore[too-many-positional-arguments]
 
 
 def test_values_passed_both_positionally_and_by_keyword_is_an_error(tmp_path: Path) -> None:
@@ -94,7 +94,7 @@ def test_values_passed_both_positionally_and_by_keyword_is_an_error(tmp_path: Pa
     template = _xlsx_template(tmp_path)
 
     with pytest.raises(TypeError, match="positional argument"):
-        fill(template, tmp_path / "out.xlsx", {}, values={})  # type: ignore[misc]
+        fill(template, tmp_path / "out.xlsx", {}, values={})  # type: ignore[misc]  # ty: ignore[too-many-positional-arguments]
 
 
 def test_lost_template_features_warn_with_a_category_that_can_be_filtered(

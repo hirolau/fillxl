@@ -248,7 +248,7 @@ class TestWin32ComSaveFormats:
         from fillxl import fill
 
         _skip_without_excel()
-        with pytest.raises(ValueError, match="Supported output formats"):
+        with pytest.raises(ValueError, match=r"cannot write a '\.csv' file"):
             fill(
                 template=assets_dir() / "test_template_1.xlsx",
                 output=tmp_path / "output.csv",

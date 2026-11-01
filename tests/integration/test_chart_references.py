@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import openpyxl
 import pytest
+from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl import fill
 from tests.parity.builders import chart_template
@@ -106,3 +108,47 @@ def test_a_reference_outside_the_table_body_is_left_alone(tmp_path: Path, target
     template = chart_template(tmp_path / "template.xlsx", reference=target)
 
     assert _value_reference(_fill(template, tmp_path)) == target
+
+
+def test_every_plot_of_a_combo_chart_follows_its_table(
+    charts_template_2: Path,
+    tmp_path: Path,
+) -> None:
+    """A combo chart holds one plot per chart type; every plot must be resized."""
+    rows = [
+        {"Date": datetime(2027, 1, 1), "Revenue": 300000, "Growth Rate": 0.04},
+        {"Date": datetime(2027, 2, 1), "Revenue": 315000, "Growth Rate": 0.05},
+        {"Date": datetime(2027, 3, 1), "Revenue": 330000, "Growth Rate": 0.05},
+    ]
+    output = tmp_path / "combo.xlsx"
+    fill(
+        template=charts_template_2,
+        output=output,
+        engine="openpyxl",
+        tables={"ComboChartTable": rows},
+    )
+
+    references = _combo_chart_references(output)
+
+    assert references
+    for reference in references:
+        area = CellRange(str(reference.f).split("!")[-1])
+        assert (area.min_row, area.max_row) == (2, 4), reference.f
+        assert reference.numCache.ptCount == 3, reference.f
+
+
+def _combo_chart_references(path: Path) -> list[Any]:
+    """Every category and value reference of the combo chart's plots."""
+    workbook = openpyxl.load_workbook(path)
+    try:
+        (chart,) = workbook["9-Combo Chart"]._charts
+        plots = chart._charts
+        assert len(plots) == 2
+        return [
+            reference
+            for plot in plots
+            for series in plot.series
+            for reference in (series.cat.numRef, series.val.numRef)
+        ]
+    finally:
+        workbook.close()

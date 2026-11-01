@@ -90,6 +90,9 @@ later releases can be additive where possible.
   invalid `_xlws.SORT(`.
 - A pivot cache the `win32com` engine could not refresh (or could not mark for
   refresh on open) is now a warning instead of a line in the log.
+- A `polars.Series` used as a column in `dict[str, column]` table data is
+  accepted like a pandas `Series`, instead of being mistaken for a scalar and
+  raising `TypeError`.
 
 ### Added
 - `FillXLWarning` and `TimezoneWarning`, exported from `fillxl`.
@@ -99,6 +102,12 @@ later releases can be additive where possible.
 - `docs/warnings.md`: every warning and error fillxl raises, and how to filter
   them.
 - `docs/backends.md` now carries the feature-by-feature engine comparison.
+- The version matrix covers two release lines per data backend — the minimum
+  (pandas 2, polars 0.20, duckdb 1) and the newest major (pandas 3 in
+  `uv.lock`, polars 2 and duckdb 2 pinned) — in nox and in a `backends` CI job
+  that pins them explicitly. A test that needs one of those libraries carries
+  the `polars`/`duckdb` marker, so the pinned sessions select it however it is
+  named instead of relying on the test name.
 
 ### Verified, not changed
 - A sorted table's `sortState` is left exactly as the template had it. Excel 16

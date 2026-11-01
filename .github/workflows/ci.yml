@@ -93,3 +93,58 @@ jobs:
           name: fillxl-coverage
           fail_ci_if_error: false
 
+  # The test job above runs whatever `uv.lock` resolved.  This job pins the
+  # oldest and the newest supported release line of each optional data backend,
+  # so a new major (duckdb 2, polars 2) is exercised before users meet it.
+  # `-k` matches markers as well as names, so every test that exercises the
+  # backend runs whichever way it is spelled.
+  backends:
+    name: backends (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: polars-min
+            pin: polars>=0.20,<1
+            select: polars
+          - label: polars-2
+            pin: polars>=2,<3
+            select: polars
+          - label: duckdb-min
+            pin: duckdb>=1.0,<2
+            select: duckdb
+          - label: duckdb-2
+            pin: duckdb>=2,<3
+            select: duckdb
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      # `uv run` would re-sync the lock file version back, hence --no-sync below.
+      - name: Pin ${{ matrix.pin }}
+        run: uv pip install "${{ matrix.pin }}"
+
+      - name: Show the versions under test
+        run: uv pip list | grep -E "^(pandas|polars|duckdb) "
+
+      - name: Run backend tests
+        run: >-
+          uv run --no-sync pytest tests/
+          -k "${{ matrix.select }} or validation"
+          -m "not win32com and not xlwings"
+          -q
+

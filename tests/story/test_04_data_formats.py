@@ -249,6 +249,7 @@ class TestPandasDataFrame:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.polars
 class TestPolarsDataFrame:
     """polars DataFrames are detected and converted automatically."""
 
@@ -276,12 +277,67 @@ class TestPolarsDataFrame:
         finally:
             wb.close()
 
+    def test_polars_nulls_are_written_as_empty_cells(
+        self,
+        output_path: Path,
+    ) -> None:
+        """A polars null keeps its row; the cell is left blank."""
+        pl = pytest.importorskip("polars")
+        _make_simple_table(output_path.with_name("tmpl.xlsx"))
+
+        df = pl.DataFrame({"Name": ["Alice", None], "Score": [95, None]})
+
+        fill(
+            template=output_path.with_name("tmpl.xlsx"),
+            output=output_path,
+            tables={"Data": df},
+        )
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            ws = wb["Sheet1"]
+            assert ws["A2"].value == "Alice"
+            assert ws["B2"].value == 95
+            assert ws["A3"].value is None
+            assert ws["B3"].value is None
+        finally:
+            wb.close()
+
+    def test_a_polars_frame_with_no_rows_clears_the_sample_row(
+        self,
+        output_path: Path,
+    ) -> None:
+        """A typed empty frame still names its columns, so the sample row is cleared."""
+        pl = pytest.importorskip("polars")
+        _make_simple_table(output_path.with_name("tmpl.xlsx"))
+
+        df = pl.DataFrame(schema={"Name": pl.Utf8, "Score": pl.Int64})
+
+        fill(
+            template=output_path.with_name("tmpl.xlsx"),
+            output=output_path,
+            tables={"Data": df},
+        )
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            ws = wb["Sheet1"]
+            assert ws["A1"].value == "Name"
+            assert ws["B1"].value == "Score"
+            assert ws["A2"].value is None
+            assert ws["B2"].value is None
+            # A table keeps one empty body row; Excel expects at least one.
+            assert ws.tables["Data"].ref == "A1:B2"
+        finally:
+            wb.close()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 4.4 duckdb Relation
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.duckdb
 class TestDuckDBRelation:
     """duckdb query results can be piped directly into Excel tables."""
 
@@ -306,6 +362,60 @@ class TestDuckDBRelation:
             ws = wb["Sheet1"]
             assert ws["A2"].value == "Alice"
             assert ws["B2"].value == 95
+        finally:
+            wb.close()
+
+    def test_duckdb_nulls_are_written_as_empty_cells(
+        self,
+        output_path: Path,
+    ) -> None:
+        """SQL NULL keeps its row; the cell is left blank."""
+        duckdb = pytest.importorskip("duckdb")
+        _make_simple_table(output_path.with_name("tmpl.xlsx"))
+
+        rel = duckdb.sql("SELECT * FROM (VALUES ('Alice', 95), (NULL, NULL)) AS t(Name, Score)")
+
+        fill(
+            template=output_path.with_name("tmpl.xlsx"),
+            output=output_path,
+            tables={"Data": rel},
+        )
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            ws = wb["Sheet1"]
+            assert ws["A2"].value == "Alice"
+            assert ws["B2"].value == 95
+            assert ws["A3"].value is None
+            assert ws["B3"].value is None
+        finally:
+            wb.close()
+
+    def test_an_empty_duckdb_relation_clears_the_sample_row(
+        self,
+        output_path: Path,
+    ) -> None:
+        """A query that matches nothing still knows its columns, so the header stays."""
+        duckdb = pytest.importorskip("duckdb")
+        _make_simple_table(output_path.with_name("tmpl.xlsx"))
+
+        rel = duckdb.sql("SELECT 'Alice' AS Name, 95 AS Score WHERE 1 = 0")
+
+        fill(
+            template=output_path.with_name("tmpl.xlsx"),
+            output=output_path,
+            tables={"Data": rel},
+        )
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            ws = wb["Sheet1"]
+            assert ws["A1"].value == "Name"
+            assert ws["B1"].value == "Score"
+            assert ws["A2"].value is None
+            assert ws["B2"].value is None
+            # A table keeps one empty body row; Excel expects at least one.
+            assert ws.tables["Data"].ref == "A1:B2"
         finally:
             wb.close()
 

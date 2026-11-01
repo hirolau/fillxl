@@ -49,8 +49,9 @@ def _is_column_values(values: Any) -> bool:  # noqa: ANN401
         return False
     if isinstance(values, Sequence):
         return True
-    # NumPy arrays and pandas/polars Series are not ``Sequence`` instances.
-    return hasattr(values, "tolist") and hasattr(values, "__len__")
+    # NumPy arrays and pandas Series expose ``tolist``; polars Series expose
+    # ``to_list``.  None of them is a ``Sequence`` instance.
+    return (hasattr(values, "tolist") or hasattr(values, "to_list")) and hasattr(values, "__len__")
 
 
 def _check_column_lengths(keys: list[Any], column_values: list[list[Any]]) -> None:

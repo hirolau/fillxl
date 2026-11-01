@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as dt
+from decimal import Decimal
+
 import pytest
 
 from fillxl import FillXLWarning
@@ -44,6 +47,7 @@ class TestTabularAdapter:
         rows = list(adapter.rows)
         assert rows == [["Alice", 30], ["Bob", 25]]
 
+    @pytest.mark.polars
     def test_adapter_detects_polars_dataframe(self) -> None:
         """TabularAdapter should detect and extract columns/rows from a polars DataFrame."""
         pl = pytest.importorskip("polars")
@@ -55,14 +59,16 @@ class TestTabularAdapter:
         rows = list(adapter.rows)
         assert rows == [(1, 3), (2, 4)]
 
+    @pytest.mark.duckdb
     def test_adapter_detects_duckdb_relation(self) -> None:
         """TabularAdapter should detect and extract columns/rows from a duckdb relation."""
         duckdb = pytest.importorskip("duckdb")
         from fillxl._adapters import TabularAdapter
 
-        rel = duckdb.sql("SELECT 1 AS a, 2 AS b UNION SELECT 3, 4")
+        rel = duckdb.sql("SELECT * FROM (VALUES (1, 2), (3, 4)) AS t(a, b) ORDER BY a")
         adapter = TabularAdapter(rel)
         assert adapter.columns == ["a", "b"]
+        assert adapter.rows == [(1, 2), (3, 4)]
 
     def test_adapter_accepts_empty_list_as_zero_rows(self) -> None:
         """An empty list is valid, schema-less data that clears a table."""
@@ -267,6 +273,168 @@ class TestTabularAdapter:
         assert list(adapter.rows) == [[1], [2]]
 
 
+@pytest.mark.polars
+class TestPolarsFrames:
+    """What a polars frame hands over, and what is refused from it."""
+
+    def test_values_arrive_as_plain_python_objects(self) -> None:
+        """polars yields ints and strings, not numpy scalars, so Excel sees them as such."""
+        pl = pytest.importorskip("polars")
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter(pl.DataFrame({"a": [1, 2], "b": [1.5, 2.5], "c": ["x", "y"]}))
+
+        assert adapter.rows == [(1, 1.5, "x"), (2, 2.5, "y")]
+        assert [type(value) for value in adapter.rows[0]] == [int, float, str]
+
+    def test_a_null_is_none_not_nan(self) -> None:
+        """A polars null arrives as None, which is what an empty cell needs."""
+        pl = pytest.importorskip("polars")
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter(pl.DataFrame({"a": [1, None], "b": ["x", None], "c": [None, 2]}))
+
+        assert adapter.rows == [(1, "x", None), (None, None, 2)]
+
+    def test_nan_stays_a_value(self) -> None:
+        """polars keeps NaN and null apart; only the null becomes None here."""
+        pl = pytest.importorskip("polars")
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter(pl.DataFrame({"a": [float("nan"), None]}))
+
+        rows = adapter.rows
+        assert rows[0][0] != rows[0][0]  # NaN is never equal to itself
+        assert rows[1] == (None,)
+
+    def test_a_column_of_only_nulls_reads_as_none(self) -> None:
+        """An all-null column has no dtype to widen to, but still one value per row."""
+        pl = pytest.importorskip("polars")
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter(pl.DataFrame({"a": [None, None]}))
+
+        assert adapter.columns == ["a"]
+        assert adapter.rows == [(None,), (None,)]
+
+    def test_a_frame_with_no_rows_keeps_its_columns(self) -> None:
+        """A typed empty frame still names its columns, so a table can be cleared."""
+        pl = pytest.importorskip("polars")
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter(pl.DataFrame(schema={"a": pl.Int64, "b": pl.Utf8}))
+
+        assert adapter.columns == ["a", "b"]
+        assert adapter.rows == []
+
+    def test_dates_times_and_durations_stay_python_objects(self) -> None:
+        """Temporal and decimal columns are converted by polars, not by fillxl."""
+        pl = pytest.importorskip("polars")
+        from fillxl._adapters import TabularAdapter
+
+        frame = pl.DataFrame(
+            {
+                "day": [dt.date(2025, 1, 2)],
+                "clock": [dt.time(9, 30)],
+                "stamp": [dt.datetime(2025, 1, 2, 3, 4, 5)],
+                "wait": [dt.timedelta(minutes=5)],
+                "money": [Decimal("1.23")],
+            },
+        )
+
+        (row,) = TabularAdapter(frame).rows
+
+        assert row == (
+            dt.date(2025, 1, 2),
+            dt.time(9, 30),
+            dt.datetime(2025, 1, 2, 3, 4, 5),
+            dt.timedelta(minutes=5),
+            Decimal("1.23"),
+        )
+
+    def test_a_lazyframe_is_refused_by_name(self) -> None:
+        """A LazyFrame is a query; the error says which type to collect."""
+        pl = pytest.importorskip("polars")
+        from fillxl._adapters import TabularAdapter
+
+        with pytest.raises(TypeError, match=r"Unsupported data type: LazyFrame"):
+            TabularAdapter(pl.DataFrame({"a": [1]}).lazy())
+
+    def test_a_series_can_be_a_column(self) -> None:
+        """polars Series carry no names, so they slot into dict[str, column] data."""
+        pl = pytest.importorskip("polars")
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter({"a": pl.Series([1, 2]), "b": pl.Series(["x", "y"])})
+
+        assert adapter.columns == ["a", "b"]
+        assert adapter.rows == [[1, "x"], [2, "y"]]
+
+
+@pytest.mark.duckdb
+class TestDuckDBRelations:
+    """What a duckdb relation hands over, and what is refused from it."""
+
+    def test_rows_are_fetched_from_the_relation(self) -> None:
+        """The relation is materialised through ``fetchall``, column by column."""
+        duckdb = pytest.importorskip("duckdb")
+        from fillxl._adapters import TabularAdapter
+
+        rel = duckdb.sql("SELECT * FROM (VALUES (1, 'x'), (2, 'y')) AS t(a, b) ORDER BY a")
+
+        assert TabularAdapter(rel).rows == [(1, "x"), (2, "y")]
+
+    def test_a_null_becomes_none(self) -> None:
+        """SQL NULL is an empty cell, not the text "NULL"."""
+        duckdb = pytest.importorskip("duckdb")
+        from fillxl._adapters import TabularAdapter
+
+        rel = duckdb.sql("SELECT * FROM (VALUES (1, 'x'), (NULL, NULL)) AS t(a, b) ORDER BY a")
+
+        assert TabularAdapter(rel).rows == [(1, "x"), (None, None)]
+
+    def test_an_empty_relation_keeps_its_columns(self) -> None:
+        """A query that matches nothing still describes the table to clear."""
+        duckdb = pytest.importorskip("duckdb")
+        from fillxl._adapters import TabularAdapter
+
+        adapter = TabularAdapter(duckdb.sql("SELECT 1 AS a, 'x' AS b WHERE 1 = 0"))
+
+        assert adapter.columns == ["a", "b"]
+        assert adapter.rows == []
+
+    def test_sql_types_arrive_as_python_values(self) -> None:
+        """duckdb converts DATE, TIME, DECIMAL and INTERVAL before fillxl sees them."""
+        duckdb = pytest.importorskip("duckdb")
+        from fillxl._adapters import TabularAdapter
+
+        rel = duckdb.sql(
+            "SELECT DATE '2025-01-02' AS day, TIME '09:30:00' AS clock,"
+            " TIMESTAMP '2025-01-02 03:04:05' AS stamp,"
+            " CAST(1.23 AS DECIMAL(10, 2)) AS money, INTERVAL 5 DAY AS wait",
+        )
+
+        (row,) = TabularAdapter(rel).rows
+
+        assert row == (
+            dt.date(2025, 1, 2),
+            dt.time(9, 30),
+            dt.datetime(2025, 1, 2, 3, 4, 5),
+            Decimal("1.23"),
+            dt.timedelta(days=5),
+        )
+
+    def test_duplicate_relation_column_names_are_refused(self) -> None:
+        """SQL allows ``SELECT 1 AS a, 2 AS a``; one of them would be lost."""
+        duckdb = pytest.importorskip("duckdb")
+        from fillxl._adapters import TabularAdapter
+
+        rel = duckdb.sql("SELECT 1 AS a, 2 AS a")
+
+        with pytest.raises(ValueError, match=r"Duplicate column names.*'a'"):
+            TabularAdapter(rel)
+
+
 class TestDuplicateColumnNames:
     """Column labels that collide after string conversion are rejected."""
 
@@ -313,6 +481,7 @@ class TestDuplicateColumnNames:
         assert adapter.columns == ["amount", "Amount", "3"]
         assert adapter.rows == [[1, 2, 4]]
 
+    @pytest.mark.polars
     def test_polars_already_rejects_duplicate_names(self) -> None:
         """polars refuses duplicate column names before fillxl sees them.
 

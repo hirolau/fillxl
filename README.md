@@ -38,9 +38,29 @@ fill(
 ```bash
 pip install fillxl
 
-pip install fillxl[pandas]   # pandas support
-pip install fillxl[all]      # pandas + polars + duckdb
+pip install fillxl[pandas]    # pandas.DataFrame      (2.x, 3.x)
+pip install fillxl[polars]    # polars.DataFrame      (0.20 – 2.x)
+pip install fillxl[duckdb]    # duckdb relations      (1.x, 2.x)
+pip install fillxl[win32com]  # engine="win32com" on Windows with Excel
+pip install fillxl[all]       # all of the above
 ```
+
+`duckdb` publishes no wheels for Python 3.15 yet, so on 3.15 the `duckdb` extra
+installs nothing and duckdb data sources are unavailable. Everything else —
+including `polars` and both engines — works on every supported Python.
+
+## Data you can fill from
+
+| Input | Example |
+|-------|---------|
+| `list[dict]` | `[{"Name": "Widget", "Price": 4.99}]` |
+| `dict[str, list]` | `{"Name": ["Widget"], "Price": [4.99]}` |
+| `pandas.DataFrame` | `pd.read_csv("sales.csv")` |
+| `polars.DataFrame` | `pl.read_csv("sales.csv")` |
+| `duckdb.DuckDBPyRelation` | `duckdb.sql("FROM 'sales.csv'")` |
+
+Tables are matched to your data by column name, so the DataFrame order does not
+matter, and every format produces the same workbook.
 
 ## Visual example
 
@@ -72,6 +92,13 @@ differs.
 
 ## Know the edge cases
 
+- One cell holds one value. A `list`, `dict`, `bytes` or a whole DataFrame in a
+  named cell or a table cell raises `CellValueError` naming the position,
+  instead of writing its text dump; put rows and columns in `tables=`.
+- Every warning is a `fillxl.FillXLWarning` subclass (`TimezoneWarning`,
+  `DanglingReferenceWarning`, `LossyTemplateWarning`), so
+  `warnings.simplefilter("error", fillxl.FillXLWarning)` makes data problems
+  fail fast instead of quietly changing the output.
 - `openpyxl` writes no cached formula results; the output asks Excel to
   recalculate on open (`engine="win32com"` saves computed values).
 - `openpyxl` drops some modern chart types, slicers and similar parts, and says
@@ -97,7 +124,9 @@ uv run pytest
 ```
 
 The 0.x line leaves room for breaking changes; 1.0 signals stability. Supported:
-Python 3.11–3.15 on Windows and Linux (macOS best-effort). See
+Python 3.11–3.15 on Windows and Linux (macOS best-effort), with the data
+libraries above on their minimum and newest major release (pandas 2 and 3,
+polars 0.20 and 2, duckdb 1 and 2). See
 [Development](https://hirolau.github.io/fillxl/development/) for the test
 matrix, type checks and supported data-library versions.
 

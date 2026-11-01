@@ -13,9 +13,15 @@ pip install fillxl
 Optional extras:
 
 ```bash
-pip install fillxl[pandas]   # pandas support
-pip install fillxl[all]      # pandas + polars + duckdb
+pip install fillxl[pandas]    # pandas.DataFrame   (2.x, 3.x)
+pip install fillxl[polars]    # polars.DataFrame   (0.20 – 2.x)
+pip install fillxl[duckdb]    # duckdb relations   (1.x, 2.x)
+pip install fillxl[win32com]  # engine="win32com" on Windows with Excel
+pip install fillxl[all]       # all of the above
 ```
+
+`duckdb` has no Python 3.15 wheels yet, so the `duckdb` extra installs nothing
+there and duckdb data sources are unavailable on 3.15.
 
 ## Quick Start
 

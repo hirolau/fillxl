@@ -50,8 +50,8 @@ lists what else changed.
 | the same, without Excel | `openpyxl`, whose error explains what is missing |
 
 Pass `engine="win32com"` explicitly to drive Microsoft Excel through COM — that
-is the engine to use for chart types openpyxl cannot write. Both engines produce
-the same workbook for the same template and data; a parity test suite fills one
+is the engine to use for chart types openpyxl cannot write. Both engines write
+the same values for the same template and data; a parity test suite fills one
 template with both and compares the results.
 
 ---
@@ -80,8 +80,8 @@ config = FillXLConfig(
 | `refresh_pivot_tables` | `bool` | `True` | Refresh pivot caches after filling. |
 | `extend_conditional_formatting` | `bool` | `True` | Resize conditional formatting ranges with the table. |
 | `copy_table_styles` | `bool` | `True` | Copy the first data row's styles to new rows. |
-| `hide_underscore_sheets` | `bool` | `True` | Hide sheets whose names start with `_`. |
-| `delete_sheets` | `Sequence[str] \| None` | `None` | Sheet names to delete (stored as a tuple). |
+| `hide_underscore_sheets` | `bool` | `True` | Hide sheets whose names start with `_`. On by default, so opt out explicitly to keep such a sheet visible. |
+| `delete_sheets` | `Sequence[str] \| None` | `None` | Sheet names to delete (stored as a tuple). References to the deleted sheets are **not** rewritten; see below. |
 | `active_sheet` | `str \| None` | `None` | Name of the sheet to make active after filling. |
 | `on_lossy` | `"ignore" \| "warn" \| "raise"` | `"warn"` | What to do when the openpyxl engine drops template features. |
 
@@ -147,7 +147,7 @@ number before that day means.
 
 ```python
 FillXLConfig(
-    hide_underscore_sheets=True,   # hide visible sheets named "_…"
+    hide_underscore_sheets=True,   # the default: hide visible sheets named "_…"
     delete_sheets=["RawData"],
     active_sheet="Report",
 )
@@ -162,6 +162,12 @@ FillXLConfig(
   in the report.
 - `veryHidden` sheets stay `veryHidden`, and chart sheets can be deleted or
   activated.
+- `delete_sheets` removes the sheet and nothing else: formulas, chart series,
+  defined names and pivot caches that refer to it still name it. The openpyxl
+  engine cannot rewrite them, so it warns with `DanglingReferenceWarning`
+  instead of shipping a report that opens with `#REF!`. Update those references
+  yourself, or keep the sheet (`engine="win32com"` lets Excel rewrite them to
+  `#REF!` in place).
 
 ### Ragged `list[dict]` data
 

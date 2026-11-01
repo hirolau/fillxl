@@ -41,6 +41,7 @@ from fillxl._plan import BlockedRegion, TableGeometry, blocked_area, plan_table_
 from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
 from fillxl._utils import col_to_excel
 from fillxl._validation import validate_columns
+from fillxl._warnings import FillXLWarning, warn_user
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -411,18 +412,28 @@ class Win32ComBackend:
         self._ensure_workbook()
         # Calculation is manual while filling; pivots must read up-to-date formulas.
         self._app.Calculate()
-        for pcache in self._workbook.PivotCaches():
+        failures: list[str] = []
+        for index, pcache in enumerate(self._workbook.PivotCaches(), start=1):
             try:
                 pcache.Refresh()
-            except Exception:
-                logger.exception("Failed to refresh pivot cache")
+            except Exception as exc:
+                logger.debug("Failed to refresh pivot cache %d", index, exc_info=True)
+                failures.append(f"cache {index} could not be refreshed ({exc})")
             # The COM property is ``RefreshOnFileOpen``; it is what the file
             # format stores as ``refreshOnLoad``.  (``RefreshOnLoad`` is the
             # XML attribute name, not a COM property.)
             try:
                 pcache.RefreshOnFileOpen = True
-            except Exception:
-                logger.exception("Failed to mark pivot cache for refresh on open")
+            except Exception as exc:
+                logger.debug("Failed to flag pivot cache %d", index, exc_info=True)
+                failures.append(f"cache {index} cannot be marked for refresh on open ({exc})")
+        if failures:
+            warn_user(
+                "Pivot tables may show stale data: "
+                + "; ".join(failures)
+                + ". Refresh them in Excel, or set refresh_pivot_tables=False.",
+                FillXLWarning,
+            )
         logger.debug("Refreshed all pivot caches")
 
     def _sheet_names(self) -> list[str]:
@@ -646,6 +657,12 @@ def _resize_target_row(
     return new_table_last_row - totals_rows
 
 
+# Excel's file format markers for future functions (_xlfn.), worksheet-only
+# functions (_xlws.) and lambda parameters (_xlpm.).  Excel's COM API rejects
+# the parameter marker and normalises the others away, so all are removed.
+_COM_FORMULA_MARKERS = ("_xlfn.", "_xlws.", "_xlpm.")
+
+
 def _prepare_formula_for_com(formula: str) -> str:
     """Normalize a calculated-column formula for Excel COM assignment.
 
@@ -653,8 +670,11 @@ def _prepare_formula_for_com(formula: str) -> str:
     formulas (e.g. ``LET`` / ``LAMBDA`` blocks) keep their layout.
 
     Excel ``Formula2`` accepts LF (``\\n``) line breaks but rejects bare CR
-    (``\\r``) / CRLF, so those are normalized to LF.  openpyxl XML prefixes
-    ``_xlfn.`` / ``_xlpm.`` are stripped because COM does not understand them.
+    (``\\r``) / CRLF, so those are normalized to LF.  Excel's file format marks
+    future functions with ``_xlfn.``, worksheet-only functions with ``_xlws.``
+    and lambda parameters with ``_xlpm.``.  COM rejects the ``_xlpm.`` markers
+    and stores whichever others are left, so every marker is removed and the
+    formula reads the way a user would type it.
 
     Args:
         formula: Formula string, typically with a leading ``=``.
@@ -667,16 +687,16 @@ def _prepare_formula_for_com(formula: str) -> str:
         '=LET(\\n    x, 1,\\n    x+1\\n)'
         >>> _prepare_formula_for_com("=_xlfn.LET(_xlpm.x,1,_xlpm.x+1)")
         '=LET(x,1,x+1)'
+        >>> _prepare_formula_for_com("=_xlfn._xlws.SORT(A1:A3)")
+        '=SORT(A1:A3)'
         >>> _prepare_formula_for_com("=A1\\r\\n+B1")
         '=A1\\n+B1'
 
     """
-    return (
-        formula.replace("\r\n", "\n")
-        .replace("\r", "\n")
-        .replace("_xlfn.", "")
-        .replace("_xlpm.", "")
-    )
+    normalized = formula.replace("\r\n", "\n").replace("\r", "\n")
+    for marker in _COM_FORMULA_MARKERS:
+        normalized = normalized.replace(marker, "")
+    return normalized
 
 
 def _check_overflow_com(

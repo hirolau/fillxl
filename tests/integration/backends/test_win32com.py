@@ -170,6 +170,100 @@ def test_overflow_guard_accepts_an_empty_range() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Calculated-column formulas and pivot refresh (CI-safe, fake COM)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize(
+    ("formula", "expected"),
+    [
+        ("=A1\r\n+B1", "=A1\n+B1"),
+        ("=_xlfn.LET(_xlpm.x,1,_xlpm.x+1)", "=LET(x,1,x+1)"),
+        ("=_xlfn._xlws.SORT(A1:A3)", "=SORT(A1:A3)"),
+        ("=_xlws.FILTER(A1:A3,A1:A3>1)", "=FILTER(A1:A3,A1:A3>1)"),
+        ("=_xlfn._xlws.SORT(A1:A3)+_xlfn.SUM(A1:A3)", "=SORT(A1:A3)+SUM(A1:A3)"),
+    ],
+)
+def test_calculated_column_formulas_reach_excel_without_xml_markers(
+    formula: str,
+    expected: str,
+) -> None:
+    """Excel rejects ``_xlpm.`` and cannot resolve a half-stripped ``_xlws.`` name."""
+    from fillxl._backends._win32com import _prepare_formula_for_com
+
+    assert _prepare_formula_for_com(formula) == expected
+
+
+class _FakePivotCache:
+    def __init__(self, *, refresh_fails: bool = False, flag_fails: bool = False) -> None:
+        self._refresh_fails = refresh_fails
+        self._flag_fails = flag_fails
+        self.refresh_on_open = False
+
+    def Refresh(self) -> None:  # noqa: N802
+        if self._refresh_fails:
+            raise OSError("pivot cache is busy")
+
+    @property
+    def RefreshOnFileOpen(self) -> bool:  # noqa: N802
+        return self.refresh_on_open
+
+    @RefreshOnFileOpen.setter
+    def RefreshOnFileOpen(self, value: bool) -> None:  # noqa: N802
+        if self._flag_fails:
+            raise OSError("structure is protected")
+        self.refresh_on_open = value
+
+
+class _FakePivotWorkbook:
+    def __init__(self, *caches: _FakePivotCache) -> None:
+        self._caches = list(caches)
+
+    def PivotCaches(self) -> list[_FakePivotCache]:  # noqa: N802
+        return self._caches
+
+
+class _FakeApplication:
+    def Calculate(self) -> None:  # noqa: N802
+        pass
+
+
+def _refresh_pivots(*caches: _FakePivotCache) -> None:
+    from fillxl._backends._win32com import Win32ComBackend
+
+    backend = Win32ComBackend()
+    backend._workbook = _FakePivotWorkbook(*caches)
+    backend._app = _FakeApplication()
+    backend.set_pivot_refresh()
+
+
+def test_a_pivot_cache_that_cannot_be_refreshed_is_reported() -> None:
+    """A stale pivot that only reached the log would go unnoticed."""
+    with pytest.warns(UserWarning, match=r"cache 1 could not be refreshed"):
+        _refresh_pivots(_FakePivotCache(refresh_fails=True))
+
+
+def test_a_pivot_cache_that_cannot_be_flagged_for_refresh_is_reported() -> None:
+    """If Excel will not refresh on open either, the file ships stale pivots."""
+    with pytest.warns(UserWarning, match=r"cache 2 cannot be marked for refresh"):
+        _refresh_pivots(_FakePivotCache(), _FakePivotCache(flag_fails=True))
+
+
+def test_a_working_pivot_cache_is_refreshed_quietly() -> None:
+    """The happy path sets the flag and says nothing."""
+    import warnings
+
+    cache = _FakePivotCache()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _refresh_pivots(cache)
+
+    assert cache.refresh_on_open is True
+    assert caught == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Excel-backed behaviours (skipped without Excel)
 # ═══════════════════════════════════════════════════════════════════════════════
 

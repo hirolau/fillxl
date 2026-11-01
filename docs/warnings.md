@@ -30,6 +30,7 @@ Two properties matter when you rely on that:
 | `FillXLWarning` | Data was supplied but not written, or is stored differently than supplied: an integer with more than 15 significant digits (warned once per column), a DataFrame index that is not written, values supplied for a calculated column, all but the first destination of a defined name, a sheet name that matched nothing. | Fix the data or the configuration, or ignore the warning. |
 | `TimezoneWarning` | A tz-aware datetime was provided. Excel has no timezone support, so the offset is stripped and the wall-clock time kept. Warned once per fill. | Convert to naive datetimes yourself, or accept the loss. |
 | `LossyTemplateWarning` | The openpyxl engine did not write a template feature back (slicers, modern charts, pictures, threaded comments, …). Controlled by `on_lossy`. | Use `engine="win32com"`, or set `on_lossy="ignore"`. |
+| `DanglingReferenceWarning` | A sheet deleted by `delete_sheets` is still named by a formula, chart series, defined name or pivot cache. The openpyxl engine cannot rewrite those references, so Excel shows `#REF!` there. | Point the reference elsewhere, remove it, or keep the sheet. |
 
 `on_lossy="raise"` turns the lossy case into `LossyTemplateError` instead of a
 warning.

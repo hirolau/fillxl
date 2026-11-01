@@ -542,6 +542,26 @@ def test_numeric_looking_strings_stay_text_in_both_engines(
 
 
 @pytest.mark.parametrize("engine", ENGINES)
+def test_a_text_formatted_cell_keeps_text_without_the_com_marker(
+    equivalence_template: Path,
+    output_path: Path,
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """The COM text marker becomes Excel's prefix character, not part of the value."""
+    template = tmp_path / "text_format.xlsx"
+    workbook = openpyxl.load_workbook(equivalence_template)
+    workbook["Data"]["E1"].number_format = "@"
+    workbook.save(template)
+    workbook.close()
+
+    filled = _fill_and_read(template, output_path, engine, values={"probe_cell": "00123"})
+
+    assert filled.named_cell == "00123"
+    assert filled.worksheet["E1"].number_format == "@"
+
+
+@pytest.mark.parametrize("engine", ENGINES)
 def test_error_looking_strings_are_stored_as_text_not_errors(
     equivalence_template: Path,
     output_path: Path,

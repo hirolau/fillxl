@@ -32,8 +32,8 @@ fill(..., engine="win32com")   # Windows + Excel (maximum fidelity)
 
 `"auto"` uses openpyxl for `.xlsx`/`.xlsm` templates saved in the same format,
 and Excel when it is needed (`.xlsb`/`.xls` templates, format conversion) and
-available. Both engines produce the same workbook for the same template and
-data.
+available. Both engines write the same values for the same template and data;
+[Backends](backends.md) lists what still differs.
 
 ## Visual Example
 
@@ -76,7 +76,7 @@ fill(
 - Populate named cells and Excel tables
 - Automatic table resizing + chart range updates
 - Conditional formatting and pivot table refresh
-- Two backends that agree: `openpyxl` (default) and `win32com` (Windows + Excel)
+- Two backends: `openpyxl` (default) and `win32com` (Windows + Excel)
 - Dates, sheets and warnings behave the same in both engines
 - Supports list, dict, pandas, polars, and duckdb data
 
@@ -92,13 +92,11 @@ fill(
 
 ## Performance
 
-Benchmark: **5,000 rows × 20 columns** (list[dict] data).
-
-| Method | Engine | Time (mean ± std) |
-|--------|--------|-------------------|
-| `fillxl` | openpyxl | 2.26s ± 0.03s |
-| `fillxl` | win32com | 2.80s ± 0.03s |
-| `pandas.to_excel` | openpyxl | 3.01s ± 0.09s |
+fillxl is a thin layer over openpyxl (or over Excel itself), so fill time is
+dominated by the engine: expect a few seconds for tens of thousands of cells
+and minutes for hundreds of thousands. Run `scripts/benchmark.py` to measure
+your own machine, template and data — absolute numbers vary too much between
+machines to be worth publishing.
 
 ## Project Status
 

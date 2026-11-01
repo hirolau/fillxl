@@ -13,6 +13,7 @@ from fillxl._charts import (
     TableChangeSpecs,
     update_chart_data_ranges,
 )
+from fillxl._dangling import find_dangling_references, warn_dangling_references
 from fillxl._lossy import check_lossy
 from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
 from fillxl._tables import populate_table
@@ -41,6 +42,7 @@ class OpenpyxlBackend:
     def __init__(self) -> None:
         self._workbook: openpyxl.Workbook | None = None
         self._source_suffix: str | None = None
+        self._deleted_sheets: list[str] = []
 
     def _require_workbook(self) -> openpyxl.Workbook:
         """Return the loaded workbook or raise.
@@ -193,6 +195,8 @@ class OpenpyxlBackend:
             _activate(workbook, active)
         else:
             _activate(workbook, first_remaining(visible, present))
+        self._deleted_sheets.extend(present)
+        warn_dangling_references(present, find_dangling_references(workbook, present))
 
     def set_active_sheet(self, name: str) -> None:
         """Set the active (displayed) sheet.
@@ -250,7 +254,7 @@ class OpenpyxlBackend:
 
     def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
         """Report template features openpyxl did not write back."""
-        check_lossy(template, output, policy)
+        check_lossy(template, output, policy, deleted_sheets=self._deleted_sheets)
 
 
 def _active_title(workbook: openpyxl.Workbook) -> str | None:

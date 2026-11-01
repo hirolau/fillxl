@@ -26,6 +26,10 @@ class TimezoneWarning(FillXLWarning):
     """A timezone was stripped: Excel stores no timezone information."""
 
 
+class DanglingReferenceWarning(FillXLWarning):
+    """A deleted sheet is still named by a formula, chart, name or pivot."""
+
+
 def warn_user(message: str, category: type[FillXLWarning] = FillXLWarning) -> None:
     """Warn about *message*, blaming the first frame outside fillxl.
 

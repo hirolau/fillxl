@@ -2,9 +2,10 @@
 
 fillxl supports two backend engines for writing Excel files. Choose based on your platform and fidelity requirements.
 
-Both engines produce **the same workbook** for the same template and data: the
-same values, number formats, chart references and sheet states. The differences
-that remain are listed under *Feature support* below.
+Both engines write **the same values** for the same template and data: the same
+cell values, number formats, chart references and sheet states. The differences
+that remain — cached formula results, chart styles, parts openpyxl cannot
+write — are listed under *Feature support* below.
 
 `engine="auto"` (the default) uses `openpyxl` for `.xlsx`/`.xlsm` templates
 saved in the same format, and `win32com` when openpyxl cannot do the job
@@ -78,6 +79,9 @@ fill(template="tpl.xlsx", output="out.xlsx", ..., engine="openpyxl")
 - Writes no cached formula results: the output sets `fullCalcOnLoad` so Excel
   recalculates on open. Use `engine="win32com"` when the saved file must
   already contain computed values.
+- Deleting a sheet leaves formulas, charts, names and pivots that refer to it
+  pointing at a sheet that no longer exists, and warns
+  (`DanglingReferenceWarning`) rather than rewriting them.
 
 ---
 
@@ -183,7 +187,9 @@ the result:
 
 The detector compares **part and element counts**. It catches dropped parts,
 shapes and worksheet extensions, but it cannot prove that a preserved part is
-byte-for-byte unchanged.
+byte-for-byte unchanged. Parts that only a sheet removed by `delete_sheets`
+referenced are ignored: their disappearance is the caller's doing, not the
+engine's.
 
 Tables **without a header row** (the table's "Header Row" option is off) are
 supported too. Excel names their columns `Column1`, `Column2`, …, so that is

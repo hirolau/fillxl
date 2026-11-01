@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """Benchmark fillxl (polars/pandas/duckdb x openpyxl/win32com) vs reference methods.
 
-Reads the 10-row city-data template, expands to 500k rows by self-concatenation,
-then measures wall-clock time for each method across 5 iterations.
+Reads the 10-row city-data template, expands it to ``N_ROWS`` rows
+(5,000 by default), then measures wall-clock time for each method across
+``N_ITER`` iterations (10 by default).
 """
 
 from __future__ import annotations

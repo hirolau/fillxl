@@ -241,6 +241,9 @@ def split_formula_arguments(text: str) -> list[str]:
     return parts
 
 
+_SERIES_DATA_SOURCES = ("cat", "val", "xVal", "yVal", "bubbleSize")
+
+
 def all_chart_series(workbook: Workbook) -> Generator[Any, None, None]:
     """Yield all chart series from all worksheets in the workbook.
 
@@ -272,13 +275,17 @@ def all_chart_series_parts(workbook: Workbook) -> Generator[Any, None, None]:
         Chart ``*Ref``/``*Ser`` data-source objects
 
     """
-    labels = ("cat", "val", "xVal", "yVal", "bubbleSize")
     for series in all_chart_series(workbook=workbook):
-        for label in labels:
-            part = getattr(series, label, None)
-            if part is not None:
-                yield part
-        yield from _error_bar_parts(series)
+        yield from _series_parts(series)
+
+
+def _series_parts(series: Any) -> Generator[Any, None, None]:  # noqa: ANN401
+    """The data sources of one series, including custom error bars."""
+    for label in _SERIES_DATA_SOURCES:
+        part = getattr(series, label, None)
+        if part is not None:
+            yield part
+    yield from _error_bar_parts(series)
 
 
 def _error_bar_parts(series: Any) -> Generator[Any, None, None]:  # noqa: ANN401
@@ -317,6 +324,23 @@ def all_chart_series_references(workbook: Workbook) -> Generator[Any, None, None
     """
     for part in all_chart_series_parts(workbook):
         yield from _reference_formulas(part)
+
+
+def chart_references(chart: Any) -> Generator[Any, None, None]:  # noqa: ANN401
+    """Every data reference in *chart*, including a combo chart's sub-plots.
+
+    Args:
+        chart: openpyxl chart object
+
+    Yields:
+        Reference objects (strRef, numRef or multiLvlStrRef)
+
+    """
+    plots = getattr(chart, "_charts", None) or [chart]
+    for plot in plots:
+        for series in plot.ser:
+            for part in _series_parts(series):
+                yield from _reference_formulas(part)
 
 
 def update_chart_data_ranges(spec: TableChangeSpecs, workbook: Workbook) -> None:

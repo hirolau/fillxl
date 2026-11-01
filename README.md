@@ -37,17 +37,21 @@ fill(
 
 ```bash
 pip install fillxl
-
-pip install fillxl[pandas]    # pandas.DataFrame      (2.x, 3.x)
-pip install fillxl[polars]    # polars.DataFrame      (0.20 – 2.x)
-pip install fillxl[duckdb]    # duckdb relations      (1.x, 2.x)
-pip install fillxl[win32com]  # engine="win32com" on Windows with Excel
-pip install fillxl[all]       # all of the above
 ```
 
-`duckdb` publishes no wheels for Python 3.15 yet, so on 3.15 the `duckdb` extra
-installs nothing and duckdb data sources are unavailable. Everything else —
-including `polars` and both engines — works on every supported Python.
+That is all you need. Filling works with plain Python (`list[dict]`,
+`dict[str, list]`) and with the pandas, Polars or DuckDB objects your own code
+already creates — there is nothing else to choose:
+
+```python
+import pandas as pd
+from fillxl import fill
+
+fill(..., tables={"Sales": pd.read_csv("sales.csv")})  # works as-is
+```
+
+fillxl never imports a data library itself; it recognises the DataFrame or
+relation that you pass in, so any version you already use works.
 
 ## Data you can fill from
 
@@ -84,9 +88,10 @@ matter, and every format produces the same workbook.
 | `.xlsb`/`.xls` template, or a format conversion | `win32com` when Excel is available |
 | anything else, without Excel | `openpyxl`, whose error says what is missing |
 
-`openpyxl` runs anywhere; `win32com` drives Microsoft Excel on Windows and
-keeps what openpyxl drops (modern charts, slicers, macro-heavy workbooks). Both
-engines write the same values for the same template and data; the
+`openpyxl` runs anywhere; `win32com` drives Microsoft Excel on Windows (pywin32
+installs with fillxl there) and keeps what openpyxl drops (modern charts,
+slicers, macro-heavy workbooks). Both engines write the same values for the same
+template and data; the
 [Backends](https://hirolau.github.io/fillxl/backends/) page lists what still
 differs.
 

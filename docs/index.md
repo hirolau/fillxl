@@ -10,18 +10,17 @@ Designed around named cells and Excel tables — no more fragile cell references
 pip install fillxl
 ```
 
-Optional extras:
+There is nothing else to choose. Tables can come from plain Python (`list[dict]`,
+`dict[str, list]`) or from pandas, Polars and DuckDB objects that your own code
+creates; fillxl detects the type of whatever you pass and never imports a data
+library itself, so a library you already use works as it is:
 
-```bash
-pip install fillxl[pandas]    # pandas.DataFrame   (2.x, 3.x)
-pip install fillxl[polars]    # polars.DataFrame   (0.20 – 2.x)
-pip install fillxl[duckdb]    # duckdb relations   (1.x, 2.x)
-pip install fillxl[win32com]  # engine="win32com" on Windows with Excel
-pip install fillxl[all]       # all of the above
+```python
+import pandas as pd
+from fillxl import fill
+
+fill(..., tables={"Sales": pd.read_csv("sales.csv")})
 ```
-
-`duckdb` has no Python 3.15 wheels yet, so the `duckdb` extra installs nothing
-there and duckdb data sources are unavailable on 3.15.
 
 ## Quick Start
 

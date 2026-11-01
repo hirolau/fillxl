@@ -5,12 +5,18 @@ from __future__ import annotations
 import warnings
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import openpyxl
 import pytest
 
 from fillxl import FillXLConfig, LossyTemplateError, fill
 from tests._assets import TEMPLATE
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from fillxl._lossy import OnLossy
 
 
 def _inject_part(path: Path, part: str, data: bytes) -> None:
@@ -63,3 +69,41 @@ def test_on_lossy_rejects_unknown_values() -> None:
         FillXLConfig(
             on_lossy="oops",  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-argument-type]
         )
+
+
+def test_the_openpyxl_backend_excuses_the_sheets_it_deleted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deleted sheet's pictures are its own, so ``on_lossy`` must not count them."""
+    from fillxl._backends import _openpyxl
+
+    recorded: dict[str, object] = {}
+    real_check = _openpyxl.check_lossy
+
+    def spy(
+        template: Path,
+        output: Path,
+        policy: OnLossy,
+        *,
+        deleted_sheets: Sequence[str] = (),
+    ) -> None:
+        recorded["deleted"] = list(deleted_sheets)
+        real_check(template, output, policy, deleted_sheets=deleted_sheets)
+
+    monkeypatch.setattr(_openpyxl, "check_lossy", spy)
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Report"
+    workbook.create_sheet("Scratch")["A1"] = "x"
+    template = tmp_path / "template.xlsx"
+    workbook.save(template)
+    workbook.close()
+
+    fill(
+        template=template,
+        output=tmp_path / "out.xlsx",
+        engine="openpyxl",
+        config=FillXLConfig(hide_underscore_sheets=False, delete_sheets=["Scratch"]),
+    )
+
+    assert recorded["deleted"] == ["Scratch"]

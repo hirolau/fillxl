@@ -13,8 +13,9 @@ from fillxl._charts import (
     TableChangeSpecs,
     update_chart_data_ranges,
 )
+from fillxl._dangling import find_dangling_references, warn_dangling_references
 from fillxl._lossy import check_lossy
-from fillxl._sheets import first_remaining, require_a_visible_sheet
+from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
 from fillxl._tables import populate_table
 from fillxl._validation import ColumnValidationStrategy, validate_columns
 
@@ -41,6 +42,7 @@ class OpenpyxlBackend:
     def __init__(self) -> None:
         self._workbook: openpyxl.Workbook | None = None
         self._source_suffix: str | None = None
+        self._deleted_sheets: list[str] = []
 
     def _require_workbook(self) -> openpyxl.Workbook:
         """Return the loaded workbook or raise.
@@ -179,7 +181,7 @@ class OpenpyxlBackend:
         present = [name for name in dict.fromkeys(names) if name in workbook.sheetnames]
         for name in names:
             if name not in workbook.sheetnames:
-                logger.warning("Sheet '%s' not found, skipping deletion", name)
+                warn_sheet_not_found(name, "nothing was deleted")
         if not present:
             return
         visible = _visible_titles(workbook)
@@ -193,6 +195,8 @@ class OpenpyxlBackend:
             _activate(workbook, active)
         else:
             _activate(workbook, first_remaining(visible, present))
+        self._deleted_sheets.extend(present)
+        warn_dangling_references(present, find_dangling_references(workbook, present))
 
     def set_active_sheet(self, name: str) -> None:
         """Set the active (displayed) sheet.
@@ -206,7 +210,7 @@ class OpenpyxlBackend:
         """
         workbook = self._require_workbook()
         if name not in workbook.sheetnames:
-            logger.warning("Sheet '%s' not found, keeping default active sheet", name)
+            warn_sheet_not_found(name, "the workbook keeps its active sheet")
             return
         if workbook[name].sheet_state != "visible":
             msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
@@ -250,8 +254,7 @@ class OpenpyxlBackend:
 
     def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
         """Report template features openpyxl did not write back."""
-        # Frames: check_lossy -> check_output -> fill -> the caller of fill.
-        check_lossy(template, output, policy, stacklevel=4)
+        check_lossy(template, output, policy, deleted_sheets=self._deleted_sheets)
 
 
 def _active_title(workbook: openpyxl.Workbook) -> str | None:

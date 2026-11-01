@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import openpyxl
 import pytest
 
-from fillxl import FillXLConfig, fill
+from fillxl import CellValueError, FillXLConfig, fill
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -318,6 +318,56 @@ class TestDatesAndTimes:
                 values={"nc_f": aware},
             )
 
+    @pytest.mark.polars
+    def test_a_polars_date_column_reaches_excel_as_a_date(
+        self,
+        output_path: Path,
+    ) -> None:
+        """polars yields a ``datetime.date``; Excel must get a date, not its text."""
+        pl = pytest.importorskip("polars")
+        _make_dtype_template(output_path.with_name("tmpl.xlsx"))
+
+        df = pl.DataFrame({"Name": ["date"], "Value": [date(2024, 12, 25)]})
+
+        fill(
+            template=output_path.with_name("tmpl.xlsx"),
+            output=output_path,
+            tables={"DtypeTable": df},
+        )
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            val = wb["Types"]["B4"].value
+            assert isinstance(val, datetime), f"Expected datetime, got {type(val)}"
+            assert (val.year, val.month, val.day) == (2024, 12, 25)
+        finally:
+            wb.close()
+
+    @pytest.mark.duckdb
+    def test_a_duckdb_date_column_reaches_excel_as_a_date(
+        self,
+        output_path: Path,
+    ) -> None:
+        """A SQL DATE arrives as a ``datetime.date`` and is written as a date."""
+        duckdb = pytest.importorskip("duckdb")
+        _make_dtype_template(output_path.with_name("tmpl.xlsx"))
+
+        rel = duckdb.sql("SELECT 'date' AS Name, DATE '2024-12-25' AS Value")
+
+        fill(
+            template=output_path.with_name("tmpl.xlsx"),
+            output=output_path,
+            tables={"DtypeTable": rel},
+        )
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            val = wb["Types"]["B4"].value
+            assert isinstance(val, datetime), f"Expected datetime, got {type(val)}"
+            assert (val.year, val.month, val.day) == (2024, 12, 25)
+        finally:
+            wb.close()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 11.3 Numeric types
@@ -487,81 +537,114 @@ class TestStringValues:
 
 
 class TestUnsupportedTypes:
-    """Complex types that cannot be written to Excel are rejected."""
+    """A cell holds one value, so containers are refused instead of stringified."""
 
-    def test_polars_list_column_is_converted_to_string(
+    @pytest.mark.polars
+    def test_a_polars_list_column_is_refused_with_its_column_name(
         self,
         output_path: Path,
     ) -> None:
-        """A polars DataFrame with a List column is written as string."""
+        """A polars List column is several values; naming the column is the useful error."""
         pl = pytest.importorskip("polars")
         _make_dtype_template(output_path.with_name("tmpl.xlsx"))
 
         df = pl.DataFrame({"Name": ["list"], "Value": [[1, 2, 3]]})
 
-        fill(
-            template=output_path.with_name("tmpl.xlsx"),
-            output=output_path,
-            tables={"DtypeTable": df},
-            config=_PERMISSIVE,
-        )
+        with pytest.raises(CellValueError, match=r"data row 1, column 'Value'"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"DtypeTable": df},
+                config=_PERMISSIVE,
+            )
 
-        wb = openpyxl.load_workbook(output_path)
-        try:
-            val = wb["Types"]["B4"].value
-            # List values are converted to their string representation
-            assert isinstance(val, str)
-            assert "1" in val
-            assert "2" in val
-            assert "3" in val
-        finally:
-            wb.close()
-
-    def test_polars_struct_column_is_converted_to_string(
+    @pytest.mark.polars
+    def test_a_polars_struct_column_is_refused_with_its_column_name(
         self,
         output_path: Path,
     ) -> None:
-        """A polars DataFrame with a Struct column is written as string."""
+        """A polars Struct column used to become the text dump of a dict."""
         pl = pytest.importorskip("polars")
         _make_dtype_template(output_path.with_name("tmpl.xlsx"))
 
         df = pl.DataFrame({"Name": ["struct"], "Value": [{"a": 1, "b": 2}]})
 
-        fill(
-            template=output_path.with_name("tmpl.xlsx"),
-            output=output_path,
-            tables={"DtypeTable": df},
-            config=_PERMISSIVE,
-        )
+        with pytest.raises(CellValueError, match=r"column 'Value'"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"DtypeTable": df},
+                config=_PERMISSIVE,
+            )
 
-        wb = openpyxl.load_workbook(output_path)
-        try:
-            val = wb["Types"]["B4"].value
-            # Struct values are converted to their string representation
-            assert isinstance(val, str)
-            assert "a" in val
-            assert "1" in val
-        finally:
-            wb.close()
-
-    def test_nested_dict_in_list_of_dict_is_converted_to_string(
+    @pytest.mark.duckdb
+    def test_a_duckdb_blob_column_is_refused_with_its_column_name(
         self,
         output_path: Path,
     ) -> None:
-        """A nested dict value in list[dict] is converted to its string repr."""
+        """A BLOB is bytes; it used to be written as ``b'ab'``."""
+        duckdb = pytest.importorskip("duckdb")
         _make_dtype_template(output_path.with_name("tmpl.xlsx"))
 
-        fill(
-            template=output_path.with_name("tmpl.xlsx"),
-            output=output_path,
-            tables={"DtypeTable": [{"Name": "nested", "Value": {"key": "val"}}]},
-            config=_PERMISSIVE,
-        )
+        rel = duckdb.sql("SELECT 'blob' AS Name, 'ab'::BLOB AS Value")
 
-        wb = openpyxl.load_workbook(output_path)
-        try:
-            val = wb["Types"]["B4"].value
-            assert isinstance(val, str)
-            assert "key" in val
-        finally:
-            wb.close()
+        with pytest.raises(CellValueError, match=r"column 'Value'.*decode it to text"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"DtypeTable": rel},
+                config=_PERMISSIVE,
+            )
+
+    @pytest.mark.duckdb
+    def test_a_duckdb_list_column_is_refused_with_its_column_name(
+        self,
+        output_path: Path,
+    ) -> None:
+        """A SQL list is several values, exactly like a polars List column."""
+        duckdb = pytest.importorskip("duckdb")
+        _make_dtype_template(output_path.with_name("tmpl.xlsx"))
+
+        rel = duckdb.sql("SELECT 'list' AS Name, [1, 2, 3] AS Value")
+
+        with pytest.raises(CellValueError, match=r"data row 1, column 'Value': list"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"DtypeTable": rel},
+                config=_PERMISSIVE,
+            )
+
+    @pytest.mark.duckdb
+    def test_a_duckdb_struct_column_is_refused_with_its_column_name(
+        self,
+        output_path: Path,
+    ) -> None:
+        """A SQL struct arrives as a dict and is refused rather than stringified."""
+        duckdb = pytest.importorskip("duckdb")
+        _make_dtype_template(output_path.with_name("tmpl.xlsx"))
+
+        rel = duckdb.sql("SELECT 'struct' AS Name, {'a': 1, 'b': 2} AS Value")
+
+        with pytest.raises(CellValueError, match=r"column 'Value': dict"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"DtypeTable": rel},
+                config=_PERMISSIVE,
+            )
+
+    def test_a_nested_dict_in_list_of_dict_is_refused(
+        self,
+        output_path: Path,
+    ) -> None:
+        """A dict value used to be written as its repr; it is refused now."""
+        _make_dtype_template(output_path.with_name("tmpl.xlsx"))
+
+        with pytest.raises(CellValueError, match=r"column 'Value'"):
+            fill(
+                template=output_path.with_name("tmpl.xlsx"),
+                output=output_path,
+                tables={"DtypeTable": [{"Name": "nested", "Value": {"key": "val"}}]},
+                config=_PERMISSIVE,
+            )

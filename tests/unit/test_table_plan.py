@@ -149,3 +149,33 @@ def test_the_plan_stays_inside_and_below_the_old_table(
         assert plan.overflow_rows[0] == geometry.last_row + 1
         assert plan.overflow_rows[1] == plan.new_last_row
     assert plan.new_body_last_row - plan.first_data_row + 1 == max(data_rows, 1)
+
+
+class TestBlockedRegions:
+    """A growing table must not write into another table or a merged range."""
+
+    def test_a_table_refuses_to_grow_into_a_merged_range(self) -> None:
+        from fillxl._plan import BlockedRegion, blocked_area
+
+        merged = BlockedRegion(
+            description="the merged range C15:D16",
+            first_row=15,
+            last_row=16,
+            first_col=3,
+            last_col=4,
+        )
+
+        assert blocked_area((14, 20), 1, 13, [merged]) is merged
+
+    def test_a_table_may_grow_beside_a_merged_range(self) -> None:
+        from fillxl._plan import BlockedRegion, blocked_area
+
+        merged = BlockedRegion(
+            description="the merged range C15:D16",
+            first_row=15,
+            last_row=16,
+            first_col=3,
+            last_col=4,
+        )
+
+        assert blocked_area((14, 20), 5, 6, [merged]) is None

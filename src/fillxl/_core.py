@@ -6,7 +6,6 @@ import logging
 import shutil
 import tempfile
 import uuid
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 def fill(
     template: PathLike,
     output: PathLike,
-    *legacy_args: Any,  # noqa: ANN401 - deprecated positional values/tables, removed in 0.7.0
+    *,
     values: dict[str, Any] | None = None,
     tables: dict[str, TabularData] | None = None,
     engine: Engine = "auto",
@@ -49,19 +48,14 @@ def fill(
     Raises:
         FileNotFoundError: If *template* does not exist.
         KeyError: If a name in *values* or *tables* is not found in the workbook.
-        ValueError: If *engine* is unknown, column validation fails, or the
-            sheet settings would leave no visible sheet.
-
-    Note:
-        Passing *values* and *tables* positionally is deprecated (0.6.0) and
-        will stop working in 0.7.0.
+        ValueError: If *engine* is unknown, the engine cannot write the
+            requested format, column validation fails, or the sheet settings
+            would leave no visible sheet.
 
     """
-    if legacy_args:
-        values, tables = _legacy_positional_arguments(legacy_args, values, tables)
     cfg = config or FillXLConfig()
-    tables = tables or {}
-    values = values or {}
+    named_values = values or {}
+    table_data = tables or {}
 
     # Each fill session gets its own "first occurrence" timezone warning.
     reset_tz_warning_state()
@@ -79,17 +73,19 @@ def fill(
         f".{output_path.stem}.{uuid.uuid4().hex[:12]}.fillxl{output_path.suffix}",
     )
     try:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        # ignore_cleanup_errors: Excel can still hold the temp copy for a
+        # moment after Quit, and a failed cleanup must not fail the fill.
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             temp_template_path = Path(temp_dir) / template_path.name
             shutil.copy2(template_path, temp_template_path)
             backend = get_backend(resolved_engine)
             try:
                 # load() runs inside try so a failed open still closes Excel.
                 backend.load(temp_template_path)
-                for name, value in values.items():
+                for name, value in named_values.items():
                     backend.fill_named_cell(name, value, cfg)
-                for table_name, table_data in tables.items():
-                    spec = backend.fill_table(table_name, table_data, cfg)
+                for table_name, data in table_data.items():
+                    spec = backend.fill_table(table_name, data, cfg)
                     backend.update_charts(spec)
                 if cfg.refresh_pivot_tables:
                     backend.set_pivot_refresh()
@@ -97,13 +93,13 @@ def fill(
                     backend.hide_sheets("_")
                 if cfg.delete_sheets:
                     backend.delete_sheets(cfg.delete_sheets)
-                if cfg.active_sheet:
+                if cfg.active_sheet is not None:
                     backend.set_active_sheet(cfg.active_sheet)
                 backend.save(staging_path)
             finally:
                 backend.close()
         backend.check_output(template_path, staging_path, cfg.on_lossy)
-        staging_path.replace(output_path)
+        _replace_output(staging_path, output_path)
     except BaseException:
         staging_path.unlink(missing_ok=True)
         raise
@@ -111,25 +107,17 @@ def fill(
     return output_path.resolve()
 
 
-def _legacy_positional_arguments(
-    args: tuple[Any, ...],
-    values: dict[str, Any] | None,
-    tables: dict[str, TabularData] | None,
-) -> tuple[dict[str, Any] | None, dict[str, TabularData] | None]:
-    """Accept the 0.5 call ``fill(template, output, values, tables)`` with a warning."""
-    if len(args) > 2:
-        msg = f"fill() takes at most 4 positional arguments ({2 + len(args)} given)"
-        raise TypeError(msg)
-    if values is not None:
-        msg = "fill() got multiple values for argument 'values'"
-        raise TypeError(msg)
-    if len(args) == 2 and tables is not None:
-        msg = "fill() got multiple values for argument 'tables'"
-        raise TypeError(msg)
-    warnings.warn(
-        "Passing 'values' and 'tables' to fill() positionally is deprecated and stops "
-        "working in fillxl 0.7.0; use fill(template, output, values=..., tables=...).",
-        DeprecationWarning,
-        stacklevel=3,
-    )
-    return args[0], (args[1] if len(args) == 2 else tables)
+def _replace_output(staging_path: Path, output_path: Path) -> None:
+    """Move the finished file into place, explaining the common failure.
+
+    On Windows the rename fails while anything holds the destination open —
+    most often the output being open in Excel.
+    """
+    try:
+        staging_path.replace(output_path)
+    except PermissionError as exc:
+        msg = (
+            f"Could not write {output_path}: permission denied. Is the file open in "
+            "Excel? Close it and run the fill again."
+        )
+        raise PermissionError(msg) from exc

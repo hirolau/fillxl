@@ -2,14 +2,23 @@
 
 fillxl supports two backend engines for writing Excel files. Choose based on your platform and fidelity requirements.
 
-Both engines produce **the same workbook** for the same template and data: the
-same values, number formats, chart references and sheet states. A *parity* suite
-fills one template with both engines and compares the results cell by cell, and a
-cross-backend equivalence suite checks the values.
+Both engines write **the same values** for the same template and data: the same
+cell values, number formats, chart references and sheet states. The differences
+that remain — cached formula results, chart styles, parts openpyxl cannot
+write — are listed under *Feature support* below.
 
 `engine="auto"` (the default) uses `openpyxl` for `.xlsx`/`.xlsm` templates
 saved in the same format, and `win32com` when openpyxl cannot do the job
-(`.xlsb`/`.xls` templates, format conversion) and Excel is available.
+(`.xlsb`/`.xls` templates, format conversion) and Excel is available. A format
+the selected engine cannot write is refused **before the template is loaded**,
+not after the fill has run:
+
+| Template → output | `auto` | `openpyxl` | `win32com` |
+|---|---|---|---|
+| `.xlsx` → `.xlsx` | openpyxl | yes | yes |
+| `.xlsm` → `.xlsm` | openpyxl (VBA kept) | yes | yes |
+| `.xlsx` → `.xlsm` / `.xlsb` / `.xls` | Excel if available, else an error | refused | yes |
+| `.xlsb` / `.xls` → anything | Excel if available, else an error | refused | yes |
 
 ## Comparison
 
@@ -17,6 +26,32 @@ saved in the same format, and `win32com` when openpyxl cannot do the job
 |--------|:---:|:---:|---|
 | `openpyxl` | :material-check: | :material-close: | Most use cases, Linux/macOS |
 | `win32com` | :material-close: Windows only | :material-check: | `.xlsm`/`.xlsb`, modern charts, full fidelity |
+
+## Feature support
+
+`yes` means fillxl handles the feature; `differs` means the engines behave
+differently and the difference is described below.
+
+| Feature | openpyxl | win32com |
+|---|---|---|
+| Named cells, global and sheet-scoped | yes | yes |
+| Tables that grow and shrink, totals rows included | yes | yes |
+| Calculated (formula) columns | yes | yes |
+| Table styles copied to new rows | yes | yes |
+| Conditional formatting extended to the table | yes | yes |
+| Charts: categories, values, X/Y, bubble sizes, multi-level categories, custom error bars | yes | yes |
+| Chart sheets | yes | yes |
+| Pivot caches marked for refresh on open | yes | yes |
+| Pivot tables refreshed immediately | differs — open-to-refresh | yes |
+| Formula results recalculated before saving | differs — recalc on open | yes |
+| Sheet hiding, deletion and activation | yes | yes |
+| Lossy-template report (`on_lossy`) | yes | not needed |
+
+How the differences are checked: the parity suite fills one template with both
+engines and compares a snapshot of the result — cell values, data types,
+number formats, table refs, sort state, chart references, conditional
+formatting ranges, sheet states and defined names. See
+[Development](development.md) for how to run it.
 
 ---
 
@@ -44,6 +79,9 @@ fill(template="tpl.xlsx", output="out.xlsx", ..., engine="openpyxl")
 - Writes no cached formula results: the output sets `fullCalcOnLoad` so Excel
   recalculates on open. Use `engine="win32com"` when the saved file must
   already contain computed values.
+- Deleting a sheet leaves formulas, charts, names and pivots that refer to it
+  pointing at a sheet that no longer exists, and warns
+  (`DanglingReferenceWarning`) rather than rewriting them.
 
 ---
 
@@ -142,12 +180,16 @@ the result:
 | Value | Behaviour |
 |-------|-----------|
 | `"ignore"` | Do nothing. |
-| `"warn"` (default) | Log and issue a `UserWarning` listing the lost features. |
+| `"warn"` (default) | Issue a `LossyTemplateWarning` listing the lost features. |
 | `"raise"` | Raise `LossyTemplateError`; because the swap has not happened, the previous output file is left untouched. |
+
+[Warnings](warnings.md) lists this and every other category fillxl raises.
 
 The detector compares **part and element counts**. It catches dropped parts,
 shapes and worksheet extensions, but it cannot prove that a preserved part is
-byte-for-byte unchanged.
+byte-for-byte unchanged. Parts that only a sheet removed by `delete_sheets`
+referenced are ignored: their disappearance is the caller's doing, not the
+engine's.
 
 Tables **without a header row** (the table's "Header Row" option is off) are
 supported too. Excel names their columns `Column1`, `Column2`, …, so that is

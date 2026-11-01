@@ -40,7 +40,7 @@ class TestOpenpyxlRejectsUnsupportedFormats:
     ) -> None:
         """openpyxl raises ValueError with a message suggesting win32com."""
         output = tmp_path / "out.xlsx"
-        with pytest.raises(ValueError, match="not supported by the openpyxl backend"):
+        with pytest.raises(ValueError, match="cannot read a"):
             fill(template=template, output=output, engine="openpyxl")
 
     @pytest.mark.parametrize(
@@ -52,7 +52,7 @@ class TestOpenpyxlRejectsUnsupportedFormats:
         template = tmp_path / f"dummy{ext}"
         template.write_text("not a real excel file")
         output = tmp_path / "out.xlsx"
-        with pytest.raises(ValueError, match="not supported by the openpyxl backend"):
+        with pytest.raises(ValueError, match="cannot read a"):
             fill(template=template, output=output, engine="openpyxl")
 
     def test_auto_engine_hands_a_non_xlsx_template_to_excel(self, tmp_path: Path) -> None:
@@ -62,7 +62,7 @@ class TestOpenpyxlRejectsUnsupportedFormats:
         try:
             fill(template=template, output=output, engine="auto")
         except ValueError as exc:
-            assert "not supported by the openpyxl backend" in str(exc)
+            assert "cannot read a" in str(exc)
             pytest.skip("needs Excel to fill a .xlsb template")
         assert output.exists()
 
@@ -106,7 +106,7 @@ class TestOpenpyxlXlsm:
 
     def test_openpyxl_refuses_to_save_an_xlsx_template_as_xlsm(self, tmp_path: Path) -> None:
         output = tmp_path / "out.xlsm"
-        with pytest.raises(ValueError, match="cannot turn"):
+        with pytest.raises(ValueError, match="cannot write"):
             fill(
                 template=ASSETS / "test_template_1.xlsx",
                 output=output,
@@ -117,7 +117,7 @@ class TestOpenpyxlXlsm:
 
     def test_openpyxl_refuses_to_save_an_xlsm_template_as_xlsx(self, tmp_path: Path) -> None:
         output = tmp_path / "out.xlsx"
-        with pytest.raises(ValueError, match="cannot turn"):
+        with pytest.raises(ValueError, match="cannot write"):
             fill(
                 template=ASSETS / "test_template_1_slsm.xlsm",
                 output=output,

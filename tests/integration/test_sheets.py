@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -119,9 +120,18 @@ def test_deleting_every_visible_sheet_is_refused(tmp_path: Path) -> None:
 def test_a_hidden_sheet_cannot_be_made_active(tmp_path: Path) -> None:
     """Asking for a hidden active sheet is a mistake worth reporting."""
     template = sheets_template(tmp_path / "template.xlsx", "_data", "Report")
+    workbook = openpyxl.load_workbook(template)
+    workbook["_data"].sheet_state = "hidden"
+    workbook.save(template)
+    workbook.close()
 
     with pytest.raises(ValueError, match="hidden and cannot be the active sheet"):
-        _fill(template, tmp_path / "out.xlsx", active_sheet="_data")
+        _fill(
+            template,
+            tmp_path / "out.xlsx",
+            active_sheet="_data",
+            hide_underscore_sheets=False,
+        )
 
 
 def test_choosing_the_active_sheet_leaves_exactly_one_tab_selected(tmp_path: Path) -> None:
@@ -158,6 +168,64 @@ def test_a_chart_sheet_can_be_deleted(tmp_path: Path) -> None:
     )
 
     assert openpyxl.load_workbook(output).sheetnames == ["Report"]
+
+
+def _report_that_reads_raw_data(path: Path) -> Path:
+    """A report whose formula, chart and defined name all point at ``RawData``."""
+    from openpyxl.chart import BarChart, Reference
+    from openpyxl.workbook.defined_name import DefinedName
+
+    workbook = openpyxl.Workbook()
+    report = workbook.active
+    assert report is not None
+    report.title = "Report"
+    report["A1"] = "=SUM(RawData!B2:B2)"
+    raw = workbook.create_sheet("RawData")
+    raw.append(["k", "v"])
+    raw.append(["a", 1])
+    raw.append(["b", 2])
+    chart = BarChart()
+    chart.add_data(Reference(raw, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+    report.add_chart(chart, "D2")
+    workbook.defined_names["raw_total"] = DefinedName("raw_total", attr_text="RawData!$B$2")
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def test_deleting_a_referenced_sheet_warns_about_what_still_points_at_it(
+    tmp_path: Path,
+) -> None:
+    """openpyxl leaves the references alone, so Excel would show #REF!."""
+    from fillxl import DanglingReferenceWarning
+
+    template = _report_that_reads_raw_data(tmp_path / "template.xlsx")
+
+    with pytest.warns(DanglingReferenceWarning, match="Report!A1"):
+        _fill(
+            template,
+            tmp_path / "out.xlsx",
+            hide_underscore_sheets=False,
+            delete_sheets=["RawData"],
+        )
+
+
+def test_deleting_an_unreferenced_sheet_says_nothing(tmp_path: Path) -> None:
+    """A sheet nobody reads from is deleted silently."""
+    from fillxl import DanglingReferenceWarning
+
+    template = _report_that_reads_raw_data(tmp_path / "template.xlsx")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _fill(
+            template,
+            tmp_path / "out.xlsx",
+            hide_underscore_sheets=False,
+            delete_sheets=["Nothing"],
+        )
+
+    assert not [item for item in caught if item.category is DanglingReferenceWarning]
 
 
 @pytest.mark.excel

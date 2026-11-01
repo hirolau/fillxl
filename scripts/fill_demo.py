@@ -246,7 +246,7 @@ def main() -> None:
         all_paths.extend(paths)
         for p in paths:
             size = p.stat().st_size
-            print(f"  {p.relative_to(output_root.parent)}  ({size:,} bytes)")
+            print(f"  {p.relative_to(output_root.resolve())}  ({size:,} bytes)")
 
     print(f"\n{len(all_paths)} files written to {output_root}")
 

@@ -18,6 +18,21 @@ uv run pytest -m "not win32com and not xlwings"
 uv run pytest
 ```
 
+Behaviour tests are parametrised over both engines (`tests/_engines.py`): the
+`win32com` case skips itself when Excel is not installed, so the same suite
+protects Linux CI and a developer machine. Tests that genuinely need Excel —
+opening a file, repairing, recalculating — carry the `excel` marker and are
+skipped elsewhere:
+
+```bash
+pytest -m excel        # Windows with Microsoft Excel
+pytest -m "not excel"  # anywhere
+```
+
+When a documented behaviour and Excel disagree, the test wins and the
+documentation is wrong. Add a test that reproduces the difference before
+changing either engine.
+
 ## Code Quality
 
 ```bash
@@ -53,12 +68,25 @@ The nox version matrix tests the minimum supported release, the version in
 |---------|---------|-------------|--------|
 | pandas | 2.0 | 3.x | 3.x |
 | polars | 0.20 | 2.x | 2.x |
-| duckdb | 1.0 | — | 1.x |
+| duckdb | 1.0 | 2.x | 2.x |
+
+Each session (`nox -s tests_polars-2`, `nox -s tests_duckdb-min`, …) pins one
+release line and runs every test that exercises that backend. Selection is by
+marker — `-k "polars or validation"` matches marker names as well as test
+names — so a test that calls `pytest.importorskip("polars")` must also carry
+`@pytest.mark.polars` (likewise `duckdb`). Missing that marker silently drops
+the test out of every pinned-version run, so
+`tests/unit/test_backend_markers.py` fails when one is forgotten.
+
+The `backends` job in CI runs the same selection for the oldest and newest
+supported release line of each backend on Python 3.12.
 
 !!! note "duckdb on Python 3.15"
-    duckdb publishes no cp315 wheels yet, so the `duckdb` extra is marked
-    `python_version < '3.15'`. The duckdb tests skip on 3.15 until upstream
-    provides wheels; the rest of the package is fully supported.
+    duckdb 1.x publishes no cp315 wheels, so the `duckdb` extra is marked
+    `python_version < '3.15'` and the 1.x sessions skip 3.15. duckdb 2.x ships
+    abi3 wheels that do install there, so `tests_duckdb-2` runs on 3.15; the
+    extra keeps its 1.x floor until `uv.lock` moves on. The rest of the package
+    is fully supported on 3.15.
 
 ## Project Structure
 

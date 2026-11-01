@@ -575,3 +575,105 @@ class TestFixChartAxes:
 
         assert chart.x_axis.axPos == "l"
         assert chart.y_axis.axPos == "b"
+
+
+class TestBubbleAndMultiLevelReferences:
+    """Every reference a chart holds must follow a resized table."""
+
+    def _workbook_with_chart(self, chart: object) -> tuple[object, object]:
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Data"
+        worksheet.append(["x", "y"])
+        worksheet.append(["a", 1])
+        worksheet.append(["b", 2])
+        worksheet.add_chart(chart, "D1")
+        for row in range(4, 8):
+            worksheet.cell(row=row, column=1, value=f"c{row}")
+            worksheet.cell(row=row, column=2, value=row)
+        return workbook, worksheet
+
+    def test_bubble_sizes_follow_the_table(self) -> None:
+        """COM rewrites the bubble-size argument, so openpyxl must too."""
+        from openpyxl.chart import BubbleChart, Reference
+        from openpyxl.chart.data_source import NumDataSource, NumRef
+
+        from fillxl._charts import TableChangeSpecs, update_chart_data_ranges
+
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Data"
+        worksheet.append(["x", "y", "size"])
+        worksheet.append([1, 2, 3])
+        worksheet.append([2, 3, 4])
+        chart = BubbleChart()
+        chart.add_data(Reference(worksheet, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+        chart.set_categories(Reference(worksheet, min_col=1, min_row=2, max_row=3))
+        chart.series[0].bubbleSize = NumDataSource(numRef=NumRef(f="Data!$C$2:$C$3"))
+        worksheet.add_chart(chart, "E1")
+        for row in range(4, 7):
+            worksheet.cell(row=row, column=3, value=row)
+
+        update_chart_data_ranges(TableChangeSpecs("Data", 1, 1, 3, 3, 6), workbook)
+
+        assert chart.series[0].bubbleSize.numRef.f == "Data!$C$2:$C$6"
+
+    def test_multi_level_categories_follow_the_table(self) -> None:
+        """Multi-level categories live in a multiLvlStrRef, not a strRef."""
+        from openpyxl.chart import BarChart, Reference
+        from openpyxl.chart.data_source import AxDataSource, MultiLevelStrData, MultiLevelStrRef
+
+        from fillxl._charts import TableChangeSpecs, update_chart_data_ranges
+
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Data"
+        worksheet.append(["x", "y"])
+        worksheet.append(["a", 1])
+        worksheet.append(["b", 2])
+        chart = BarChart()
+        chart.add_data(Reference(worksheet, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+        chart.series[0].cat = AxDataSource(
+            multiLvlStrRef=MultiLevelStrRef(
+                f="Data!$A$2:$A$3",
+                multiLvlStrCache=MultiLevelStrData(ptCount=2),
+            )
+        )
+        worksheet.add_chart(chart, "D1")
+        for row in range(4, 8):
+            worksheet.cell(row=row, column=1, value=f"c{row}")
+
+        update_chart_data_ranges(TableChangeSpecs("Data", 1, 1, 2, 3, 7), workbook)
+
+        assert chart.series[0].cat.multiLvlStrRef.f == "Data!$A$2:$A$7"
+        assert chart.series[0].cat.multiLvlStrRef.multiLvlStrCache.ptCount == 6
+
+    def test_custom_error_bars_follow_the_table(self) -> None:
+        from openpyxl.chart import BarChart, Reference
+        from openpyxl.chart.data_source import NumDataSource, NumRef
+        from openpyxl.chart.error_bar import ErrorBars
+
+        from fillxl._charts import TableChangeSpecs, update_chart_data_ranges
+
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Data"
+        worksheet.append(["x", "y"])
+        worksheet.append(["a", 1])
+        worksheet.append(["b", 2])
+        chart = BarChart()
+        chart.add_data(Reference(worksheet, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+        error_bars = ErrorBars(
+            errValType="cust",
+            plus=NumDataSource(numRef=NumRef(f="Data!$B$2:$B$3")),
+            minus=NumDataSource(numRef=NumRef(f="Data!$B$2:$B$3")),
+        )
+        chart.series[0].errBars = error_bars
+        worksheet.add_chart(chart, "D1")
+        for row in range(4, 8):
+            worksheet.cell(row=row, column=2, value=row)
+
+        update_chart_data_ranges(TableChangeSpecs("Data", 1, 1, 2, 3, 7), workbook)
+
+        assert error_bars.plus.numRef.f == "Data!$B$2:$B$7"
+        assert error_bars.minus.numRef.f == "Data!$B$2:$B$7"

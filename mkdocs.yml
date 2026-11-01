@@ -66,6 +66,7 @@ nav:
   - Home: index.md
   - API Reference: api.md
   - Backends: backends.md
+  - Warnings: warnings.md
   - Development: development.md
 
 copyright: Copyright &copy; 2026 hirolau — MIT License

@@ -5,7 +5,117 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] — 2026-10-21
+## [0.7.0] - 2026-11-01
+
+Breaking, but safer. The breaking changes are grouped into this one release so
+later releases can be additive where possible.
+
+### Changed (breaking)
+- `fill()` takes `values` and `tables` as keyword-only arguments. The
+  positional call announced as deprecated in 0.6.0 is gone:
+
+  ```python
+  fill("template.xlsx", "out.xlsx", values, tables)   # 0.6
+  # TypeError: fill() takes 2 positional arguments but 4 were given
+  fill("template.xlsx", "out.xlsx", values=values, tables=tables)   # 0.7
+  ```
+
+- One cell holds one value: a `list`, `tuple`, `set`, `dict`, `bytes` or a
+  tabular object (DataFrame, Series, relation) raises `CellValueError` with
+  the position, instead of writing its `repr` into the cell. For a named cell
+  the message suggests `tables=`:
+
+  ```python
+  fill(..., values={"report": df})    # 0.6: writes the DataFrame's text dump
+  # 0.7: CellValueError: Named cell 'report': DataFrame is not a single cell
+  #      value; put rows and columns in tables= instead
+  ```
+
+  `Enum` members are written as their `value`, and `date`/`datetime`
+  subclasses are written as the exact built-in type (openpyxl looks number
+  formats up by type).
+
+- Data problems a caller can act on are warnings instead of log records, and
+  every warning is a `fillxl.FillXLWarning` (with `TimezoneWarning` and the
+  re-parented `LossyTemplateWarning` as subclasses). Lossy output, a DataFrame
+  index that is not written, data supplied for a calculated column, extra
+  destinations of a defined name, a sheet name that matches nothing and an
+  integer Excel will round are all catchable now:
+
+  ```python
+  warnings.simplefilter("error", fillxl.FillXLWarning)
+  ```
+
+- Empty data no longer clears calculated columns: the single remaining body
+  row keeps its formula, as Excel does.
+- A `Decimal` that is NaN, sNaN, infinite or too large for a float becomes an
+  empty cell instead of `nan`/`inf`, which made Excel offer to repair the file.
+- A format the chosen engine cannot write is refused before the template is
+  loaded, not at `save()` after the fill has run. The message says the engine
+  "cannot read" an unsupported template and "cannot write" an unsupported
+  conversion.
+- `delete_sheets` must be a list of names; a bare string was iterated and
+  deleted sheets named `S`, `h`, `e`, â€¦
+- `active_sheet` starting with `_` together with `hide_underscore_sheets=True`
+  is refused when the config is built, not at the end of the fill.
+
+### Fixed
+- openpyxl: a table growing into another table or into merged cells is
+  refused with the same `ValueError` win32com raises, instead of producing an
+  overlapping table or an openpyxl "read-only" `AttributeError`.
+- win32com: an empty payload no longer clears calculated columns, which could
+  make Excel drop the calculated-column definition.
+- openpyxl: shrinking a table with a totals row resets the formatting of the
+  old totals row instead of leaving bold text and rules below the table.
+- openpyxl: chart updates now include bubble sizes, multi-level category
+  ranges and custom error-bar ranges, matching what win32com rewrites.
+- Text containing a lone surrogate raises `CellValueError` with the position,
+  instead of `UnicodeEncodeError` at save time.
+- Integers at or beyond `1e308` raise `CellValueError`; integers outside
+  Â±2Â³Â¹ are handed to COM as floats, which loses nothing Excel can store.
+- win32com: `TemporaryDirectory` cleanup no longer fails when Excel still
+  holds the temporary copy.
+- A `PermissionError` from the final rename explains that the output is
+  probably open in Excel.
+- The lossy check counts pictures (`xl/media/*`, `<xdr:pic>`), chart styles and
+  chart colour schemes, so a template that loses them now warns.
+- `on_lossy` no longer reports features that only sheets removed by
+  `delete_sheets` carried (pictures, charts). Those parts are gone on purpose,
+  and `on_lossy="raise"` no longer fails a fill that lost nothing.
+- A 0-d NumPy array in a `dict[str, column]` payload is treated as a scalar
+  instead of failing with "iteration over a 0-d array".
+- `_normalize` rule numbering in the docstrings matches the code.
+- Formulas written into calculated columns through `win32com` strip the whole
+  XML prefix chain, so `_xlfn._xlws.SORT(` becomes `SORT(` instead of the
+  invalid `_xlws.SORT(`.
+- A pivot cache the `win32com` engine could not refresh (or could not mark for
+  refresh on open) is now a warning instead of a line in the log.
+- A `polars.Series` used as a column in `dict[str, column]` table data is
+  accepted like a pandas `Series`, instead of being mistaken for a scalar and
+  raising `TypeError`.
+
+### Added
+- `FillXLWarning` and `TimezoneWarning`, exported from `fillxl`.
+- `DanglingReferenceWarning`: when `delete_sheets` leaves a formula, chart
+  series, defined name or pivot cache pointing at a removed sheet, the fill now
+  says where, because Excel opens those as `#REF!`.
+- `docs/warnings.md`: every warning and error fillxl raises, and how to filter
+  them.
+- `docs/backends.md` now carries the feature-by-feature engine comparison.
+- The version matrix covers two release lines per data backend — the minimum
+  (pandas 2, polars 0.20, duckdb 1) and the newest major (pandas 3 in
+  `uv.lock`, polars 2 and duckdb 2 pinned) — in nox and in a `backends` CI job
+  that pins them explicitly. A test that needs one of those libraries carries
+  the `polars`/`duckdb` marker, so the pinned sessions select it however it is
+  named instead of relying on the test name.
+
+### Verified, not changed
+- A sorted table's `sortState` is left exactly as the template had it. Excel 16
+  does the same when it resizes a table (in either direction), and the
+  workbook still opens without a repair prompt, so rewriting the reference
+  would only make the engines disagree.
+
+## [0.6.0] - 2026-10-21
 
 The two engines now produce the same workbook for the same template and data,
 and a parity test suite checks it.
@@ -50,7 +160,7 @@ and a parity test suite checks it.
 ### Removed
 - `TabularAdapter.is_tabular` and `TabularAdapter.iter_rows` (internal, unused).
 
-## [0.5.0] — 2026-10-20
+## [0.5.0] - 2026-10-20
 
 ### Changed (breaking)
 
@@ -98,19 +208,19 @@ and a parity test suite checks it.
 - win32com works from worker threads (`CoInitialize`) and no longer uses the
   clipboard.
 
-## [0.4.0] — 2026-10-18
+## [0.4.0] - 2026-10-18
 
 ### Added
 
 - Tables **without a header row** (the table's "Header Row" option is off) are
   supported by both backends. Excel names their columns `Column1`,
-  `Column2`, …, so that is how the data is addressed, and the data is written
+  `Column2`, â€¦, so that is how the data is addressed, and the data is written
   starting in the table's first row instead of one row below it. win32com
   writes and clears such tables row by row (cell by cell for a single-row
   body), because Excel drops the table when a whole headerless body is
   written in one call.
 
-## [0.3.0] — 2026-10-18
+## [0.3.0] - 2026-10-18
 
 ### Added
 
@@ -127,9 +237,9 @@ and a parity test suite checks it.
   nox `PYTHONS` list (the `requires-python` floor stays at 3.11).
 - polars 2 support: the dev/test environment and `uv.lock` use polars 2, and
   the nox matrix has an explicit `tests_polars-2` session. The supported
-  release lines are now documented as pandas 2–3, polars 0.20–2, and duckdb
+  release lines are now documented as pandas 2â€“3, polars 0.20â€“2, and duckdb
   1.x.
-- The `duckdb` extra is limited to Python ≤3.14: duckdb currently publishes no
+- The `duckdb` extra is limited to Python â‰¤3.14: duckdb currently publishes no
   cp315 wheels. Its tests skip on 3.15 until upstream provides them.
 
 ### Changed
@@ -167,11 +277,11 @@ and a parity test suite checks it.
 
 ### Fixed
 
-- NumPy scalars (`np.int64`, `np.int32`, `np.float32`, `np.bool_`, …) are
+- NumPy scalars (`np.int64`, `np.int32`, `np.float32`, `np.bool_`, â€¦) are
   converted to native Python values instead of `str(value)`, which used to
   produce the "number stored as text" marker in Excel. `np.datetime64` and
-  `np.timedelta64` — including nanosecond precision, where `.item()` returns
-  an integer — are converted to `datetime`/`timedelta` as well.
+  `np.timedelta64` - including nanosecond precision, where `.item()` returns
+  an integer - are converted to `datetime`/`timedelta` as well.
 - A failed `load()` no longer leaks a hidden `EXCEL.EXE`: the backend is now
   loaded inside the `try`/`finally` so `close()` always runs.
 - `table.autoFilter.ref` is updated together with `table.ref`, avoiding the
@@ -203,10 +313,10 @@ and a parity test suite checks it.
 
 ### Removed
 
-- `FillXLConfig.extend_tables` — it was never read by any backend, so it
+- `FillXLConfig.extend_tables` - it was never read by any backend, so it
   silently did nothing. Tables are always resized to fit the data.
 
-## [0.2.0] — 2026-07-19
+## [0.2.0] - 2026-07-19
 
 Improved the test suite and added functionality enabled by the multiple-backend design.
 
@@ -233,23 +343,23 @@ Improved the test suite and added functionality enabled by the multiple-backend 
   placed between them for better flow.
 - Added PyPI badge to README.
 
-## [0.2.0-beta.1] — 2026-07-17
+## [0.2.0-beta.1] - 2026-07-17
 
 ### Added
 
 - Cross-backend datatype tests for openpyxl backend (CI-safe).
-- GitHub Actions CI workflow (lint, typecheck, test matrix on 3.11–3.14).
+- GitHub Actions CI workflow (lint, typecheck, test matrix on 3.11â€“3.14).
 - GitHub Actions release workflow (publishes to PyPI on version tags).
 - `CHANGELOG.md`, issue templates, PR template.
-- Test suite split into logical modules (backends, validation, charts, CF, …).
+- Test suite split into logical modules (backends, validation, charts, CF, â€¦).
 - All test methods renamed to read as descriptive sentences.
 - Cross-backend dtype testing (openpyxl + win32com, 68 tests).
 - Golden copy regression tests (openpyxl + win32com).
 - Story tests: charts, data types, template preservation, failure recovery, report generation.
 - Backend protocol tests and openpyxl unit tests.
-- win32com performance optimisation (26× speedup for large tables).
+- win32com performance optimisation (26Ã— speedup for large tables).
 - Coverage: overall 85% (excl. win32com: ~95%).
-- `ruff` clean, `mypy` strict — 0 errors.
+- `ruff` clean, `mypy` strict - 0 errors.
 - Author email address in `pyproject.toml`.
 
 ### Changed
@@ -282,13 +392,13 @@ Improved the test suite and added functionality enabled by the multiple-backend 
 
 ### Removed
 
-- `repo_dump.md` and `make_md.py` — development artifacts that were
+- `repo_dump.md` and `make_md.py` - development artifacts that were
   accidentally committed.
 - Unused `xlsxwriter` runtime dependency (the library uses `openpyxl` and
   `win32com` exclusively).
 - `dist/` build artifacts removed from the working tree.
 
-## [0.1.0] — 2026-07-01
+## [0.1.0] - 2026-07-01
 
 Initial release, focused on turning an internal tool into a proper package with a test suite.
 
@@ -306,7 +416,6 @@ Initial release, focused on turning an internal tool into a proper package with 
 - Hide/delete sheets, set active sheet, pivot table refresh.
 - Style copying for new table rows.
 
-[unreleased]: https://github.com/hirolau/fillxl/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/hirolau/fillxl/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hirolau/fillxl/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hirolau/fillxl/compare/v0.2.0-beta.1...v0.2.0

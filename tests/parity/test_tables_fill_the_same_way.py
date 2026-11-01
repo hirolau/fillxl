@@ -172,3 +172,24 @@ def test_rich_text_above_a_growing_table_is_preserved_by_both_engines(
 
     rows = [{"fund": f"F{i}", "nav": i} for i in range(5)]
     parity.assert_same(*parity.fill_both(template, tables={"Sales": rows}))
+
+
+def test_a_sorted_table_keeps_its_sort_state_inside_the_body_in_both_engines(
+    tmp_path: Path, parity: Parity
+) -> None:
+    """A sortState outside the table is one of the causes of a repair prompt."""
+    from openpyxl import load_workbook
+    from openpyxl.worksheet.filters import SortCondition, SortState
+
+    body = tuple((f"F{i}", i) for i in range(3))
+    template = table_template(tmp_path / "template.xlsx", body=body)
+    workbook = load_workbook(template)
+    table = workbook["Data"].tables["Sales"]
+    table.sortState = SortState(
+        ref="A2:B4", sortCondition=[SortCondition(ref="A2:A4", sortBy="value")]
+    )
+    workbook.save(template)
+    workbook.close()
+
+    rows = [{"fund": f"F{i}", "nav": i} for i in range(7)]
+    parity.assert_same(*parity.fill_both(template, tables={"Sales": rows}))

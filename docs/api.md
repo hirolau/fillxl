@@ -23,8 +23,8 @@ fill(
 ```
 
 `values` and `tables` are keyword-only. The 0.5 call
-`fill(template, output, values, tables)` still works with a
-`DeprecationWarning` and stops working in 0.7.0.
+`fill(template, output, values, tables)` was removed in 0.7.0; the CHANGELOG
+lists what else changed.
 
 ### Parameters
 
@@ -50,8 +50,8 @@ fill(
 | the same, without Excel | `openpyxl`, whose error explains what is missing |
 
 Pass `engine="win32com"` explicitly to drive Microsoft Excel through COM — that
-is the engine to use for chart types openpyxl cannot write. Both engines produce
-the same workbook for the same template and data; a parity test suite fills one
+is the engine to use for chart types openpyxl cannot write. Both engines write
+the same values for the same template and data; a parity test suite fills one
 template with both and compares the results.
 
 ---
@@ -80,8 +80,8 @@ config = FillXLConfig(
 | `refresh_pivot_tables` | `bool` | `True` | Refresh pivot caches after filling. |
 | `extend_conditional_formatting` | `bool` | `True` | Resize conditional formatting ranges with the table. |
 | `copy_table_styles` | `bool` | `True` | Copy the first data row's styles to new rows. |
-| `hide_underscore_sheets` | `bool` | `True` | Hide sheets whose names start with `_`. |
-| `delete_sheets` | `Sequence[str] \| None` | `None` | Sheet names to delete (stored as a tuple). |
+| `hide_underscore_sheets` | `bool` | `True` | Hide sheets whose names start with `_`. On by default, so opt out explicitly to keep such a sheet visible. |
+| `delete_sheets` | `Sequence[str] \| None` | `None` | Sheet names to delete (stored as a tuple). References to the deleted sheets are **not** rewritten; see below. |
 | `active_sheet` | `str \| None` | `None` | Name of the sheet to make active after filling. |
 | `on_lossy` | `"ignore" \| "warn" \| "raise"` | `"warn"` | What to do when the openpyxl engine drops template features. |
 
@@ -147,7 +147,7 @@ number before that day means.
 
 ```python
 FillXLConfig(
-    hide_underscore_sheets=True,   # hide visible sheets named "_…"
+    hide_underscore_sheets=True,   # the default: hide visible sheets named "_…"
     delete_sheets=["RawData"],
     active_sheet="Report",
 )
@@ -162,6 +162,12 @@ FillXLConfig(
   in the report.
 - `veryHidden` sheets stay `veryHidden`, and chart sheets can be deleted or
   activated.
+- `delete_sheets` removes the sheet and nothing else: formulas, chart series,
+  defined names and pivot caches that refer to it still name it. The openpyxl
+  engine cannot rewrite them, so it warns with `DanglingReferenceWarning`
+  instead of shipping a report that opens with `#REF!`. Update those references
+  yourself, or keep the sheet (`engine="win32com"` lets Excel rewrite them to
+  `#REF!` in place).
 
 ### Ragged `list[dict]` data
 
@@ -173,8 +179,16 @@ naming the row number.
 ### pandas indexes
 
 The DataFrame index is not written. A named, multi-level or non-integer index
-probably carries data, so fillxl logs a warning suggesting `df.reset_index()`.
-A default or filtered integer index is silent.
+probably carries data, so fillxl warns (suggesting `df.reset_index()`) when it
+drops one. A default or filtered integer index is silent.
+
+### Containers
+
+One cell holds one value, so a `list`, `tuple`, `set`, `dict`, `bytes` or a
+tabular object (DataFrame, Series, relation) where a value is expected raises
+`CellValueError` rather than writing its `repr`. The message names the table,
+data row and column, or the named cell — and for a named cell it points at
+`tables=`.
 
 ---
 
@@ -182,12 +196,11 @@ A default or filtered integer index is silent.
 
 | Exception | Meaning |
 |-----------|---------|
-| `CellValueError` | A value Excel cannot store: text longer than 32,767 characters, an illegal control character, or a date before 1900-03-01. It is a `ValueError` and carries the table, data row and column (or the named cell). |
+| `CellValueError` | A value Excel cannot store: text longer than 32,767 characters, an illegal control character, a lone surrogate, a date before 1900-03-01, an integer at or beyond 1e308, or a container where one value belongs. It is a `ValueError` and carries the table, data row and column (or the named cell). |
 | `LossyTemplateError` | The openpyxl engine dropped template features and `FillXLConfig(on_lossy="raise")` was set. Raise it before swapping in the output, so the previous output file is left untouched. |
 
 Integers with more than 15 significant digits are not errors: Excel rounds
-them, so fillxl logs one warning per column (or name). Pass such identifiers
-as text.
+them, so fillxl warns once per column (or name). Pass such identifiers as text.
 
 Named cells raise `KeyError` only when the name does not exist. A name whose
 first destination is a multi-cell range raises `ValueError`; a write failure
@@ -195,9 +208,9 @@ first destination is a multi-cell range raises `ValueError`; a write failure
 
 The openpyxl engine runs a lossy-feature check against the staging file before
 the atomic swap. It compares part and element **counts** (modern charts,
-slicers, shapes, VBA, …), so it catches dropped parts but cannot prove that a
-preserved part is unchanged. The check reports with `LossyTemplateWarning`, a
-`UserWarning` subclass that can be filtered by category:
+slicers, shapes, pictures, VBA, …), so it catches dropped parts but cannot
+prove that a preserved part is unchanged. The check reports a
+`LossyTemplateWarning`:
 
 ```python
 import warnings
@@ -206,5 +219,5 @@ from fillxl import LossyTemplateWarning
 warnings.filterwarnings("error", category=LossyTemplateWarning)
 ```
 
-Batch jobs that only read logs can route warnings into `logging` with
-`logging.captureWarnings(True)`.
+[Warnings](warnings.md) lists every category and every exception fillxl
+raises.

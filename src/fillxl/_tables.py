@@ -12,9 +12,15 @@ from openpyxl.worksheet.cell_range import CellRange
 
 from ._adapters import TabularAdapter
 from ._charts import TableChangeSpecs
-from ._formulas import openpyxl_formula_columns, warn_about_ignored_formula_data
+from ._formulas import (
+    extend_table_ranges,
+    openpyxl_formula_columns,
+    shift_relative_rows,
+    warn_about_ignored_formula_data,
+)
 from ._normalize import (
     check_cell_value,
+    check_nonfinite_value,
     check_table_cell_scalar,
     is_text_cell_value,
     prepare_cell_value,
@@ -23,6 +29,7 @@ from ._plan import (
     BlockedRegion,
     RowSpan,
     TableGeometry,
+    TablePlan,
     blocked_area,
     plan_table_fill,
 )
@@ -293,7 +300,10 @@ def populate_table(
                 cell = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
                 if copy_style_in_tables:
                     cell._style = copy(first_row_style)
-                cell.value = formula
+                # Excel copies the definition down, which moves its relative
+                # row references; writing the same text on every row would make
+                # every row compute the first row's result.
+                cell.value = shift_relative_rows(formula, row_ix)
 
         elif column_name in data_column_map:
             data_col_idx = data_column_map[column_name]
@@ -302,6 +312,9 @@ def populate_table(
                 raw_value = row_values[data_col_idx]
                 check_table_cell_scalar(
                     raw_value, table=table_name, row=row_ix + 1, column=column_name
+                )
+                check_nonfinite_value(
+                    raw_value, table=table_name, row=row_ix + 1, column=column_name, warned=warned
                 )
                 # Style first: a date format must be in place before the value
                 # arrives, or openpyxl replaces it with its default date format.
@@ -340,16 +353,68 @@ def populate_table(
                 last_col,
             )
 
+    if plan.new_body_last_row != geometry.body_last_row:
+        _resize_adjacent_formulas(workbook, worksheet, table, plan)
+
     if extend_conditional_formatting:
         _extend_conditional_formatting(
             worksheet=worksheet,
             table_start_column=first_col,
             table_end_column=last_col,
+            table_top_row=geometry.top_row,
             first_data_row=plan.first_data_row,
+            old_body_last_row=geometry.body_last_row,
             table_last_row=plan.new_body_last_row,
         )
 
     return plan.change_spec(str(worksheet.title))
+
+
+def _resize_adjacent_formulas(
+    workbook: Workbook,
+    worksheet: Worksheet,
+    table: Table,
+    plan: TablePlan,
+) -> None:
+    """Resize the formulas that tracked the table body, as Excel does.
+
+    Excel rewrites ``=SUM(B4:B4)`` to ``=SUM(B4:B7)`` when the table grows and
+    back again when it shrinks — on the table's own sheet, and on any other
+    sheet that refers to it.  openpyxl writes formula text, so the range has to
+    be rewritten here or the summary keeps summing the first row only.
+
+    Cells inside the table are skipped: their formulas belong to the table and
+    are written by :func:`populate_table`.  Ranges that only look like they
+    track the table are left alone (see :func:`extend_table_ranges`).
+    """
+    geometry = plan.geometry
+    current = CellRange(table.ref)
+    table_sheet = str(worksheet.title)
+    for sheet in workbook.worksheets:
+        own_sheet = str(sheet.title) == table_sheet
+        for (row, column), cell in list(sheet._cells.items()):
+            inside = (
+                own_sheet
+                and current.min_row <= row <= current.max_row
+                and current.min_col <= column <= current.max_col
+            )
+            if inside or not is_single_cell(cell) or cell.data_type != "f":
+                continue
+            formula = cell.value
+            if not isinstance(formula, str):
+                continue
+            updated = extend_table_ranges(
+                formula,
+                sheet_title=table_sheet,
+                formula_sheet=str(sheet.title),
+                first_col=geometry.first_col,
+                last_col=geometry.last_col,
+                old_body=(geometry.first_data_row, geometry.body_last_row),
+                new_body=(plan.first_data_row, plan.new_body_last_row),
+            )
+            if updated is not None:
+                logger.debug("Resized formula %s -> %s", formula, updated)
+                cell.value = updated
 
 
 def _reset_row_style(
@@ -443,22 +508,27 @@ def _extend_conditional_formatting(
     worksheet: Worksheet,
     table_start_column: int,
     table_end_column: int,
+    table_top_row: int,
     first_data_row: int,
+    old_body_last_row: int,
     table_last_row: int,
 ) -> None:
-    """Extend conditional formatting rules from first data row to all rows in the table.
+    """Extend conditional formatting rules that track the table's height.
 
-    A rule that tracks the table's height — one of its ranges starts on the
-    first data row and lies inside the table's columns — is resized to the
-    table's last row.  Ranges are parsed (never compared as strings), so a
-    rule on ``B130:B200`` is not mistaken for one on ``B13``, and multi-area
-    ranges such as ``B13:B20 D13:D20`` are handled per area.
+    A rule tracks the table when it starts at the table's top row (its header)
+    or at its first data row, or when it ends exactly on the table's last data
+    row — and when it lies inside the table's columns.  Such a rule is resized
+    to the table's new last row.  Ranges are parsed (never compared as
+    strings), so a rule on ``B130:B200`` is not mistaken for one on ``B13``,
+    and multi-area ranges such as ``B13:B20 D13:D20`` are handled per area.
 
     Args:
         worksheet: The worksheet containing the table
         table_start_column: 1-based index of the table's first column
         table_end_column: 1-based index of the table's last column
+        table_top_row: Row number of the table's first row (header, if shown)
         first_data_row: Row number of the first data row
+        old_body_last_row: Row number of the last data row before the fill
         table_last_row: Row number of the last data row in the table
             (the totals row, if present, is below it)
 
@@ -474,7 +544,9 @@ def _extend_conditional_formatting(
                 cell_range,
                 table_start_column=table_start_column,
                 table_end_column=table_end_column,
+                table_top_row=table_top_row,
                 first_data_row=first_data_row,
+                old_body_last_row=old_body_last_row,
                 table_last_row=table_last_row,
             ):
                 new_ranges.append(
@@ -510,22 +582,33 @@ def _cf_range_tracks_table(
     *,
     table_start_column: int,
     table_end_column: int,
+    table_top_row: int,
     first_data_row: int,
+    old_body_last_row: int,
     table_last_row: int,
 ) -> bool:
     """Whether *cell_range* should be resized to the table's last row.
 
-    Such a range starts on the first data row and lies inside the table's
-    columns, so it grows and shrinks with the table.
+    The rule matches what Excel does — and what a fillxl user means by "extend
+    with the table":
+
+    * the area lies inside the table's columns;
+    * it starts at the table's top row or its first data row, or it ends
+      exactly on the table's last data row;
+    * it does not already end on the table's new last row;
+    * it does not reach beyond the table — a rule covering more rows than the
+      table is the caller's own area and Excel leaves it alone.
 
     Examples:
-        >>> def tracks(area, last_row):
+        >>> def tracks(area, new_last, old_last=20):
         ...     return _cf_range_tracks_table(
         ...         CellRange(area),
         ...         table_start_column=2,
         ...         table_end_column=13,
+        ...         table_top_row=12,
         ...         first_data_row=13,
-        ...         table_last_row=last_row,
+        ...         old_body_last_row=old_last,
+        ...         table_last_row=new_last,
         ...     )
         >>> tracks("B13:B20", 30)
         True
@@ -533,11 +616,18 @@ def _cf_range_tracks_table(
         False
         >>> tracks("B130:B200", 30)
         False
+        >>> tracks("B12:B20", 30)   # starts on the header row, as Excel allows
+        True
+        >>> tracks("B2:B200", 30)   # reaches past the table: not ours to resize
+        False
 
     """
-    return (
-        cell_range.min_row == first_data_row
-        and cell_range.max_row != table_last_row
-        and cell_range.min_col >= table_start_column
-        and cell_range.max_col <= table_end_column
+    inside_columns = (
+        cell_range.min_col >= table_start_column and cell_range.max_col <= table_end_column
     )
+    if not inside_columns or cell_range.max_row == table_last_row:
+        return False
+    starts_with_table = cell_range.min_row in (table_top_row, first_data_row)
+    if not (starts_with_table or cell_range.max_row == old_body_last_row):
+        return False
+    return not (cell_range.max_row > old_body_last_row and cell_range.max_row > table_last_row)

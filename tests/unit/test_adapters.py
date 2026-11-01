@@ -189,6 +189,20 @@ class TestTabularAdapter:
         with pytest.warns(FillXLWarning, match="is not written to Excel"):
             TabularAdapter(resampled)
 
+    def test_an_unnamed_index_is_not_described_as_one_named_none(self) -> None:
+        """The message used to print the index *name*, so it read ``index [None]``."""
+        pd = pytest.importorskip("pandas")
+        from fillxl._adapters import TabularAdapter
+
+        df = pd.DataFrame({"x": [1, 2]}, index=pd.Index(["a", "b"]))
+
+        with pytest.warns(FillXLWarning, match="is not written to Excel") as caught:
+            TabularAdapter(df)
+
+        message = str(caught[0].message)
+        assert message.startswith("The DataFrame index is not written")
+        assert "None" not in message
+
     def test_a_default_index_is_silent(self, recwarn: pytest.WarningsRecorder) -> None:
         """A RangeIndex is row numbering, not data."""
         pd = pytest.importorskip("pandas")

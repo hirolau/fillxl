@@ -169,13 +169,36 @@ Excel does. A named cell on a protected sheet therefore fills with the
 openpyxl engine but raises `RuntimeError` through win32com. This divergence is
 intentional.
 
+### Formulas the fill rewrites
+
+Excel edits formulas when a table changes height; both engines now reproduce
+that, so the same template and data give the same numbers:
+
+- **Calculated columns.** A column whose `calculatedColumnFormula` uses A1
+  references (`=B5*C5`) is written row by row — `=B5*C5`, `=B6*C6`, `=B7*C7` —
+  because a relative row moves with the copy while a `$`-anchored row
+  (`=B5*$C$5`, `=B5*C$5`) does not. Structured references
+  (`=[@Qty]*[@Price]`) already resolve per row and are written unchanged.
+- **Formulas next to the table.** A worksheet formula whose range covers the
+  table body row for row — `=SUM(B4:B4)` for a one-row body — is resized with
+  the table (`=SUM(B4:B7)`), including `$`-anchored ranges, ranges on other
+  sheets that name the table's sheet, and the same range inside a larger
+  formula. Single-cell references (`=B4*2`), ranges that start or end outside
+  the body (`=SUM(B4:B5)`, `=SUM(Z1:Z1)`), string literals that merely look
+  like ranges, and references to other sheets are left exactly as they are.
+
+Fillxl only rewrites what it can attribute to the table. A formula that reads
+table rows without covering the body exactly (for example
+`=SUM(B4:B5)` when the body is one row) is left alone, so it will not follow a
+resize — Excel would leave it alone too.
+
 ### Losing template features (openpyxl)
 
 The openpyxl engine cannot preserve every Excel feature. After saving to the
 staging file (and before the atomic swap) it compares feature counts in the
-template and the output: modern charts, slicers, timelines, shapes, rich data,
-VBA, external links and worksheet extensions. `FillXLConfig.on_lossy` controls
-the result:
+template and the output: modern charts, slicers, timelines, shapes, pictures,
+embedded objects, rich data, VBA, external links and worksheet extensions.
+`FillXLConfig.on_lossy` controls the result:
 
 | Value | Behaviour |
 |-------|-----------|

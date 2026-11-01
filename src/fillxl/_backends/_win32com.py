@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._adapters import TabularAdapter
-from fillxl._cells import named_cell_target
+from fillxl._cells import header_write_error, named_cell_target
 from fillxl._charts import TableChangeSpecs, split_formula_arguments, update_reference_text
 from fillxl._formats import needs_temporal_format, temporal_format, temporal_format_runs
 from fillxl._formulas import (
@@ -33,6 +33,7 @@ from fillxl._formulas import (
 from fillxl._normalize import (
     check_cell_value,
     check_named_cell_scalar,
+    check_nonfinite_value,
     check_table_cell_scalar,
     com_value_from_normalized,
     prepare_cell_value,
@@ -199,6 +200,7 @@ class Win32ComBackend:
 
         Raises:
             KeyError: If *name* is not a defined name in the workbook.
+            ValueError: If the name points at a table header row.
 
         """
         self._ensure_workbook()
@@ -213,11 +215,23 @@ class Win32ComBackend:
             return
         sheet_name, address = target
         check_named_cell_scalar(name, value)
+        check_nonfinite_value(value, name=name)
         normalized = prepare_cell_value(value)
         check_cell_value(normalized, name=name)
         prepared = com_value_from_normalized(normalized, escape_formulas=config.escape_formulas)
         try:
             target_range = self._workbook.Worksheets(sheet_name).Range(address)
+        except Exception as exc:
+            msg = f"Could not write named cell '{name}' ({sheet_name}!{address}): {exc}"
+            raise RuntimeError(msg) from exc
+        # Excel keeps a renamed header and its column metadata in step, so the
+        # file stays valid - but the fill would then map the data to a column
+        # name the caller never saw.  Refuse, as the openpyxl engine does, so
+        # the engines cannot disagree.
+        conflict = _list_object_of(target_range)
+        if conflict is not None and int(target_range.Row) == int(conflict.HeaderRowRange.Row):
+            raise header_write_error(sheet_name, address, str(conflict.Name))
+        try:
             # Read the format first: Excel changes a General cell when a date arrives.
             existing_format = self._existing_number_format(target_range)
             target_range.Value = prepared
@@ -363,7 +377,9 @@ class Win32ComBackend:
                 worksheet,
                 start_col=geometry.first_col,
                 end_col=geometry.last_col,
+                table_top_row=geometry.top_row,
                 first_data_row=plan.first_data_row,
+                old_data_last_row=geometry.body_last_row,
                 last_data_row=plan.new_body_last_row,
             )
 
@@ -449,7 +465,12 @@ class Win32ComBackend:
         to_hide = [name for name in visible if name.startswith(prefix)]
         if not to_hide:
             return
-        require_a_visible_sheet(visible, to_hide, "Hiding")
+        require_a_visible_sheet(
+            visible,
+            to_hide,
+            "Hiding",
+            hint="Set hide_underscore_sheets=False to keep it visible.",
+        )
         if str(self._workbook.ActiveSheet.Name) in to_hide:
             self._workbook.Sheets(first_remaining(visible, to_hide)).Activate()
         for name in to_hide:
@@ -577,6 +598,19 @@ class Win32ComBackend:
 
 def _com_is_visible(sheet: Any) -> bool:  # noqa: ANN401
     return sheet.Visible not in (_XL_SHEET_HIDDEN, _XL_SHEET_VERY_HIDDEN)
+
+
+def _list_object_of(target_range: Any) -> Any:  # noqa: ANN401
+    """The ListObject that *target_range* belongs to, or ``None``.
+
+    ``Range.ListObject`` returns ``Nothing`` outside a table, which pywin32
+    surfaces as ``None`` or as an empty COM pointer.
+    """
+    try:
+        list_object = target_range.ListObject
+    except Exception:
+        return None
+    return None if list_object is None else list_object
 
 
 _EN_US_LCID = 1033
@@ -1000,6 +1034,13 @@ def _write_rows_com(
                     row=row_number,
                     column=table_columns[col_idx],
                 )
+                check_nonfinite_value(
+                    row[source],
+                    table=table_name,
+                    row=row_number,
+                    column=table_columns[col_idx],
+                    warned=warned,
+                )
                 normalized = prepare_cell_value(row[source])
                 check_cell_value(
                     normalized,
@@ -1149,10 +1190,12 @@ def _extend_conditional_formatting_com(
     *,
     start_col: int,
     end_col: int,
+    table_top_row: int,
     first_data_row: int,
+    old_data_last_row: int,
     last_data_row: int,
 ) -> None:
-    """Resize CF ranges that start on the first data row to the table's last row."""
+    """Resize CF ranges that track the table (see :func:`_cf_range_tracks_table`)."""
     from fillxl._tables import _cf_range_tracks_table
 
     conditions = worksheet.Cells.FormatConditions
@@ -1173,10 +1216,13 @@ def _extend_conditional_formatting_com(
                 bounds,
                 table_start_column=start_col,
                 table_end_column=end_col,
+                table_top_row=table_top_row,
                 first_data_row=first_data_row,
+                old_body_last_row=old_data_last_row,
                 table_last_row=last_data_row,
             ):
-                area = area.Resize(last_data_row - first_data_row + 1, area.Columns.Count)
+                # Keep the area's first row: a rule may start on the header row.
+                area = area.Resize(last_data_row - int(area.Row) + 1, area.Columns.Count)
                 changed = True
             new_areas.append(area)
         if not changed:

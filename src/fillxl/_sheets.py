@@ -28,7 +28,13 @@ def warn_sheet_not_found(name: str, consequence: str) -> None:
     warn_user(f"Sheet {name!r} not found; {consequence}")
 
 
-def require_a_visible_sheet(visible: Sequence[str], removed: Collection[str], action: str) -> None:
+def require_a_visible_sheet(
+    visible: Sequence[str],
+    removed: Collection[str],
+    action: str,
+    *,
+    hint: str | None = None,
+) -> None:
     """Raise if removing *removed* would leave no visible sheet.
 
     Examples:
@@ -37,6 +43,11 @@ def require_a_visible_sheet(visible: Sequence[str], removed: Collection[str], ac
         Traceback (most recent call last):
             ...
         ValueError: Hiding ['_data'] would leave the workbook without a visible sheet...
+        >>> try:
+        ...     require_a_visible_sheet(["_data"], ["_data"], "Hiding", hint="Set X.")
+        ... except ValueError as error:
+        ...     str(error).endswith("Excel requires at least one. Set X.")
+        True
 
     """
     if any(name not in removed for name in visible):
@@ -45,6 +56,8 @@ def require_a_visible_sheet(visible: Sequence[str], removed: Collection[str], ac
         f"{action} {sorted(removed)} would leave the workbook without a visible sheet; "
         "Excel requires at least one."
     )
+    if hint:
+        msg = f"{msg} {hint}"
     raise ValueError(msg)
 
 

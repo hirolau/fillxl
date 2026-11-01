@@ -107,6 +107,25 @@ def test_a_missing_slicer_part_is_reported(tmp_path: Path) -> None:
     assert find_lost_features(template, output) == ["slicers (1 lost)"]
 
 
+def test_an_embedded_object_is_reported(tmp_path: Path) -> None:
+    """openpyxl writes no embeddings, so an embedded document leaves no trace.
+
+    It disappeared silently until the package part was counted: nothing else
+    in the package refers to it once the drawing shape is gone.
+    """
+    template = _package(
+        tmp_path / "template.xlsx",
+        {
+            "xl/workbook.xml": b"<workbook/>",
+            "xl/embeddings/oleObject1.bin": b"\xd0\xcf\x11\xe0",
+            "xl/embeddings/Microsoft_Excel_Worksheet1.xlsx": b"PK\x03\x04",
+        },
+    )
+    output = _package(tmp_path / "output.xlsx", {"xl/workbook.xml": b"<workbook/>"})
+
+    assert find_lost_features(template, output) == ["embedded objects (OLE) (2 lost)"]
+
+
 def test_fewer_shapes_in_a_drawing_are_reported(tmp_path: Path) -> None:
     drawing = "xl/drawings/drawing1.xml"
     template = _package(

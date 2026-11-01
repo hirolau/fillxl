@@ -130,6 +130,25 @@ engines store the same wall-clock time.
 `date`, `timedelta`, `Decimal`, pandas/NumPy scalars and NumPy date/time
 scalars are all normalised, so nothing is silently written as text.
 
+### Missing numbers and infinities
+
+`None`, pandas `NA`/`NaT` and `NaN` — a Python `float('nan')`, a NumPy scalar
+or a `Decimal("NaN")` — all mean "missing" and are written as an empty cell,
+without a warning.
+
+±Infinity is different: Excel has no way to hold it, so the cell is written
+empty, but fillxl reports it with a `FillXLWarning` naming the table, row and
+column (once per column, or once per named cell). A number that disappears
+silently is data loss; filter on `FillXLWarning` if you want it to fail
+instead:
+
+```python
+import warnings
+from fillxl import FillXLWarning
+
+warnings.simplefilter("error", FillXLWarning)
+```
+
 ### Dates
 
 A `date` gets the number format `yyyy-mm-dd` and a `datetime` gets
@@ -153,8 +172,15 @@ FillXLConfig(
 )
 ```
 
+Sheet names are matched exactly, in both engines: `delete_sheets=["report"]`
+does not delete `Report`, and `active_sheet="report"` leaves the workbook's
+active sheet alone. Both cases warn instead of acting on a near-miss, so a
+typo cannot delete the wrong sheet.
+
 - Hiding or deleting every visible sheet raises `ValueError`; Excel requires at
-  least one visible sheet.
+  least one visible sheet. A workbook whose only sheet is `_report` therefore
+  fails under the default config — the message says to set
+  `hide_underscore_sheets=False`.
 - When the active sheet is hidden or deleted, the first remaining visible sheet
   becomes active. Exactly one tab is left selected.
 - Making a hidden sheet active raises `ValueError`.
@@ -168,6 +194,19 @@ FillXLConfig(
   instead of shipping a report that opens with `#REF!`. Update those references
   yourself, or keep the sheet (`engine="win32com"` lets Excel rewrite them to
   `#REF!` in place).
+
+### Defined names
+
+A name in `values=` is matched exactly first, then ignoring case, because
+Excel does the same: `values={"reporttitle": "Q4"}` fills the name
+`ReportTitle`. An exact match always wins, so a `Title` and a `title` that live
+in different scopes keep their own destinations.
+
+A name may not point at a **table header cell**: renaming a header would leave
+the table's column name out of step with the cell (openpyxl) or silently break
+the data-to-column mapping the same fill is using (Excel), so both engines
+raise `ValueError`. Point the name at another cell, or rename the column in
+Excel.
 
 ### Ragged `list[dict]` data
 
@@ -196,8 +235,18 @@ data row and column, or the named cell — and for a named cell it points at
 
 | Exception | Meaning |
 |-----------|---------|
-| `CellValueError` | A value Excel cannot store: text longer than 32,767 characters, an illegal control character, a lone surrogate, a date before 1900-03-01, an integer at or beyond 1e308, or a container where one value belongs. It is a `ValueError` and carries the table, data row and column (or the named cell). |
+| `CellValueError` | A value Excel cannot store: text longer than 32,767 characters, an illegal control character, a lone surrogate, a character XML 1.0 forbids such as U+FFFE or U+FFFF, a date before 1900-03-01, an integer at or beyond 1e308, or a container where one value belongs. It is a `ValueError` and carries the table, data row and column (or the named cell). |
 | `LossyTemplateError` | The openpyxl engine dropped template features and `FillXLConfig(on_lossy="raise")` was set. Raise it before swapping in the output, so the previous output file is left untouched. |
+| `TypeError` | `values=` or `tables=` is not a mapping, `config=` is not a `FillXLConfig`, or the tabular data is not one of the supported shapes. |
+| `IsADirectoryError` | `output=` is an existing directory. |
+| `PermissionError` | The finished file could not replace `output=`, usually because it is open in Excel. |
+
+Anything that can be seen from the arguments alone — a mistyped mapping, a
+directory used as `output=`, an unknown engine or an output format the engine
+cannot write — is reported before the template is opened. Problems that need
+the workbook, the data or the finished file (`KeyError`, `CellValueError`, a
+column mismatch, `LossyTemplateError`, `PermissionError`) arrive later, but
+never after the destination has been replaced.
 
 Integers with more than 15 significant digits are not errors: Excel rounds
 them, so fillxl warns once per column (or name). Pass such identifiers as text.
@@ -206,10 +255,23 @@ Named cells raise `KeyError` only when the name does not exist. A name whose
 first destination is a multi-cell range raises `ValueError`; a write failure
 (such as a protected sheet through COM) raises `RuntimeError`.
 
+### The output file
+
+`template` and `output` may be the same path: the template is copied to a
+temporary directory before it is opened, so an in-place fill replaces the
+template with the filled workbook.
+
+`output` is written only after the whole fill has succeeded — saving, closing
+the engine and the lossy check all run first, against a staging file in the
+same directory. If anything fails, an `output` that already existed is left
+exactly as it was and the staging file is removed. This is a guarantee against
+*operation* failures, not against power loss: the swap itself is a rename in
+the destination directory, which a crash can interrupt.
+
 The openpyxl engine runs a lossy-feature check against the staging file before
 the atomic swap. It compares part and element **counts** (modern charts,
-slicers, shapes, pictures, VBA, …), so it catches dropped parts but cannot
-prove that a preserved part is unchanged. The check reports a
+slicers, shapes, pictures, embedded objects, VBA, …), so it catches dropped
+parts but cannot prove that a preserved part is unchanged. The check reports a
 `LossyTemplateWarning`:
 
 ```python

@@ -100,6 +100,8 @@ differs.
 - One cell holds one value. A `list`, `dict`, `bytes` or a whole DataFrame in a
   named cell or a table cell raises `CellValueError` naming the position,
   instead of writing its text dump; put rows and columns in `tables=`.
+- `None` and `NaN` are missing values and become empty cells. ±Infinity cannot
+  be stored either, but it warns rather than disappearing quietly.
 - Every warning is a `fillxl.FillXLWarning` subclass (`TimezoneWarning`,
   `DanglingReferenceWarning`, `LossyTemplateWarning`), so
   `warnings.simplefilter("error", fillxl.FillXLWarning)` makes data problems
@@ -112,8 +114,9 @@ differs.
   at the deleted sheet; fillxl warns with `DanglingReferenceWarning` because
   Excel shows `#REF!` there.
 - `hide_underscore_sheets` is **on** by default, so a sheet named `_data` is
-  hidden unless you opt out. At least one sheet always stays visible, because
-  Excel requires it.
+  hidden unless you opt out. Hiding or deleting every sheet raises, because
+  Excel requires one visible sheet — set `hide_underscore_sheets=False` for a
+  workbook whose only sheet is `_report`.
 
 Dates, value types, sheet handling, warning categories, errors and all
 `FillXLConfig` options are documented at

@@ -5,6 +5,100 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-11-01
+
+Correctness release, not yet 1.0. The public API is unchanged since 0.7.1 —
+`fill()`, `FillXLConfig`, the exception classes and the warning classes keep
+their signatures, defaults and meanings — so upgrading needs no code changes.
+The 0.x line still leaves room for breaking changes.
+
+### Fixed
+- openpyxl: a calculated column declared with A1 references writes each row its
+  own formula. `calculatedColumnFormula="B5*C5"` used to be copied into every
+  row, so every row computed the first row's total (49.9, 49.9, 49.9 where
+  Excel shows 49.9, 29.97, 3.5); relative rows now move per row and
+  `$`-anchored rows stay put. Structured references (`=[@Qty]*[@Price]`) are
+  row-relative already and are written unchanged.
+- openpyxl: a worksheet formula whose range covers the table body row for row
+  — `=SUM(B4:B4)` for a one-row body — is resized with the table, on the
+  table's sheet and on any sheet that refers to it, as Excel's resize does.
+  Single-cell references, ranges that start or end outside the body, string
+  literals and references to other sheets are left alone.
+- Conditional formatting now follows the table by Excel's rule: a range that
+  ends on the table's last data row or starts on its header row is resized,
+  and a range that reaches beyond the table is left alone. A rule covering
+  `B1:B2` (header plus one body row) used to stay at two rows while Excel
+  extended it; a rule reaching past the table could be shrunk to the table.
+- Text containing U+FFFE or U+FFFF raises `CellValueError` with the table, row
+  and column. openpyxl wrote the character raw, `fill()` returned normally and
+  replaced the output with a workbook that neither openpyxl nor Excel could
+  open. Excel does not preserve the character either — it rewrites it as the
+  literal text `_xFFFE_` — so both engines refuse it. The other noncharacters
+  XML allows (U+FDD0, U+FDEF, U+1FFFE, U+10FFFF, U+2028, …) are still written
+  and round-trip.
+- A named cell that points at a table header cell raises `ValueError` instead
+  of renaming the header: openpyxl left the table's column name behind (Excel
+  refused to open the file) and Excel renamed the column, which invalidated
+  the data-to-column mapping the same fill was using.
+- A ±infinity written into a table cell or a named cell now warns with
+  `FillXLWarning`, naming the cell, instead of quietly becoming a blank
+  (`Decimal`, NumPy floats and 0-d arrays included). `NaN` and pandas
+  `NA`/`NaT` still mean "missing" and stay silent.
+- openpyxl: a defined name is found regardless of case, matching Excel and the
+  COM engine. `values={"reporttitle": …}` used to raise `KeyError` with
+  `engine="openpyxl"` and fill `ReportTitle` with `engine="win32com"`. An exact
+  match still wins.
+- `engine="auto"` no longer starts Excel for an output format Excel cannot
+  save (a `.txt` name, a suffix-less name, …). The suffix is now checked
+  before the template is loaded, exactly as `engine="win32com"` already did,
+  instead of failing at `save()` after the whole fill had run. That late
+  failure also named the internal staging file — `Cannot save '.fillxl'
+  files` — rather than the path the caller passed, and the error now says
+  `engine='auto' chose win32com` instead of blaming an engine the caller never
+  asked for.
+- An `output=` that is an existing directory raises `IsADirectoryError` before
+  the template is opened. It used to fail during the final rename and claim
+  "permission denied. Is the file open in Excel?".
+- `values=` and `tables=` must be mappings, and `config=` a `FillXLConfig`;
+  anything else raises `TypeError` naming the argument. A list, a bare string
+  or a plain dict of options used to fail with `AttributeError` from deep
+  inside the fill, after the template had been loaded.
+- The lossy check counts embedded OLE objects (`xl/embeddings/*`). openpyxl
+  writes no embeddings, so an embedded Word document, PDF or equation used to
+  disappear from the output without any warning; it is now reported by name
+  and `on_lossy="raise"` refuses the fill before the swap.
+- The DataFrame-index warning says "The DataFrame index is not written" (or
+  `named 'rowid'`) instead of printing `[None]`, which read as if the index
+  had a value called `None`.
+- The error for a workbook whose only sheet is `_report` now says to set
+  `hide_underscore_sheets=False`.
+
+### Documentation
+- `fill()` documents every exception it can raise, and that `template` and
+  `output` may be the same path.
+- `docs/backends.md` describes which formulas a fill rewrites — calculated
+  columns and formulas whose range covers the table body — and which it leaves
+  alone, and lists embedded objects among the features the lossy report
+  counts.
+- `docs/api.md` documents the missing-value policy (`NaN` is a blank cell) next
+  to the infinity warning, and that defined names match case-insensitively
+  while sheet names do not.
+- `docs/warnings.md` lists the new infinity warning, the U+FFFE/U+FFFF rule
+  and the table-header error.
+
+### Tests
+- The failure-recovery chapter now covers a destination workbook that already
+  exists: a fault injected at saving, at closing, at the lossy check and at the
+  final swap each leave it byte-for-byte intact, leave no staging file behind
+  and do not block the retry. In-place fills (same template and output path)
+  are covered in both directions.
+- `tests/integration/test_integrity_guards.py` fills one template with both
+  engines and checks the calculated column rows, the resized formulas, the
+  conditional-formatting rule, the U+FFFE refusal, the infinity warning, the
+  table-header refusal and case-insensitive names. Where Excel is available a
+  test opens the openpyxl output in Excel and asserts the computed totals
+  (49.9, 29.97, 3.5) rather than the formula text alone.
+
 ## [0.7.1] - 2026-11-01
 
 ### Changed

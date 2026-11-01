@@ -46,6 +46,9 @@ _PART_FEATURES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^xl/richData/[^/]+$"), "rich data (pictures in cells, data types)"),
     (re.compile(r"^xl/externalLinks/externalLink\d+\.xml$"), "external links"),
     (re.compile(r"^xl/webextensions/[^/]+$"), "Office add-ins"),
+    # openpyxl writes no embeddings at all, so an embedded Word document, PDF
+    # or equation disappears without a trace unless it is counted here.
+    (re.compile(r"^xl/embeddings/[^/]+$"), "embedded objects (OLE)"),
     (re.compile(r"^xl/vbaProject\.bin$"), "VBA project"),
 )
 _DRAWING_PART = re.compile(r"^xl/drawings/drawing\d+\.xml$")

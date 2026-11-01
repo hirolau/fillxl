@@ -45,6 +45,21 @@ def _staging_files(directory: Path) -> list[Path]:
     return sorted(directory.glob(".*.fillxl*"))
 
 
+@pytest.fixture(autouse=True)
+def _skip_win32com_without_excel(request: pytest.FixtureRequest) -> None:
+    """Skip the ``win32com`` half of a parametrized test when Excel cannot run.
+
+    Most cases go through :func:`tests._engines._fill_output`, which skips
+    itself; the ones that must call ``fill()`` directly — to check that it
+    refuses before touching the destination — need the same guard, because on
+    Linux the backend raises its platform error instead of the refusal.
+    """
+    callspec = getattr(request.node, "callspec", None)
+    uses_win32com = callspec is not None and callspec.params.get("engine") == "win32com"
+    if uses_win32com and not _win32com_available():
+        pytest.skip("win32com backend requires Windows and Excel")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Calculated columns: every row gets its own row references
 # ═══════════════════════════════════════════════════════════════════════════════

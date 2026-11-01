@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] â€” 2026-10-27
+## [0.7.0] - 2026-11-01
 
 Breaking, but safer. The breaking changes are grouped into this one release so
 later releases can be additive where possible.
@@ -106,7 +106,7 @@ later releases can be additive where possible.
   workbook still opens without a repair prompt, so rewriting the reference
   would only make the engines disagree.
 
-## [0.6.0] â€” 2026-10-21
+## [0.6.0] - 2026-10-21
 
 The two engines now produce the same workbook for the same template and data,
 and a parity test suite checks it.
@@ -151,7 +151,7 @@ and a parity test suite checks it.
 ### Removed
 - `TabularAdapter.is_tabular` and `TabularAdapter.iter_rows` (internal, unused).
 
-## [0.5.0] â€” 2026-10-20
+## [0.5.0] - 2026-10-20
 
 ### Changed (breaking)
 
@@ -199,7 +199,7 @@ and a parity test suite checks it.
 - win32com works from worker threads (`CoInitialize`) and no longer uses the
   clipboard.
 
-## [0.4.0] â€” 2026-10-18
+## [0.4.0] - 2026-10-18
 
 ### Added
 
@@ -211,7 +211,7 @@ and a parity test suite checks it.
   body), because Excel drops the table when a whole headerless body is
   written in one call.
 
-## [0.3.0] â€” 2026-10-18
+## [0.3.0] - 2026-10-18
 
 ### Added
 
@@ -271,8 +271,8 @@ and a parity test suite checks it.
 - NumPy scalars (`np.int64`, `np.int32`, `np.float32`, `np.bool_`, â€¦) are
   converted to native Python values instead of `str(value)`, which used to
   produce the "number stored as text" marker in Excel. `np.datetime64` and
-  `np.timedelta64` â€” including nanosecond precision, where `.item()` returns
-  an integer â€” are converted to `datetime`/`timedelta` as well.
+  `np.timedelta64` - including nanosecond precision, where `.item()` returns
+  an integer - are converted to `datetime`/`timedelta` as well.
 - A failed `load()` no longer leaks a hidden `EXCEL.EXE`: the backend is now
   loaded inside the `try`/`finally` so `close()` always runs.
 - `table.autoFilter.ref` is updated together with `table.ref`, avoiding the
@@ -304,10 +304,10 @@ and a parity test suite checks it.
 
 ### Removed
 
-- `FillXLConfig.extend_tables` â€” it was never read by any backend, so it
+- `FillXLConfig.extend_tables` - it was never read by any backend, so it
   silently did nothing. Tables are always resized to fit the data.
 
-## [0.2.0] â€” 2026-07-19
+## [0.2.0] - 2026-07-19
 
 Improved the test suite and added functionality enabled by the multiple-backend design.
 
@@ -334,7 +334,7 @@ Improved the test suite and added functionality enabled by the multiple-backend 
   placed between them for better flow.
 - Added PyPI badge to README.
 
-## [0.2.0-beta.1] â€” 2026-07-17
+## [0.2.0-beta.1] - 2026-07-17
 
 ### Added
 
@@ -350,7 +350,7 @@ Improved the test suite and added functionality enabled by the multiple-backend 
 - Backend protocol tests and openpyxl unit tests.
 - win32com performance optimisation (26Ã— speedup for large tables).
 - Coverage: overall 85% (excl. win32com: ~95%).
-- `ruff` clean, `mypy` strict â€” 0 errors.
+- `ruff` clean, `mypy` strict - 0 errors.
 - Author email address in `pyproject.toml`.
 
 ### Changed
@@ -383,13 +383,13 @@ Improved the test suite and added functionality enabled by the multiple-backend 
 
 ### Removed
 
-- `repo_dump.md` and `make_md.py` â€” development artifacts that were
+- `repo_dump.md` and `make_md.py` - development artifacts that were
   accidentally committed.
 - Unused `xlsxwriter` runtime dependency (the library uses `openpyxl` and
   `win32com` exclusively).
 - `dist/` build artifacts removed from the working tree.
 
-## [0.1.0] â€” 2026-07-01
+## [0.1.0] - 2026-07-01
 
 Initial release, focused on turning an internal tool into a proper package with a test suite.
 

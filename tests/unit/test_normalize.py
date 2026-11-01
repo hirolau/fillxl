@@ -19,6 +19,7 @@ from fillxl import FillXLWarning, TimezoneWarning
 from fillxl._normalize import (
     check_cell_value,
     check_named_cell_scalar,
+    check_nonfinite_value,
     check_table_cell_scalar,
     is_formula_string,
     normalize_value,
@@ -350,6 +351,37 @@ class TestValuesExcelCannotStore:
     def test_text_with_a_tab_is_still_allowed(self) -> None:
         check_cell_value("a\tb")
 
+    @pytest.mark.parametrize("character", ["\ufffe", "\uffff"])
+    def test_a_character_xml_forbids_is_refused(self, character: str) -> None:
+        """openpyxl writes U+FFFE raw and the workbook then fails to parse.
+
+        The cell used to be written and the destination replaced, so the fill
+        reported success for a file neither openpyxl nor Excel can open.
+        """
+        from fillxl import CellValueError
+
+        with pytest.raises(CellValueError, match=r"U\+FFFE|U\+FFFF") as caught:
+            check_cell_value(f"a{character}b", table="Sales", row=1, column="Name")
+
+        assert "position 1" in str(caught.value)
+        assert "Table 'Sales', data row 1, column 'Name'" in str(caught.value)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "a\ufdd0b",
+            "a\ufdefb",
+            "a\U0001fffeb",
+            "a\U0002fffeb",
+            "a\U0010ffffb",
+            "a\u2028b",
+        ],
+    )
+    def test_other_noncharacters_are_still_writable(self, text: str) -> None:
+        """XML allows these code points, and openpyxl round-trips them."""
+        check_cell_value(text)
+        assert normalize_value(text) == text
+
     def test_an_integer_beyond_the_double_range_is_refused(self) -> None:
         """Trailing zeros used to hide the size: 10**400 counted as one digit."""
         from fillxl import CellValueError
@@ -486,3 +518,62 @@ class TestComIntegerWidth:
 
     def test_an_integer_that_fits_stays_an_integer(self) -> None:
         assert prepare_com_value(2**31 - 1) == 2**31 - 1
+
+
+class TestNonFiniteNumbers:
+    """An infinity is data the caller lost; NaN is how every library spells "missing"."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(float("inf"), id="float-inf"),
+            pytest.param(float("-inf"), id="float-neg-inf"),
+            pytest.param(np.float32("inf"), id="numpy-float32"),
+            pytest.param(np.float64("-inf"), id="numpy-float64"),
+            pytest.param(np.array(float("inf")), id="numpy-0d"),
+            pytest.param(Decimal("Infinity"), id="decimal-inf"),
+            pytest.param(Decimal("-Infinity"), id="decimal-neg-inf"),
+        ],
+    )
+    def test_an_infinity_is_reported_and_still_written_as_a_blank(
+        self, value: object, recwarn: pytest.WarningsRecorder
+    ) -> None:
+        check_nonfinite_value(value, table="Sales", row=3, column="Ratio")
+
+        reported = [w for w in recwarn if issubclass(w.category, FillXLWarning)]
+        assert len(reported) == 1
+        assert "Table 'Sales', data row 3, column 'Ratio'" in str(reported[0].message)
+        assert "Excel cannot store infinity" in str(reported[0].message)
+        assert normalize_value(value) is None
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(float("nan"), id="float-nan"),
+            pytest.param(np.float32("nan"), id="numpy-nan"),
+            pytest.param(Decimal("NaN"), id="decimal-nan"),
+            pytest.param(Decimal("sNaN"), id="decimal-snan"),
+            pytest.param(None, id="none"),
+            pytest.param(pd.NA, id="pd-na"),
+            pytest.param(pd.NaT, id="pd-nat"),
+            pytest.param(1.5, id="finite-float"),
+            pytest.param(True, id="bool"),
+            pytest.param("inf", id="text"),
+        ],
+    )
+    def test_missing_and_finite_values_stay_silent(
+        self, value: object, recwarn: pytest.WarningsRecorder
+    ) -> None:
+        check_nonfinite_value(value, table="Sales", row=1, column="Ratio")
+
+        assert [w for w in recwarn if issubclass(w.category, FillXLWarning)] == []
+
+    def test_the_warning_is_raised_once_per_column(self, recwarn: pytest.WarningsRecorder) -> None:
+        """A column of infinities must not produce a warning per row."""
+        warned: set[tuple[str | None, str | None]] = set()
+        for row in range(1, 4):
+            check_nonfinite_value(
+                float("inf"), table="Sales", row=row, column="Ratio", warned=warned
+            )
+
+        assert len([w for w in recwarn if issubclass(w.category, FillXLWarning)]) == 1

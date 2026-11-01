@@ -80,6 +80,7 @@ fill(
 
 - Populate named cells and Excel tables
 - Automatic table resizing + chart range updates
+- Calculated columns and formulas that track the table stay in step with it
 - Conditional formatting and pivot table refresh
 - Two backends: `openpyxl` (default) and `win32com` (Windows + Excel)
 - Dates, sheets and warnings behave the same in both engines

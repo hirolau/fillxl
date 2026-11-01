@@ -165,18 +165,49 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
         msg = f"Unknown engine {engine!r}. Known engines: {known}."
         raise ValueError(msg)
     if engine == "win32com":
-        if output.suffix.lower() not in _WIN32COM_SUFFIXES:
-            msg = (
-                f"The win32com engine cannot write a '{output.suffix.lower()}' file. "
-                "Use one of: .xlsx, .xlsm, .xlsb or .xls."
-            )
-            raise ValueError(msg)
+        _require_excel_output(output)
         return engine
     if engine == "auto" and _needs_excel(template, output) and _win32com_available():
+        # The suffix is checked here too: "auto" must not start Excel for a
+        # fill that save() is bound to reject.
+        _require_excel_output(output, engine="auto")
         logger.debug("engine='auto' chose win32com for %s -> %s", template, output)
         return "win32com"
     _reject_impossible_output(template, output)
     return "openpyxl"
+
+
+def _require_excel_output(output: Path, *, engine: str = "win32com") -> None:
+    """Raise unless Excel can save *output*.
+
+    *engine* only shapes the message: for ``"auto"`` the caller did not ask for
+    win32com, so the error says that the choice was made for them.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> _require_excel_output(Path("out.xlsb"))
+        >>> _require_excel_output(Path("out.csv"))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: The win32com engine cannot write a '.csv' file. ...
+        >>> _require_excel_output(Path("out"), engine="auto")  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: engine='auto' chose win32com, which cannot write a file without ...
+
+    """
+    suffix = output.suffix.lower()
+    if suffix in _WIN32COM_SUFFIXES:
+        return
+    what = f"a '{suffix}' file" if suffix else "a file without an extension"
+    if engine == "auto":
+        msg = (
+            f"engine='auto' chose win32com, which cannot write {what}. Use one of: "
+            ".xlsx, .xlsm, .xlsb or .xls, or name an .xlsx output to stay on openpyxl."
+        )
+    else:
+        msg = f"The win32com engine cannot write {what}. Use one of: .xlsx, .xlsm, .xlsb or .xls."
+    raise ValueError(msg)
 
 
 def _needs_excel(template: Path, output: Path) -> bool:

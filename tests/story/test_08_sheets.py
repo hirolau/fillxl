@@ -71,6 +71,53 @@ class TestHidingUnderscoreSheets:
         cfg = FillXLConfig()
         assert cfg.hide_underscore_sheets is True
 
+    def test_a_workbook_whose_only_sheet_has_an_underscore_says_how_to_keep_it(
+        self,
+        output_path: Path,
+    ) -> None:
+        """Hiding the last visible sheet is impossible, so the error names the way out.
+
+        Excel requires one visible sheet.  A template with a single ``_report``
+        sheet therefore fails under the default config — and the message says
+        which option keeps it visible, instead of leaving the caller stuck.
+        """
+        template = output_path.with_name("sole_underscore.xlsx")
+        wb = openpyxl.Workbook()
+        wb.active.title = "_report"
+        wb.active["A1"] = "report body"
+        wb.save(template)
+        wb.close()
+
+        with pytest.raises(ValueError, match="hide_underscore_sheets=False") as caught:
+            fill(template=template, output=output_path)
+
+        assert "would leave the workbook without a visible sheet" in str(caught.value)
+        assert not output_path.exists()
+
+    def test_the_sole_underscore_sheet_fills_when_hiding_is_off(
+        self,
+        output_path: Path,
+    ) -> None:
+        """The suggested option works, and it is the only thing that has to change."""
+        template = output_path.with_name("sole_underscore.xlsx")
+        wb = openpyxl.Workbook()
+        wb.active.title = "_report"
+        wb.active["A1"] = "report body"
+        wb.save(template)
+        wb.close()
+
+        fill(
+            template=template,
+            output=output_path,
+            config=FillXLConfig(hide_underscore_sheets=False),
+        )
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            assert wb["_report"].sheet_state == "visible"
+        finally:
+            wb.close()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 8.2 Deleting sheets

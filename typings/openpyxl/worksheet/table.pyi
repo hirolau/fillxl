@@ -1,3 +1,4 @@
+﻿from collections.abc import ItemsView, ValuesView
 from typing import Any, Iterable, Iterator
 
 class TableStyleInfo:
@@ -52,8 +53,8 @@ class TableColumn:
 class TableList(dict[str, "Table"]):
     def add(self, table: Table) -> None: ...
     def get(self, name: str | None = ..., table_range: str | None = ...) -> Table | None: ...  # type: ignore[override]
-    def items(self) -> Any: ...
-    def values(self) -> Any: ...
+    def items(self) -> ItemsView[str, Table]: ...  # type: ignore[override]
+    def values(self) -> ValuesView[Table]: ...  # type: ignore[override]
     def __iter__(self) -> Iterator[str]: ...
 
 class Table:

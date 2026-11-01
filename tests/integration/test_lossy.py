@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import openpyxl
 import pytest
 
-from fillxl import FillXLConfig, LossyTemplateError, fill
+from fillxl import FillXLConfig, LossyTemplateError, LossyTemplateWarning, fill
 from tests._assets import TEMPLATE
 
 if TYPE_CHECKING:
@@ -48,6 +48,36 @@ def test_on_lossy_raise_keeps_the_previous_output(tmp_path: Path) -> None:
         fill(template=template, output=output, config=FillXLConfig(on_lossy="raise"))
 
     assert output.read_bytes() == b"old"
+
+
+def test_an_embedded_object_is_reported_and_keeps_the_previous_output(
+    tmp_path: Path,
+) -> None:
+    """An embedded Word document or PDF would vanish without any warning.
+
+    openpyxl cannot write ``xl/embeddings``, and once its drawing shape is
+    gone nothing else in the package mentions it.
+    """
+    wb = openpyxl.Workbook()
+    wb.active["A1"] = "x"
+    template = tmp_path / "embedded.xlsx"
+    wb.save(template)
+    wb.close()
+    _inject_part(template, "xl/embeddings/oleObject1.bin", b"\xd0\xcf\x11\xe0 fake package")
+
+    output = tmp_path / "out.xlsx"
+    output.write_bytes(b"old")
+
+    with pytest.raises(LossyTemplateError, match="embedded objects"):
+        fill(template=template, output=output, config=FillXLConfig(on_lossy="raise"))
+
+    assert output.read_bytes() == b"old"
+
+    with pytest.warns(LossyTemplateWarning, match="embedded objects"):
+        fill(template=template, output=output)
+
+    with zipfile.ZipFile(output) as archive:
+        assert [n for n in archive.namelist() if n.startswith("xl/embeddings/")] == []
 
 
 def test_a_plain_template_does_not_warn(tmp_path: Path) -> None:

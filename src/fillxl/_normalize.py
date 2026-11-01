@@ -37,9 +37,12 @@ Normalisation rules, in the order :func:`normalize_value` applies them:
    12. Unrecognised objects → ``str(obj)`` via ``__str__``.
 
 Values Excel cannot store faithfully (text longer than 32,767 characters,
-illegal control characters, lone surrogates, dates before 1900-03-01,
-integers with more than 15 significant digits or outside the double range)
-are reported by :func:`check_cell_value`.
+illegal control characters, lone surrogates, characters XML 1.0 forbids such
+as U+FFFE, dates before 1900-03-01, integers with more than 15 significant
+digits or outside the double range) are reported by :func:`check_cell_value`.
+An infinity is not an error — it becomes an empty cell — but
+:func:`check_nonfinite_value` warns about it, because it is data the caller
+lost.  ``NaN`` is treated as "missing" for every input type and stays silent.
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ import datetime as dt
 import enum
 import logging
 import math
+import re
 import sys
 from contextvars import ContextVar
 from decimal import Decimal
@@ -70,6 +74,11 @@ _MAX_DOUBLE = 1e308
 # numbers as doubles anyway, so wider integers are handed over as floats.
 _MAX_COM_INT = 2**31
 _FIRST_EXCEL_DATE = dt.date(1900, 3, 1)
+# XML 1.0 Char excludes these two, although Python strings can hold them:
+# openpyxl writes them raw and the workbook then fails to parse (and Excel
+# refuses it).  The other noncharacters (U+FDD0, U+FDEF, U+1FFFE, …) are
+# allowed by XML and round-trip fine, so they must not be rejected.
+_XML_FORBIDDEN_CHARACTERS = re.compile("[\ufffe\uffff]")
 
 Severity = Literal["error", "warning"]
 
@@ -134,6 +143,10 @@ def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN4
         'error'
         >>> cell_value_problem("\\ud800")[0]
         'error'
+        >>> cell_value_problem("\\ufffe")[0]
+        'error'
+        >>> cell_value_problem("ok\\ufdd0\\U00010ffff") is None
+        True
         >>> cell_value_problem(dt.datetime(1899, 12, 31))[0]
         'error'
 
@@ -151,6 +164,13 @@ def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN4
                 return "error", (
                     f"text contains the control character {match.group()!r} at position "
                     f"{match.start()}, which Excel cannot store"
+                )
+            forbidden = _XML_FORBIDDEN_CHARACTERS.search(value)
+            if forbidden:
+                return "error", (
+                    f"text contains U+{ord(forbidden.group()):04X} at position "
+                    f"{forbidden.start()}, which XML 1.0 does not allow; the workbook "
+                    "would not open afterwards"
                 )
             # A lone surrogate is non-printable but is not a control
             # character, so the regex above misses it.  It cannot be encoded
@@ -210,6 +230,82 @@ def check_cell_value(
             return
         warned.add(key)
     warn_user(f"{describe_cell(table=table, row=row, column=column, name=name)}: {text}")
+
+
+def nonfinite_number_problem(value: Any) -> str | None:  # noqa: ANN401
+    """Why *value* is a number Excel cannot hold, or ``None``.
+
+    ``NaN`` is how every data library spells "missing", so it becomes an empty
+    cell silently — the same convention as ``None``.  An infinity is data, and
+    dropping it would be silent loss, so it is reported.
+
+    Examples:
+        >>> nonfinite_number_problem(1.5) is None
+        True
+        >>> nonfinite_number_problem(float("nan")) is None
+        True
+        >>> nonfinite_number_problem(float("inf"))[:21]
+        'inf is not a finite n'
+        >>> nonfinite_number_problem(Decimal("-Infinity"))[:26]
+        "Decimal('-Infinity') is no"
+
+    """
+    if isinstance(value, Decimal):
+        if value.is_infinite():
+            return f"{value!r} is not a finite number; Excel cannot store infinity"
+        return None
+    number = _number_as_float(value)
+    if number is not None and math.isinf(number):
+        return f"{value!r} is not a finite number; Excel cannot store infinity"
+    return None
+
+
+def _number_as_float(value: Any) -> float | None:  # noqa: ANN401
+    """*value* as a float when it is a real number, otherwise ``None``."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float):
+        return value
+    numpy = sys.modules.get("numpy")
+    if numpy is None:
+        return None
+    is_scalar = isinstance(value, numpy.generic) or (
+        isinstance(value, numpy.ndarray) and value.ndim == 0
+    )
+    if not is_scalar:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def check_nonfinite_value(
+    value: Any,  # noqa: ANN401
+    *,
+    table: str | None = None,
+    row: int | None = None,
+    column: str | None = None,
+    name: str | None = None,
+    warned: set[tuple[str | None, str | None]] | None = None,
+) -> None:
+    """Warn once per column that an infinity is written as an empty cell.
+
+    Called with the *raw* value: by the time it is normalised the infinity has
+    already become ``None``, which is indistinguishable from a blank.
+    """
+    problem = nonfinite_number_problem(value)
+    if problem is None:
+        return
+    key = (table or name, column)
+    if warned is not None:
+        if key in warned:
+            return
+        warned.add(key)
+    warn_user(
+        f"{describe_cell(table=table, row=row, column=column, name=name)}: "
+        f"{problem}, so the cell is left empty; convert it to a number or to text first"
+    )
 
 
 # ── Per-fill-session state ──────────────────────────────────────────────────

@@ -231,3 +231,154 @@ class TestFailureOnInvalidEngine:
             )
 
         assert not output_path.exists()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 13.5 A failure never costs you the last report
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Every stage the output has to survive.  Each one is injected in its own test,
+# because a failure that quietly destroys yesterday's report is far worse than
+# one that leaves no report at all.
+_FAILURE_STAGES = {
+    "save": "fillxl._backends._openpyxl.OpenpyxlBackend.save",
+    "close": "fillxl._backends._openpyxl.OpenpyxlBackend.close",
+    "loss check": "fillxl._backends._openpyxl.check_lossy",
+    "replace": "pathlib.Path.replace",
+}
+
+
+def _make_previous_output(path: Path) -> None:
+    """Write a complete, valid workbook where the next fill will write."""
+    wb = openpyxl.Workbook()
+    wb.active.title = "Yesterday"
+    wb.active["A1"] = "last week's report"
+    wb.save(path)
+    wb.close()
+
+
+def _staging_files(directory: Path) -> list[Path]:
+    """Staging files fillxl may leave behind in *directory*."""
+    return sorted(directory.glob(".*.fillxl*"))
+
+
+class TestAFailureKeepsThePreviousOutput:
+    """The destination is replaced only after the whole fill has succeeded."""
+
+    @pytest.mark.parametrize("stage", list(_FAILURE_STAGES))
+    def test_a_failure_at_any_stage_keeps_the_previous_output(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stage: str,
+    ) -> None:
+        """Saving, closing, loss checking and the final swap all run first.
+
+        Whenever one of them fails, the file that was already at ``output=``
+        is still there, still readable, and still holds its own content.
+        """
+        template = tmp_path / "tmpl.xlsx"
+        _make_template(template)
+        template_before = template.read_bytes()
+
+        output = tmp_path / "report.xlsx"
+        _make_previous_output(output)
+        output_before = output.read_bytes()
+
+        seen_staging: list[Path] = []
+
+        def fail(*_args: object, **_kwargs: object) -> None:
+            seen_staging.extend(_staging_files(tmp_path))
+            msg = f"injected {stage} failure"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr(_FAILURE_STAGES[stage], fail)
+
+        with pytest.raises(RuntimeError, match="injected"):
+            fill(
+                template=template,
+                output=output,
+                tables={"MyTable": [{"Col": "new value"}]},
+            )
+
+        assert output.read_bytes() == output_before, "the previous output was destroyed"
+        assert template.read_bytes() == template_before, "the template was modified"
+        assert _staging_files(tmp_path) == [], "a staging file was left behind"
+        if stage != "save":
+            # Everything after saving saw a finished staging file.  These are
+            # the cases where a careless implementation has already thrown
+            # away (or replaced) the destination by now.
+            assert seen_staging, f"no staging file existed at the {stage} stage"
+
+        previous = openpyxl.load_workbook(output)
+        assert previous["Yesterday"]["A1"].value == "last week's report"
+        previous.close()
+
+    @pytest.mark.parametrize("stage", list(_FAILURE_STAGES))
+    def test_the_next_fill_still_works_after_a_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        stage: str,
+    ) -> None:
+        """The failure leaves nothing behind that blocks the retry."""
+        template = tmp_path / "tmpl.xlsx"
+        _make_template(template)
+        output = tmp_path / "report.xlsx"
+        _make_previous_output(output)
+
+        def fail(*_args: object, **_kwargs: object) -> None:
+            msg = f"injected {stage} failure"
+            raise RuntimeError(msg)
+
+        with monkeypatch.context() as patched:
+            patched.setattr(_FAILURE_STAGES[stage], fail)
+            with pytest.raises(RuntimeError, match="injected"):
+                fill(template=template, output=output, tables={"MyTable": [{"Col": "v"}]})
+
+        fill(template=template, output=output, tables={"MyTable": [{"Col": "v"}]})
+
+        filled = openpyxl.load_workbook(output)
+        assert filled["Data"]["A2"].value == "v"
+        filled.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 13.6 Filling a template onto itself
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestFillingOntoTheTemplatePath:
+    """``template`` and ``output`` may be the same path."""
+
+    def test_the_filled_workbook_replaces_the_template(self, tmp_path: Path) -> None:
+        """The template is copied before it is opened, so in-place runs are safe."""
+        path = tmp_path / "in_place.xlsx"
+        _make_template(path)
+
+        result = fill(
+            template=path,
+            output=path,
+            tables={"MyTable": [{"Col": "filled"}, {"Col": "again"}]},
+        )
+
+        assert result == path.resolve()
+        filled = openpyxl.load_workbook(path)
+        ws = filled["Data"]
+        assert ws["A2"].value == "filled"
+        assert ws["A3"].value == "again"
+        assert ws.tables["MyTable"].ref == "A1:A3"
+        filled.close()
+        assert _staging_files(tmp_path) == []
+
+    def test_a_failed_in_place_fill_keeps_the_template_intact(self, tmp_path: Path) -> None:
+        """An in-place run that fails must not eat the only copy of the template."""
+        path = tmp_path / "in_place.xlsx"
+        _make_template(path)
+        before = path.read_bytes()
+
+        with pytest.raises(KeyError, match="not found"):
+            fill(template=path, output=path, tables={"NoSuchTable": [{"Col": 1}]})
+
+        assert path.read_bytes() == before
+        assert _staging_files(tmp_path) == []

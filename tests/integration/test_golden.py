@@ -452,7 +452,7 @@ def _compare_tables(
         for ws in wb.worksheets:
             for table in ws._tables.values():
                 cols = [c.name for c in table.tableColumns]
-                result[table.displayName] = (ws.title, table.ref, cols)
+                result[str(table.displayName)] = (ws.title, table.ref, cols)
         return result
 
     tables_act = _get_tables(wb_actual)

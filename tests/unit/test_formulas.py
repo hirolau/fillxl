@@ -10,8 +10,10 @@ from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
 from fillxl import FillXLWarning
 from fillxl._formulas import (
+    extend_table_ranges,
     formula_definitions,
     openpyxl_formula_columns,
+    shift_relative_rows,
     warn_about_ignored_formula_data,
 )
 
@@ -99,3 +101,112 @@ def test_warn_about_ignored_formula_data_names_the_columns() -> None:
     assert ignored == ["C", "D"]
     assert len(caught) == 1
     assert "['C', 'D']" in str(caught[0].message)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Filling a calculated column: Excel copies the definition down
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize(
+    ("formula", "offset", "expected"),
+    [
+        # Relative rows move with the copy, like Excel's fill handle.
+        ("=B5*C5", 1, "=B6*C6"),
+        ("=B5*C5", 2, "=B7*C7"),
+        # Absolute and mixed rows stay put.
+        ("=B5*$C$5", 2, "=B7*$C$5"),
+        ("=B5*C$5", 2, "=B7*C$5"),
+        ("=$B5*$C5", 1, "=$B6*$C6"),
+        # Structured references are already row-relative.
+        ("=[@Qty]*[@Price]", 3, "=[@Qty]*[@Price]"),
+        # A string that looks like a reference is text, not a reference.
+        ('=IF(A5>0,"B5",B5)', 1, '=IF(A6>0,"B5",B6)'),
+        # A sheet-qualified relative row moves too.
+        ("=Data!B5*2", 1, "=Data!B6*2"),
+        ("='My Sheet'!B5", 1, "='My Sheet'!B6"),
+        # A function name that looks like a cell does not move.
+        ("=LOG10(B5)", 1, "=LOG10(B6)"),
+        # Constants and definitions without references are untouched.
+        ("=100", 3, "=100"),
+    ],
+)
+def test_shift_relative_rows_moves_only_relative_a1_rows(
+    formula: str,
+    offset: int,
+    expected: str,
+) -> None:
+    """The row arithmetic Excel applies when it fills a calculated column."""
+    assert shift_relative_rows(formula, offset) == expected
+
+
+def test_shift_relative_rows_leaves_a_formula_without_references_alone() -> None:
+    """No change means the very same string object, not a rebuilt copy."""
+    formula = "=[@Qty]*100"
+
+    assert shift_relative_rows(formula, 4) is formula
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Resizing formulas that track the table body, as Excel does
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_RESIZE = {
+    "sheet_title": "Data",
+    "first_col": 2,
+    "last_col": 2,
+    "old_body": (4, 4),
+    "new_body": (4, 7),
+}
+
+
+@pytest.mark.parametrize(
+    ("formula", "expected"),
+    [
+        ("=SUM(B4:B4)", "=SUM(B4:B7)"),
+        ("=SUM($B$4:$B$4)", "=SUM($B$4:$B$7)"),
+        ("=SUM(B$4:B$4)", "=SUM(B$4:B$7)"),
+        ("=SUM(Data!B4:B4)", "=SUM(Data!B4:B7)"),
+        ('=IF(A1>0,"B4:B4",SUM(B4:B4))', '=IF(A1>0,"B4:B4",SUM(B4:B7))'),
+        ("=AVERAGE(B4:B4)+MAX(C1:C2,B4:B4)", "=AVERAGE(B4:B7)+MAX(C1:C2,B4:B7)"),
+    ],
+)
+def test_extend_table_ranges_resizes_the_ranges_that_track_the_body(
+    formula: str,
+    expected: str,
+) -> None:
+    """A range over exactly the body rows follows the table, like Excel's resize."""
+    assert extend_table_ranges(formula, **_RESIZE) == expected
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=SUM(B4:B5)",  # one row more than the body
+        "=SUM(C1:C3)",  # outside the table's columns
+        "=SUM(D4:D4)",  # a column the table does not own
+        "=SUM(Other!B4:B4)",  # another sheet
+        "=SUM(Z1:Z1)",  # unrelated rows
+        "=B4*2",  # a single cell is not a range
+        "=SUM(B$1:$B$4)",  # starts outside the body
+        "=50",  # no references at all
+    ],
+)
+def test_extend_table_ranges_leaves_unrelated_formulas_alone(formula: str) -> None:
+    """Only a range that covers the table body is resized; everything else is kept."""
+    assert extend_table_ranges(formula, **_RESIZE) is None
+
+
+def test_extend_table_ranges_shrinks_when_the_table_shrinks() -> None:
+    """The rule is symmetric: Excel takes the range back down again."""
+    assert (
+        extend_table_ranges(
+            "=SUM(B4:B7)",
+            sheet_title="Data",
+            first_col=2,
+            last_col=2,
+            old_body=(4, 7),
+            new_body=(4, 4),
+        )
+        == "=SUM(B4:B4)"
+    )

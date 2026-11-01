@@ -162,7 +162,12 @@ class OpenpyxlBackend:
         to_hide = [title for title in visible if title.startswith(prefix)]
         if not to_hide:
             return
-        require_a_visible_sheet(visible, to_hide, "Hiding")
+        require_a_visible_sheet(
+            visible,
+            to_hide,
+            "Hiding",
+            hint="Set hide_underscore_sheets=False to keep it visible.",
+        )
         active = _active_title(workbook)
         for title in to_hide:
             workbook[title].sheet_state = "hidden"

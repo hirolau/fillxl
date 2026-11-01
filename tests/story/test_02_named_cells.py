@@ -117,18 +117,28 @@ class TestNamedCellErrors:
                 values={"nonexistent": "value"},
             )
 
-    def test_named_cell_names_are_case_sensitive(
+    def test_a_named_cell_is_matched_ignoring_case(
         self,
         output_path: Path,
         named_cell_template: Path,
     ) -> None:
-        """'My_Cell' and 'my_cell' are different names."""
-        with pytest.raises(KeyError):
-            fill(
-                template=named_cell_template,
-                output=output_path,
-                values={"MY_CELL": "value"},
-            )
+        """Excel resolves ``MY_CELL`` to ``my_cell``, and so does fillxl.
+
+        It used to raise ``KeyError`` with the openpyxl engine while the COM
+        engine filled the cell, because COM asks Excel and Excel does not care
+        about case.
+        """
+        fill(
+            template=named_cell_template,
+            output=output_path,
+            values={"MY_CELL": "value"},
+        )
+
+        wb = openpyxl.load_workbook(output_path)
+        try:
+            assert wb["Sheet1"]["A1"].value == "value"
+        finally:
+            wb.close()
 
     def test_unknown_named_cells_are_skipped_when_allow_missing_is_true(
         self,

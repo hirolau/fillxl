@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import warnings
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -226,3 +227,129 @@ def test_a_precision_warning_from_deep_inside_fillxl_points_at_the_caller(
     precision = [w for w in caught if issubclass(w.category, FillXLWarning)]
     assert len(precision) == 1
     assert Path(precision[0].filename).name == Path(__file__).name
+
+
+def test_auto_refuses_an_output_suffix_excel_cannot_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``auto`` must not hand Excel a file name it is bound to reject at save()."""
+    monkeypatch.setattr("fillxl._backend._win32com_available", lambda: True)
+
+    with pytest.raises(ValueError, match=r"cannot write a '\.csv' file"):
+        resolve_engine("auto", Path("t.xlsx"), Path("o.csv"))
+
+
+def test_auto_never_starts_excel_for_a_format_it_cannot_save(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bad suffix is refused up front, not after the workbook has been opened.
+
+    Excel can convert between its own formats, not to ``.txt``; the old code
+    chose win32com for the format conversion and only found out at ``save()``,
+    naming the internal staging file instead of the caller's path.
+    """
+    template = _xlsx_template(tmp_path)
+
+    def refuse_load(_self: object, _path: Path) -> None:
+        msg = "the template must not be loaded"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("fillxl._backend._win32com_available", lambda: True)
+    monkeypatch.setattr("fillxl._backends._win32com.Win32ComBackend.load", refuse_load)
+    monkeypatch.setattr("fillxl._backends._openpyxl.OpenpyxlBackend.load", refuse_load)
+
+    with pytest.raises(ValueError, match=r"cannot write a '\.txt' file"):
+        fill(template, tmp_path / "out.txt", tables={"Sales": _ROWS})
+
+    assert not (tmp_path / "out.txt").exists()
+
+
+def test_an_output_without_a_suffix_is_refused_by_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The message says "no extension", not the name of a temporary file."""
+    template = _xlsx_template(tmp_path)
+    monkeypatch.setattr("fillxl._backend._win32com_available", lambda: True)
+
+    with pytest.raises(ValueError, match="without an extension"):
+        fill(template, tmp_path / "out", tables={"Sales": _ROWS})
+
+
+def test_the_message_names_the_engine_the_caller_asked_for(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``engine="auto"`` must not report a win32com error as if it were requested.
+
+    The caller asked for no particular engine, so the message explains that the
+    choice was made for them instead of blaming a backend they never named.
+    """
+    template = _xlsx_template(tmp_path)
+    monkeypatch.setattr("fillxl._backend._win32com_available", lambda: True)
+
+    with pytest.raises(ValueError) as caught:
+        fill(template, tmp_path / "out.txt", tables={"Sales": _ROWS})
+
+    message = str(caught.value)
+    assert message.startswith("engine='auto' chose win32com")
+    assert "'out.txt'" not in message  # the staging file is not the caller's path
+    assert "stay on openpyxl" in message
+
+
+def test_an_output_that_is_a_directory_is_refused_before_the_template_is_opened(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A directory used as ``output=`` is not a permission problem, and is not a fill."""
+    template = _xlsx_template(tmp_path)
+    target = tmp_path / "out.xlsx"
+    target.mkdir()
+
+    def refuse_load(_self: object, _path: Path) -> None:
+        msg = "the template must not be loaded"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("fillxl._backends._openpyxl.OpenpyxlBackend.load", refuse_load)
+
+    with pytest.raises(IsADirectoryError, match="is a directory"):
+        fill(template, target, tables={"Sales": _ROWS})
+
+    assert list(target.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("argument", "value", "expected"),
+    [
+        ("values", [("report", "x")], "values="),
+        ("tables", [{"fund": "A", "nav": 1}], "tables="),
+        ("values", "report", "values="),
+        ("config", {"escape_formulas": False}, "config="),
+    ],
+)
+def test_a_mistyped_argument_is_refused_before_the_template_is_opened(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    argument: str,
+    value: Any,  # noqa: ANN401
+    expected: str,
+) -> None:
+    """A list, a bare string or a dict of options is a TypeError, not an AttributeError.
+
+    The failure used to surface as ``'list' object has no attribute 'items'``
+    from inside the fill, after the template had already been loaded.
+    """
+    template = _xlsx_template(tmp_path)
+    output = tmp_path / "out.xlsx"
+
+    def refuse_load(_self: object, _path: Path) -> None:
+        msg = "the template must not be loaded"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("fillxl._backends._openpyxl.OpenpyxlBackend.load", refuse_load)
+
+    with pytest.raises(TypeError, match=expected):
+        fill(template, output, **{argument: value})
+
+    assert not output.exists()

@@ -143,6 +143,28 @@ def _pandas_index_carries_data(index: Any) -> bool:  # noqa: ANN401
     return len(index) > 0 and not pd.api.types.is_integer_dtype(index.dtype)
 
 
+def _index_description(index: Any) -> str:  # noqa: ANN401
+    """How to name the index in the "not written" warning.
+
+    ``index.names`` holds ``None`` for an unnamed index; printing it raw read
+    as if the index were *called* ``None``.
+
+    Examples:
+        >>> import pandas as pd
+        >>> _index_description(pd.Index(["a"], name="rowid"))
+        "The DataFrame index 'rowid'"
+        >>> _index_description(pd.Index(["a"]))
+        'The DataFrame index'
+        >>> _index_description(pd.MultiIndex.from_tuples([(1, "x")], names=["k", "v"]))
+        "The DataFrame index 'k'/'v'"
+
+    """
+    names = [name for name in index.names if name is not None]
+    if not names:
+        return "The DataFrame index"
+    return "The DataFrame index " + "/".join(repr(name) for name in names)
+
+
 class TabularAdapter:
     """Adapter that normalizes different tabular data types to a common interface."""
 
@@ -167,7 +189,7 @@ class TabularAdapter:
         if pd is not None and isinstance(data, pd.DataFrame):
             if _pandas_index_carries_data(data.index):
                 warn_user(
-                    f"The DataFrame index {list(data.index.names)} is not written to Excel; "
+                    f"{_index_description(data.index)} is not written to Excel; "
                     "call df.reset_index() to include it.",
                 )
             self._columns = _normalize_column_names(data.columns)

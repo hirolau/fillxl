@@ -82,11 +82,10 @@ The `backends` job in CI runs the same selection for the oldest and newest
 supported release line of each backend on Python 3.12.
 
 !!! note "duckdb on Python 3.15"
-    duckdb 1.x publishes no cp315 wheels, so the `duckdb` extra is marked
-    `python_version < '3.15'` and the 1.x sessions skip 3.15. duckdb 2.x ships
-    abi3 wheels that do install there, so `tests_duckdb-2` runs on 3.15; the
-    extra keeps its 1.x floor until `uv.lock` moves on. The rest of the package
-    is fully supported on 3.15.
+    duckdb 2.x ships abi3 wheels that install on 3.15, so `uv.lock` resolves
+    duckdb 2.x everywhere and the `duckdb` extra works on every supported
+    Python. duckdb 1.x publishes no cp315 wheels, so `tests_duckdb-min` skips
+    3.15 — that is a limit of duckdb 1.x, not of fillxl.
 
 ## Project Structure
 

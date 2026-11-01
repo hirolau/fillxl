@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-11-01
+
+### Changed
+- Documentation no longer presents the data-library extras as a choice users have
+  to make. `pip install fillxl` is enough: pandas, Polars and DuckDB support
+  works with the library version you already have, because fillxl detects the
+  object type you pass and never imports those libraries itself. The extras are
+  no longer listed in the README.
+- On Windows, pywin32 now ships with fillxl, so `engine="win32com"` works after
+  a plain `pip install fillxl`. An environment marker keeps it out of Linux and
+  macOS installs.
+
+### Removed
+- The `win32com` extra: pywin32 is a base dependency on Windows, so there is
+  nothing left to opt into. `fillxl[all]` no longer lists it either.
+
+### Fixed
+- The `duckdb` extra installs on Python 3.15. duckdb 2.0 ships `cp312-abi3`
+  wheels, so the `python_version < '3.15'` marker on the extra is gone and
+  duckdb data sources are available on every supported Python; `uv.lock`
+  resolves duckdb 2.0. Only the duckdb 1.x line still has no 3.15 wheels.
+
 ## [0.7.0] - 2026-11-01
 
 Breaking, but safer. The breaking changes are grouped into this one release so

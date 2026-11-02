@@ -237,6 +237,15 @@ def _date_1904(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     )
 
 
+def _windows_line_endings(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+    data = body_rows(2)
+    data[0]["Note"] = "first\r\nsecond"
+    return (
+        table_template(tmp_path / "template.xlsx", rows=1),
+        {"tables": {"Data": data}},
+    )
+
+
 def _named_cell_scalars(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     template = named_cell_template(
         tmp_path / "template.xlsx",
@@ -295,6 +304,14 @@ SCENARIOS = [
     pytest.param(_formatted_dates, id="formatted-dates"),
     pytest.param(_date_1904, id="date-1904"),
     pytest.param(_text_that_looks_like_an_error, id="hash-na-text"),
+    pytest.param(
+        _windows_line_endings,
+        id="windows-line-endings",
+        marks=pytest.mark.xfail(
+            reason="openpyxl 3.1 writes a literal carriage return, which XML "
+            "normalises to a newline when the part is read again",
+        ),
+    ),
     pytest.param(_formula_text_escaped, id="formula-text-escaped"),
     pytest.param(_formula_text_unescaped, id="formula-text-unescaped"),
     pytest.param(_named_cell_scalars, id="named-cells"),
@@ -313,6 +330,24 @@ def test_the_engines_write_the_same_workbook(build: Any, tmp_path: Path) -> None
 
     differences = _differences(expected, actual)
     assert not differences, "The engines disagree:\n" + "\n".join(differences[:50])
+
+
+def test_text_with_windows_line_endings_reads_back_the_same_from_both_engines(
+    tmp_path: Path,
+) -> None:
+    """A carriage return is legal in a cell; the fillxl engine keeps it.
+
+    openpyxl 3.1 writes the ``\\r`` literally, and XML normalises a literal
+    carriage return to a newline, so its output reads back as ``\\n\\n``.  The
+    fillxl engine escapes it as ``&#13;``, which is why the comparison of the
+    two outputs is expected to differ (and is marked xfail in the scenario
+    list) while this test pins the round trip that matters.
+    """
+    template, kwargs = _windows_line_endings(tmp_path)
+
+    _, actual = fill_both(template, tmp_path, **kwargs)
+
+    assert actual["sheets"]["Data"]["cells"]["E2"][0] == "first\r\nsecond"
 
 
 def test_untouched_parts_are_byte_identical_to_the_template(tmp_path: Path) -> None:

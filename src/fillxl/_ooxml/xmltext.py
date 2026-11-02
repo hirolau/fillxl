@@ -48,12 +48,23 @@ def unescape(text: str) -> str:
 def escape_text(text: str) -> str:
     """*text* escaped for use as XML element content.
 
+    A carriage return is escaped: XML parsers normalise a literal ``\\r`` (and
+    a ``\\r\\n`` pair) to ``\\n`` when they read the part, which would silently
+    change the user's text.
+
     Examples:
         >>> escape_text("a < b & c")
         'a &lt; b &amp; c'
+        >>> escape_text("a\\r\\nb")
+        'a&#13;\\nb'
 
     """
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\r", "&#13;")
+    )
 
 
 def escape_attribute(text: str) -> str:

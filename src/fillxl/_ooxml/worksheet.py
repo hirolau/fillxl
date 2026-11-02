@@ -634,3 +634,12 @@ class SheetStore:
         """Write back every sheet that changed."""
         for sheet in self._sheets.values():
             sheet.save()
+
+    def forget(self, part: str) -> None:
+        """Drop the cached editor of *part*, so the next :meth:`get` re-reads it.
+
+        An operation that changes a part directly through the package (hiding a
+        sheet, deleting one, activating one) leaves a cached editor holding the
+        old text; saving it back would undo the change.
+        """
+        self._sheets.pop(part, None)

@@ -20,7 +20,9 @@ from fillxl._ooxml.dangling import warn_about_deleted_sheets
 from fillxl._ooxml.fill import fill_named_cell, fill_table
 from fillxl._ooxml.package import OoxmlPackage
 from fillxl._ooxml.pivots import set_refresh_on_load
+from fillxl._ooxml.styles import StylesPart
 from fillxl._ooxml.workbook import WorkbookPart
+from fillxl._ooxml.worksheet import SheetStore
 from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
 
 if TYPE_CHECKING:
@@ -44,6 +46,8 @@ class FillxlBackend:
     def __init__(self) -> None:
         self._package: OoxmlPackage | None = None
         self._workbook: WorkbookPart | None = None
+        self._sheets: SheetStore | None = None
+        self._styles: StylesPart | None = None
         self._source_suffix: str | None = None
         self._deleted_sheets: list[str] = []
 
@@ -53,6 +57,20 @@ class FillxlBackend:
             msg = "No workbook loaded — call load() first"
             raise RuntimeError(msg)
         return self._package, self._workbook
+
+    def _require_session(self) -> tuple[OoxmlPackage, WorkbookPart, SheetStore, StylesPart]:
+        """Return the package, the workbook and the per-session part editors."""
+        package, workbook = self._require_workbook()
+        if self._sheets is None or self._styles is None:
+            msg = "No workbook loaded — call load() first"
+            raise RuntimeError(msg)
+        return package, workbook, self._sheets, self._styles
+
+    def _save_parts(self) -> None:
+        """Write back the cached sheet editors, so ``package.text()`` is current."""
+        _, _, sheets, styles = self._require_session()
+        sheets.save_all()
+        styles.save()
 
     # ── Backend protocol ────────────────────────────────────────────────────
 
@@ -78,6 +96,10 @@ class FillxlBackend:
         self._source_suffix = suffix
         self._package = OoxmlPackage(path)
         self._workbook = WorkbookPart(self._package)
+        # One editor per part and one style sheet per session: filling several
+        # named cells must not parse the same sheet again for each of them.
+        self._sheets = SheetStore(self._package)
+        self._styles = StylesPart(self._package)
 
     def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.
@@ -88,14 +110,17 @@ class FillxlBackend:
             config: Global fill configuration.
 
         """
-        package, workbook = self._require_workbook()
+        package, workbook, sheets, styles = self._require_session()
         fill_named_cell(
             package,
             workbook,
             name,
             value,
             escape_formulas=config.escape_formulas,
+            sheets=sheets,
+            styles=styles,
         )
+        self._save_parts()
 
     def fill_table(
         self,
@@ -114,8 +139,10 @@ class FillxlBackend:
             A :class:`TableChangeSpecs` describing the old and new dimensions.
 
         """
-        package, workbook = self._require_workbook()
-        return fill_table(package, workbook, name, data, config)
+        package, workbook, sheets, styles = self._require_session()
+        spec = fill_table(package, workbook, name, data, config, sheets=sheets, styles=styles)
+        self._save_parts()
+        return spec
 
     def update_charts(self, spec: TableChangeSpecs) -> None:
         """Update chart data ranges after a table resize.
@@ -151,11 +178,17 @@ class FillxlBackend:
             hint="Set hide_underscore_sheets=False to keep it visible.",
         )
         active = workbook.active_sheet_name()
+        _, _, sheets, _ = self._require_session()
         for name in to_hide:
             workbook.set_sheet_state(name, "hidden")
+            entry = workbook.sheet(name)
+            if entry is not None:
+                sheets.forget(entry.part)
             logger.debug("Hidden sheet '%s'", name)
         if active is None or active in to_hide:
             workbook.set_active_sheet(first_remaining(visible, to_hide))
+            for entry in workbook.sheets():
+                sheets.forget(entry.part)
 
     def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the sheets named in *names*.
@@ -174,13 +207,21 @@ class FillxlBackend:
         visible = [entry.name for entry in workbook.sheets() if entry.visible]
         require_a_visible_sheet(visible, present, "Deleting")
         active = workbook.active_sheet_name()
+        _, _, sheets, _ = self._require_session()
+        present_parts = {
+            entry.part for entry in workbook.sheets() if entry.name in set(present) and entry.part
+        }
         workbook.remove_sheets(present)
+        for part in present_parts:
+            sheets.forget(part)
         for name in present:
             logger.debug("Deleted sheet '%s'", name)
         if active is not None and active not in present:
             workbook.set_active_sheet(active)
         else:
             workbook.set_active_sheet(first_remaining(visible, present))
+        for entry in workbook.sheets():
+            sheets.forget(entry.part)
         self._deleted_sheets.extend(present)
         warn_about_deleted_sheets(package, workbook, present)
 
@@ -203,6 +244,9 @@ class FillxlBackend:
             msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
             raise ValueError(msg)
         workbook.set_active_sheet(entry.name)
+        _, _, sheets, _ = self._require_session()
+        for sheet_entry in workbook.sheets():
+            sheets.forget(sheet_entry.part)
         logger.debug("Set active sheet to '%s'", name)
 
     def save(self, path: Path) -> None:
@@ -236,6 +280,8 @@ class FillxlBackend:
         """Release the in-memory package."""
         self._package = None
         self._workbook = None
+        self._sheets = None
+        self._styles = None
 
     def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
         """Report template features the fill did not write back.

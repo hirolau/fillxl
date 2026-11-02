@@ -76,6 +76,8 @@ def fill_named_cell(
     value: Any,  # noqa: ANN401
     *,
     escape_formulas: bool,
+    sheets: SheetStore,
+    styles: StylesPart,
 ) -> None:
     """Write a scalar *value* to the cell the defined name *name* points at.
 
@@ -85,6 +87,8 @@ def fill_named_cell(
         name: Defined name to write.
         value: Scalar value.
         escape_formulas: Whether a string starting with ``=`` is text.
+        sheets: The session's sheet editors, so a sheet is parsed once.
+        styles: The session's style sheet.
 
     Raises:
         KeyError: If the name (or the sheet it points at) does not exist.
@@ -113,12 +117,11 @@ def fill_named_cell(
         logger.warning("Worksheet '%s' is not a regular worksheet, skipping", sheet_name)
         return
 
-    sheet = SheetStore(package).get(sheet_entry.part)
+    sheet = sheets.get(sheet_entry.part)
     row, column = split_reference(address.replace("$", ""))
     _refuse_header_write(package, sheet_entry, row, column, sheet_name, address)
     _refuse_spill_write(sheet, row, column)
 
-    styles = StylesPart(package)
     sheet.write_cell(
         row,
         column,
@@ -130,8 +133,6 @@ def fill_named_cell(
             epoch=_epoch(workbook),
         ),
     )
-    sheet.save()
-    styles.save()
     logger.debug("Set named cell '%s' (%s!%s) = %s", name, sheet_name, address, normalised)
 
 
@@ -180,6 +181,9 @@ def fill_table(
     name: str,
     data: Any,  # noqa: ANN401
     config: FillXLConfig,
+    *,
+    sheets: SheetStore,
+    styles: StylesPart,
 ) -> TableChangeSpecs:
     """Fill the table called *name* with *data*.
 
@@ -189,6 +193,8 @@ def fill_table(
         name: Table name.
         data: Tabular data (DataFrame, list[dict], …).
         config: Fill configuration.
+        sheets: The session's sheet editors, so a sheet is parsed once.
+        styles: The session's style sheet.
 
     Returns:
         The old and new table dimensions, for chart updates.
@@ -203,8 +209,6 @@ def fill_table(
     table = find_table(package, sheet_entries, name)
     geometry = table.geometry()
     plan = plan_table_fill(geometry, len(adapter.rows))
-    sheets = SheetStore(package)
-    styles = StylesPart(package)
     sheet = sheets.get(table.sheet.part)
     # The fill rewrites the table area; a shared group that reaches into it is
     # unshared first, so no dependent is left without its master.
@@ -313,8 +317,6 @@ def fill_table(
             logger.debug("Extended conditional formatting: %s -> %s", old_sqref, new_sqref)
 
     sheet.expand_dimension(plan.new_last_row)
-    sheets.save_all()
-    styles.save()
     logger.debug("Table '%s' resized: %s -> %s", name, table.ref, plan.new_ref)
     return plan.change_spec(table.sheet.name)
 

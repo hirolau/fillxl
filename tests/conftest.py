@@ -48,6 +48,26 @@ def read_output(path: Path) -> openpyxl.Workbook:
 # ── Standard fixtures ───────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _fillxl_outputs_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every workbook the fillxl engine writes has to be well-formed XML.
+
+    The engine edits parts as text, so a bad edit produces a file no reader can
+    open.  Checking every output turns that into a test failure next to the
+    code that caused it, instead of a bug report from a user.
+    """
+    from fillxl._backends._fillxl import FillxlBackend
+    from tests._spills import assert_well_formed
+
+    original = FillxlBackend.save
+
+    def checked(self: FillxlBackend, path: Path) -> None:
+        original(self, path)
+        assert_well_formed(path)
+
+    monkeypatch.setattr(FillxlBackend, "save", checked)
+
+
 @pytest.fixture
 def output_path(tmp_path: Path) -> Path:
     """Return a temporary output path for each test."""

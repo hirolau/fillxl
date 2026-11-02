@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+import xml.parsers.expat as expat
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -251,7 +252,14 @@ class OoxmlPackage:
         Parts that were not rewritten are copied with their original ZIP entry
         (compression method and timestamp included), so an untouched part is
         indistinguishable from the template's.
+
+        Raises:
+            RuntimeError: If a part this engine rewrote is no longer
+                well-formed XML.  Nothing is written in that case: half a
+                workbook is worse than none.
+
         """
+        self._assert_well_formed()
         with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
             for name in self._order:
                 if name not in self._parts:
@@ -261,3 +269,23 @@ class OoxmlPackage:
                     archive.writestr(info, self._parts[name])
                 else:  # pragma: no cover - parts are never added to the archive
                     archive.writestr(name, self._parts[name])
+
+    def _assert_well_formed(self) -> None:
+        """Refuse to write a package whose rewritten XML no longer parses.
+
+        The tests assert this about their own output; this guard is what
+        protects a user's file, because a text edit gone wrong produces a
+        workbook no reader can open.
+        """
+        for name in sorted(self._dirty):
+            if name not in self._parts or not name.endswith((".xml", ".rels")):
+                continue
+            parser = expat.ParserCreate()
+            try:
+                parser.Parse(self._parts[name], True)
+            except expat.ExpatError as exc:
+                msg = (
+                    f"fillxl produced malformed XML in {name}: {exc}. "
+                    "This is a fillxl bug; please report it with the template."
+                )
+                raise RuntimeError(msg) from exc

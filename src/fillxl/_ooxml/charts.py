@@ -33,6 +33,11 @@ _REFERENCE_BLOCK = re.compile(
     rf"<{_TAG}(?P<kind>strRef|numRef|multiLvlStrRef)\b[^>]*?(?:/>|>.*?</{_TAG}(?P=kind)>)",
     re.S,
 )
+_DATA_SOURCE = re.compile(
+    rf"<{_TAG}(?P<source>cat|val|xVal|yVal|bubbleSize|plus|minus)\b[^>]*>"
+    rf".*?</{_TAG}(?P=source)>",
+    re.S,
+)
 _FORMULA = xmltext.element_re("f")
 _POINT_COUNT = re.compile(rf"<{_TAG}ptCount\b[^>]*?/>")
 
@@ -65,7 +70,13 @@ def update_chart_references(package: OoxmlPackage, spec: TableChangeSpecs) -> in
 
 
 def _rewrite_part(text: str, spec: TableChangeSpecs) -> tuple[str, int]:
-    """*text* with the references of *spec* rewritten, and how many changed."""
+    """*text* with the references of *spec* rewritten, and how many changed.
+
+    Only the data-source blocks are rewritten.  A series name lives in
+    ``<c:tx>`` and points at a header cell that often sits next to — or, for a
+    one-row table, on — the data rows; rewriting it would turn a label into a
+    range.
+    """
     total = 0
 
     def replace_block(match: re.Match[str]) -> str:
@@ -93,4 +104,7 @@ def _rewrite_part(text: str, spec: TableChangeSpecs) -> tuple[str, int]:
             block,
         )
 
-    return _REFERENCE_BLOCK.sub(replace_block, text), total
+    def replace_source(match: re.Match[str]) -> str:
+        return _REFERENCE_BLOCK.sub(replace_block, match.group(0))
+
+    return _DATA_SOURCE.sub(replace_source, text), total

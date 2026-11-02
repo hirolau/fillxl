@@ -1,16 +1,19 @@
 #!/usr/bin/env python
-"""Benchmark fillxl (polars/pandas/duckdb x openpyxl/win32com) vs reference methods.
+"""Benchmark fillxl (polars/pandas/duckdb x openpyxl/fillxl/win32com) vs reference methods.
 
 Reads the 10-row city-data template, expands it to ``N_ROWS`` rows
 (5,000 by default), then measures wall-clock time for each method across
-``N_ITER`` iterations (10 by default).
+``N_ITER`` iterations (10 by default).  ``FILLXL_BENCH_ROWS`` and
+``FILLXL_BENCH_ITER`` override those two numbers for a quick run.
 """
 
 from __future__ import annotations
 
 import importlib
+import os
 import shutil
 import statistics
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -23,10 +26,11 @@ TEMPLATE = (
 TABLE_NAME = "CityData"
 
 # ── Tune these for your environment ──────────────────────────────────────────
-N_ROWS = 5000         # Number of rows to benchmark
-N_ITER = 10            # Iterations per method (results show mean ± std)
+N_ROWS = int(os.environ.get("FILLXL_BENCH_ROWS", "5000"))  # Number of rows
+N_ITER = int(os.environ.get("FILLXL_BENCH_ITER", "10"))  # Iterations per method
 
 # Estimated run time:
+#   fillxl engine: seconds per iteration — it edits the ZIP, no model, no Excel
 #   openpyxl: ~30-90s per 500k-iteration (grows linearly with rows)
 #   win32com: ~100x slower than openpyxl (~hours for 500k x 5 iters)
 #   pandas.to_csv: fastest (<1s)
@@ -298,6 +302,10 @@ def _has_excel() -> bool:
 
 
 def main() -> None:
+    # The section rules below are box-drawing characters; a Windows console or
+    # a cp1252 pipe cannot encode them and would crash the run.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     print("=" * 74)
     print(f"  fillxl speed benchmark — {N_ROWS:,} rows x {N_ITER} iterations")
     print(f"  Template: {TEMPLATE.name} — table '{TABLE_NAME}'")
@@ -323,6 +331,11 @@ def main() -> None:
         results.append(("fillxl list[dict] / openpyxl", t))
         print(f"    openpyxl  {_fmt(t)}" if t else "    openpyxl  —  ERROR")
 
+        _warmup(bench_fillxl, data, tmp, "fillxl", tag="warmup_fillxl")
+        t = _run("", bench_fillxl, data, tmp, "fillxl", tag="list_fillxl")
+        results.append(("fillxl list[dict] / fillxl", t))
+        print(f"    fillxl    {_fmt(t)}" if t else "    fillxl    —  ERROR")
+
         if _has_excel():
             _warmup(bench_fillxl, data, tmp, "win32com", tag="warmup_win32")
             t = _run("", bench_fillxl, data, tmp, "win32com", tag="list_win32com")
@@ -342,6 +355,11 @@ def main() -> None:
             t = _run("", bench_fillxl_polars, data, tmp, "openpyxl", tag="polars_openpyxl")
             results.append(("fillxl polars / openpyxl", t))
             print(f"    openpyxl  {_fmt(t)}" if t else "    openpyxl  —  ERROR")
+
+            _warmup(bench_fillxl_polars, data, tmp, "fillxl", tag="warmup_polars_fx")
+            t = _run("", bench_fillxl_polars, data, tmp, "fillxl", tag="polars_fillxl")
+            results.append(("fillxl polars / fillxl", t))
+            print(f"    fillxl    {_fmt(t)}" if t else "    fillxl    —  ERROR")
 
             if _has_excel():
                 _warmup(bench_fillxl_polars, data, tmp, "win32com",
@@ -374,6 +392,11 @@ def main() -> None:
             t = _run("", bench_fillxl_pandas, data, tmp, "openpyxl", tag="pandas_openpyxl")
             results.append(("fillxl pandas / openpyxl", t))
             print(f"    openpyxl  {_fmt(t)}" if t else "    openpyxl  —  ERROR")
+
+            _warmup(bench_fillxl_pandas, data, tmp, "fillxl", tag="warmup_pd_fx")
+            t = _run("", bench_fillxl_pandas, data, tmp, "fillxl", tag="pandas_fillxl")
+            results.append(("fillxl pandas / fillxl", t))
+            print(f"    fillxl    {_fmt(t)}" if t else "    fillxl    —  ERROR")
 
             if _has_excel():
                 _warmup(bench_fillxl_pandas, data, tmp, "win32com",
@@ -411,6 +434,11 @@ def main() -> None:
             t = _run("", bench_fillxl_duckdb, data, tmp, "openpyxl", tag="duckdb_openpyxl")
             results.append(("fillxl duckdb / openpyxl", t))
             print(f"    openpyxl  {_fmt(t)}" if t else "    openpyxl  —  ERROR")
+
+            _warmup(bench_fillxl_duckdb, data, tmp, "fillxl", tag="warmup_duckdb_fx")
+            t = _run("", bench_fillxl_duckdb, data, tmp, "fillxl", tag="duckdb_fillxl")
+            results.append(("fillxl duckdb / fillxl", t))
+            print(f"    fillxl    {_fmt(t)}" if t else "    fillxl    —  ERROR")
 
             if _has_excel():
                 _warmup(bench_fillxl_duckdb, data, tmp, "win32com",

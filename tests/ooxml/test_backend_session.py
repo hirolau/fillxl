@@ -29,7 +29,7 @@ def test_many_named_cells_on_one_sheet_parse_the_sheet_once(
     parses: list[str] = []
     original = SheetPart.__init__
 
-    def counting(self: SheetPart, package: object, part: str) -> None:  # noqa: ANN401
+    def counting(self: SheetPart, package: object, part: str) -> None:
         parses.append(part)
         original(self, package, part)  # type: ignore[arg-type]
 

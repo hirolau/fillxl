@@ -87,8 +87,7 @@ def add_metadata_part(parts: dict[str, bytes]) -> None:
     parts["[Content_Types].xml"] = parts["[Content_Types].xml"].replace(
         b"</Types>",
         (
-            f'<Override PartName="/{METADATA_PART}" ContentType="{METADATA_CONTENT_TYPE}"/>'
-            "</Types>"
+            f'<Override PartName="/{METADATA_PART}" ContentType="{METADATA_CONTENT_TYPE}"/></Types>'
         ).encode(),
     )
     rels = parts["xl/_rels/workbook.xml.rels"].decode()
@@ -192,8 +191,7 @@ def build_spill_in_growth_path(path: Path) -> Path:
     xml = replace_cell(
         xml,
         "B6",
-        '<c r="B6" cm="1"><f t="array" ref="B6:B9">_xlfn.UNIQUE(Tbl[Region])</f>'
-        "<v>north</v></c>",
+        '<c r="B6" cm="1"><f t="array" ref="B6:B9">_xlfn.UNIQUE(Tbl[Region])</f><v>north</v></c>',
     )
     for row in (7, 8, 9):
         span = _cell_element(xml, f"B{row}")

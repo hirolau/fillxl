@@ -8,7 +8,6 @@ engine that can read it.
 
 from __future__ import annotations
 
-import os
 import zipfile
 from typing import TYPE_CHECKING
 
@@ -49,4 +48,4 @@ def _encode_as_utf16(path: Path, part: str) -> None:
     with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
         for info in infos:
             archive.writestr(info, parts[info.filename])
-    os.replace(temporary, path)
+    temporary.replace(path)

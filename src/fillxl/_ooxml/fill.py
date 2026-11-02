@@ -48,7 +48,6 @@ from fillxl._ooxml.worksheet import (
     SheetPart,
     SheetStore,
     array_range,
-    formula_text,
     split_reference,
 )
 from fillxl._plan import BlockedRegion, blocked_area, plan_table_fill

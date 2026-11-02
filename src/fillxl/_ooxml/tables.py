@@ -77,10 +77,14 @@ class TablePart:
         root = _ROOT.search(self.text)
         if root is None:  # pragma: no cover - a table part always has a root
             return ""
-        return xmltext.attribute(root.group(0), "displayName") or xmltext.attribute(
-            root.group(0),
-            "name",
-        ) or ""
+        return (
+            xmltext.attribute(root.group(0), "displayName")
+            or xmltext.attribute(
+                root.group(0),
+                "name",
+            )
+            or ""
+        )
 
     @property
     def ref(self) -> str:
@@ -157,8 +161,7 @@ class TablePart:
 def tables_on_sheet(package: OoxmlPackage, sheet: SheetEntry) -> list[TablePart]:
     """Every table defined on *sheet*."""
     return [
-        TablePart(package, part, sheet)
-        for part in package.related_parts(sheet.part, TABLE_SUFFIX)
+        TablePart(package, part, sheet) for part in package.related_parts(sheet.part, TABLE_SUFFIX)
     ]
 
 

@@ -8,7 +8,6 @@ be lost.
 
 from __future__ import annotations
 
-import os
 import posixpath
 import re
 import shutil
@@ -350,7 +349,7 @@ class OoxmlPackage:
                 target.unlink(missing_ok=True)
             raise
         if same_file:
-            os.replace(target, path)
+            target.replace(path)
 
     def _write(self, path: Path) -> None:
         """Write every surviving part, streaming the ones that were not touched."""

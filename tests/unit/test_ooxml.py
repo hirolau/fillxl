@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from fillxl._charts import TableChangeSpecs
 from fillxl._cells import name_destinations
+from fillxl._charts import TableChangeSpecs
 from fillxl._ooxml import xmltext
 from fillxl._ooxml.charts import update_chart_references
 from fillxl._ooxml.package import OoxmlPackage
@@ -64,7 +64,7 @@ SHEET_XML = (
     '<row r="1" spans="1:3"><c r="A1" t="s"><v>0</v></c><c r="B1" s="1"><v>1</v></c></row>'
     '<row r="2" spans="1:3"><c r="A2" s="2"><v>2</v></c></row>'
     '<row r="8"><c r="F8" cm="1"><f t="array" ref="F8:F10">_xlfn.SEQUENCE(3)</f>'
-    '<v>1</v></c></row>'
+    "<v>1</v></c></row>"
     '<row r="9"><c r="F9"><v>2</v></c></row>'
     '<row r="10"><c r="F10"><v>3</v></c></row>'
     "</sheetData>"
@@ -93,7 +93,7 @@ CHART_XML = (
     '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
     'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
     "<c:chart><c:plotArea><c:barChart><c:ser>"
-    "<c:idx val=\"0\"/><c:val><c:numRef><c:f>Data!$B$3:$B$4</c:f>"
+    '<c:idx val="0"/><c:val><c:numRef><c:f>Data!$B$3:$B$4</c:f>'
     '<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="2"/>'
     '<c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt>'
     "</c:numCache></c:numRef></c:val></c:ser></c:barChart></c:plotArea></c:chart>"
@@ -253,8 +253,7 @@ def test_writing_a_cell_keeps_every_other_row_intact(package_path: Path) -> None
     text = package.text("xl/worksheets/sheet1.xml")
     # Row 1 is untouched, so it is written back exactly as it was read.
     assert (
-        '<row r="1" spans="1:3"><c r="A1" t="s"><v>0</v></c>'
-        '<c r="B1" s="1"><v>1</v></c></row>'
+        '<row r="1" spans="1:3"><c r="A1" t="s"><v>0</v></c><c r="B1" s="1"><v>1</v></c></row>'
     ) in text
     # The edited row is re-rendered: the advisory `spans` hint goes away.
     assert '<row r="2"><c r="A2" s="2"><v>2</v></c><c r="C2"><v>5</v></c></row>' in text
@@ -269,8 +268,7 @@ def test_a_new_row_is_inserted_in_order(package_path: Path) -> None:
     sheet.save()
 
     rows = [
-        line.split('"')[1]
-        for line in package.text("xl/worksheets/sheet1.xml").split("<row r=")[1:]
+        line.split('"')[1] for line in package.text("xl/worksheets/sheet1.xml").split("<row r=")[1:]
     ]
     assert rows == ["1", "2", "5", "8", "9", "10"]
 

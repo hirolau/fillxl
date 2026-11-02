@@ -37,10 +37,7 @@ TRACKER_PART = "xl/worksheets/sheet2.xml"
 
 
 def _data_without_total(rows: int) -> list[dict[str, object]]:
-    return [
-        {key: value for key, value in row.items() if key != "Total"}
-        for row in body_rows(rows)
-    ]
+    return [{key: value for key, value in row.items() if key != "Total"} for row in body_rows(rows)]
 
 
 def test_a_calculated_column_stored_as_shared_formulas_is_still_recognised_as_calculated(
@@ -61,9 +58,7 @@ def test_a_calculated_column_stored_as_shared_formulas_is_still_recognised_as_ca
     workbook = openpyxl.load_workbook(output)
     try:
         sheet = workbook["Data"]
-        assert [sheet.cell(row=row, column=4).value for row in range(2, 6)] == [
-            "=[@Amount]*2"
-        ] * 4
+        assert [sheet.cell(row=row, column=4).value for row in range(2, 6)] == ["=[@Amount]*2"] * 4
     finally:
         workbook.close()
 
@@ -185,8 +180,7 @@ def _template_with_shared_reference(path: Path) -> Path:
             displayName="Data",
             ref="A1:E2",
             tableColumns=[
-                TableColumn(id=index, name=name)
-                for index, name in enumerate(HEADERS, start=1)
+                TableColumn(id=index, name=name) for index, name in enumerate(HEADERS, start=1)
             ],
         ),
     )

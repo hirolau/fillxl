@@ -376,5 +376,5 @@ def _entries(path: Path) -> dict[str, bytes]:
 def _without_calc_chain(data: bytes, name: str) -> bytes:
     """*data* without the parts that point at a dropped ``calcChain.xml``."""
     element = "Relationship" if name.endswith(".rels") else "Override"
-    pattern = rf'<{element}\b[^>]*calcChain\.xml[^>]*/>'
+    pattern = rf"<{element}\b[^>]*calcChain\.xml[^>]*/>"
     return re.sub(pattern, "", data.decode("utf-8")).encode("utf-8")

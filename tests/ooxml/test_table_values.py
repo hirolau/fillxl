@@ -21,12 +21,9 @@ def test_prepare_table_cell_refuses_a_container() -> None:
 
 def test_prepare_table_cell_returns_the_normalised_value() -> None:
     """The same call validates, warns and normalises."""
-    assert (
-        prepare_table_cell(
-            dt.date(2025, 1, 2),
-            table="T",
-            row=1,
-            column="Booked",
-        )
-        == dt.date(2025, 1, 2)
-    )
+    assert prepare_table_cell(
+        dt.date(2025, 1, 2),
+        table="T",
+        row=1,
+        column="Booked",
+    ) == dt.date(2025, 1, 2)

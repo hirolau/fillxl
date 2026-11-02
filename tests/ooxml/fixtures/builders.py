@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import openpyxl
 
 from tests.ooxml._build import HEADERS, table_template
-from tests.ooxml._patch import patch_part, part_text, put_cell
+from tests.ooxml._patch import part_text, patch_part, put_cell
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -87,8 +87,8 @@ def _without_cell_references(path: Path, *, rows: tuple[int, int]) -> Path:
         for row in range(rows[0], rows[1] + 1):
             start = xml.find(f'<row r="{row}"')
             end = xml.find("</row>", start)
-            body = xml[start:end]
-            xml = f"{xml[:start]}{re.sub(r' r=[\"][A-Z]+[0-9]+[\"]', '', body)}{xml[end:]}"
+            body = re.sub(r' r="[A-Z]+[0-9]+"', "", xml[start:end])
+            xml = f"{xml[:start]}{body}{xml[end:]}"
         return xml
 
     patch_part(path, SHEET_PART, transform)
@@ -129,7 +129,11 @@ def libreoffice(path: Path) -> Path:
             'mc:Ignorable="loext" ',
             1,
         )
-        xml = xml.replace("<sheetData", "<cols><col min=\"1\" max=\"5\" width=\"12.5\"/></cols><sheetData", 1)
+        xml = xml.replace(
+            "<sheetData",
+            '<cols><col min="1" max="5" width="12.5"/></cols><sheetData',
+            1,
+        )
         return xml.replace(
             "</worksheet>",
             '<extLst><ext uri="{7626C862-2A13-11E5-B345-FEFF819CDC9F}">'
@@ -188,9 +192,7 @@ def _table_part(path: Path) -> str:
 
     with zipfile.ZipFile(path) as archive:
         names = sorted(
-            name
-            for name in archive.namelist()
-            if re.fullmatch(r"xl/tables/[^/]+\.xml", name)
+            name for name in archive.namelist() if re.fullmatch(r"xl/tables/[^/]+\.xml", name)
         )
     assert names, "the template has no table"
     return names[0]

@@ -162,9 +162,7 @@ def table_template(
             value=f"=SUM(B{first_body_row}:B{body_last_row})",
         )
     if sum_sheet is not None:
-        workbook.create_sheet(sum_sheet)["A1"] = (
-            f"=SUM({sheet}!B{first_body_row}:B{body_last_row})"
-        )
+        workbook.create_sheet(sum_sheet)["A1"] = f"=SUM({sheet}!B{first_body_row}:B{body_last_row})"
     workbook.save(path)
     workbook.close()
     return path

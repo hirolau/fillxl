@@ -602,11 +602,15 @@ class SheetPart:
             max_col=bounds.max_col,
             max_row=row,
         )
-        self._head = self._head[: match.start()] + xmltext.set_tag_attribute(
-            element,
-            "ref",
-            bounds.coord,
-        ) + self._head[match.end() :]
+        self._head = (
+            self._head[: match.start()]
+            + xmltext.set_tag_attribute(
+                element,
+                "ref",
+                bounds.coord,
+            )
+            + self._head[match.end() :]
+        )
         self._dirty()
 
 

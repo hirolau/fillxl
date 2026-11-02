@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from openpyxl.utils.datetime import MAC_EPOCH, WINDOWS_EPOCH, to_excel
+from openpyxl.utils.datetime import WINDOWS_EPOCH, to_excel
 
 from fillxl._normalize import is_text_cell_value
 from fillxl._ooxml import xmltext
@@ -48,7 +48,7 @@ def serial_text(
         '61'
         >>> serial_text(dt.datetime(1900, 3, 1, 12))
         '61.5'
-        >>> serial_text(dt.date(1904, 1, 1), epoch=MAC_EPOCH)
+        >>> serial_text(dt.date(1904, 1, 1), epoch=dt.datetime(1904, 1, 1))
         '0'
 
     """

@@ -24,7 +24,7 @@ def test_a_corrupted_part_is_refused_before_the_workbook_is_written(tmp_path: Pa
     package = OoxmlPackage(template)
     package.set_text("xl/workbook.xml", "<workbook>")
 
-    with pytest.raises(RuntimeError, match="xl/workbook.xml"):
+    with pytest.raises(RuntimeError, match=r"xl/workbook\.xml"):
         package.save(tmp_path / "out.xlsx")
 
     assert not (tmp_path / "out.xlsx").exists()

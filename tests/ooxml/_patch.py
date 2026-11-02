@@ -9,7 +9,6 @@ one part they care about as text.
 from __future__ import annotations
 
 import contextlib
-import os
 import re
 import zipfile
 from typing import TYPE_CHECKING
@@ -55,21 +54,13 @@ def share_formulas(
     The master keeps its text and gains ``t="shared" ref="…" si="…"``; every
     other cell of the range gets an empty ``<f t="shared" si="…"/>``, which is
     what Excel writes when a formula is filled down or right.
-
-    Examples:
-        >>> xml = '<row r="2"><c r="A2"><f>B2*2</f></c><c r="B2"><f>C2*2</f></c></row>'
-        >>> share_formulas(xml, "A2", "B2")
-        '<row r="2"><c r="A2"><f t="shared" ref="A2:B2" si="0">B2*2</f></c><c r="B2"><f t="shared" si="0"/></c></row>'
-
     """
     from openpyxl.utils import get_column_letter
     from openpyxl.worksheet.cell_range import CellRange
 
     bounds = CellRange(f"{first}:{last}")
     addresses = [
-        f"{get_column_letter(column)}{row}"
-        for cells in bounds.rows
-        for row, column in cells
+        f"{get_column_letter(column)}{row}" for cells in bounds.rows for row, column in cells
     ]
     if master_text is None:
         cell = _cell_regex(addresses[0]).search(sheet_xml)
@@ -130,7 +121,11 @@ def put_cell(sheet_xml: str, element: str) -> str:
         re.S,
     )
     row = next(
-        (match for match in row_pattern.finditer(sheet_xml) if int(match.group("row")) == row_number),
+        (
+            match
+            for match in row_pattern.finditer(sheet_xml)
+            if int(match.group("row")) == row_number
+        ),
         None,
     )
     if row is None:
@@ -172,7 +167,6 @@ def _insert_row(
     return f"{sheet_xml[: closing.start()]}{new_row}{sheet_xml[closing.start() :]}"
 
 
-
 def patch_part(path: Path, part_name: str, transform: Callable[[str], str]) -> None:
     """Rewrite one part of the zip at *path* in place, keeping every other entry byte for byte.
 
@@ -204,7 +198,7 @@ def patch_part(path: Path, part_name: str, transform: Callable[[str], str]) -> N
         with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
             for info in infos:
                 archive.writestr(info, parts[info.filename])
-        os.replace(temporary, path)
+        temporary.replace(path)
     finally:
         with contextlib.suppress(FileNotFoundError):
             temporary.unlink()

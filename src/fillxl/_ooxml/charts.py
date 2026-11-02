@@ -92,11 +92,15 @@ def _rewrite_part(text: str, spec: TableChangeSpecs) -> tuple[str, int]:
         if updated is None:
             return block
         total += 1
-        block = block[: formula.start()] + xmltext.replace_element_text(
-            formula.group(0),
-            "f",
-            updated,
-        ) + block[formula.end() :]
+        block = (
+            block[: formula.start()]
+            + xmltext.replace_element_text(
+                formula.group(0),
+                "f",
+                updated,
+            )
+            + block[formula.end() :]
+        )
         multi_level = match.group("kind") == "multiLvlStrRef"
         count = point_count_rows(updated) if multi_level else point_count(updated)
         return _POINT_COUNT.sub(

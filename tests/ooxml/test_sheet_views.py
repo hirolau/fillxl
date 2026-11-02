@@ -12,7 +12,6 @@ import re
 from typing import TYPE_CHECKING
 
 import openpyxl
-import pytest
 from openpyxl.chart import BarChart
 
 from fillxl import FillXLConfig, fill

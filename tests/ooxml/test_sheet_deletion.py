@@ -12,7 +12,6 @@ import re
 from typing import TYPE_CHECKING
 
 import openpyxl
-import pytest
 
 from fillxl import FillXLConfig, fill
 from tests.ooxml._patch import part_text, patch_part

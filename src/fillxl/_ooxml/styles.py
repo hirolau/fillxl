@@ -60,8 +60,7 @@ def attributes_of(tag: str) -> dict[str, str]:
     """
     opening = tag.split(">", 1)[0]
     return {
-        match.group(1): xmltext.unescape(match.group(2))
-        for match in _ATTRIBUTE.finditer(opening)
+        match.group(1): xmltext.unescape(match.group(2)) for match in _ATTRIBUTE.finditer(opening)
     }
 
 

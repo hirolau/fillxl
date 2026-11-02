@@ -39,9 +39,7 @@ _HOSTILE = [
     pytest.param("streaming_writer", id="streaming-writer", marks=_NEEDS_XLSXWRITER),
 ]
 
-_PARITY = [
-    param for param in _HOSTILE if param.id != "no-sheet-views"
-] + [
+_PARITY = [param for param in _HOSTILE if param.id != "no-sheet-views"] + [
     pytest.param(
         "no_sheet_views",
         id="no-sheet-views",

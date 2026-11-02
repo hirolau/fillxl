@@ -105,9 +105,11 @@ fill(
 
 fillxl is a thin layer over openpyxl (or over Excel itself), so fill time is
 dominated by the engine: expect a few seconds for tens of thousands of cells
-and minutes for hundreds of thousands. Run `scripts/benchmark.py` to measure
-your own machine, template and data — absolute numbers vary too much between
-machines to be worth publishing.
+and minutes for hundreds of thousands. `engine="fillxl"` is the fastest of the
+three, at roughly twice the speed of `openpyxl` for the same workbook.
+
+[Benchmarks](benchmarks.md) shows the published numbers and how to reproduce
+them with `scripts/benchmark.py` on your own machine, template and data.
 
 ## Project Status
 

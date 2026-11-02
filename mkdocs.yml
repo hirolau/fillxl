@@ -67,6 +67,7 @@ nav:
   - API Reference: api.md
   - Backends: backends.md
   - The fillxl engine: fillxl-engine.md
+  - Benchmarks: benchmarks.md
   - Warnings: warnings.md
   - Development: development.md
 

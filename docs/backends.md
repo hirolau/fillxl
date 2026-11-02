@@ -54,7 +54,8 @@ How the differences are checked: the parity suite fills one template with every
 engine and compares a snapshot of the result — cell values, data types,
 number formats, table refs, sort state, chart references, conditional
 formatting ranges, sheet states and defined names. See
-[Development](development.md) for how to run it.
+[Development](development.md) for how to run it, and [Benchmarks](benchmarks.md)
+for how the three engines compare on the same fill.
 
 ---
 

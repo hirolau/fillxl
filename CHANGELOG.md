@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `names_deleted_sheet` (formerly the private `_names_deleted_sheet`) and
   `cf_range_tracks_table` are public, so the fillxl engine shares the same
   sheet-reference matching and conditional-formatting rule as the openpyxl one.
+- A [Benchmarks](https://hirolau.github.io/fillxl/benchmarks/) page in the docs:
+  the three engines timed on the same fill, plus `scripts/benchmark.py` now
+  measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
 - `engine="fillxl"` failed on shapes a surgical editor has to understand but

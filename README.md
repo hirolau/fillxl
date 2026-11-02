@@ -123,6 +123,14 @@ differs.
 - Pivot sources and data validations do not follow a table resize — no engine
   does this.
 
+### Speed
+
+Speed is not why it exists, but it is the fastest of the three: on the same
+2,000-row fill it takes about **0.7 s**, against 1.5 s for `openpyxl` and 2.6 s
+for `win32com` — it writes the same values without building or re-serialising a
+workbook model. [Benchmarks](https://hirolau.github.io/fillxl/benchmarks/)
+has the tables, the method and the script to reproduce them.
+
 ### Cached values
 
 The fillxl engine does not calculate. Formulas it writes have no cached result,

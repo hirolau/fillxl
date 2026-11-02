@@ -116,7 +116,8 @@ class StylesPart:
         identifier = xmltext.attribute(self._cell_xfs[index], "numFmtId")
         if identifier is None or not identifier.isdigit():
             return "General"
-        return builtin_format(int(identifier)) or self._format_codes.get(int(identifier))
+        # A workbook may redefine a built-in id; its own definition wins.
+        return self._format_codes.get(int(identifier)) or builtin_format(int(identifier))
 
     # ── writing ────────────────────────────────────────────────────────────
 

@@ -30,6 +30,17 @@ _RELATIONSHIP = xmltext.element_re("Relationship")
 _SHARED_ITEM = xmltext.element_re("si")
 _SHARED_TEXT = xmltext.element_re("t")
 
+_UTF16_LE = b"\xff\xfe"
+_UTF16_BE = b"\xfe\xff"
+
+
+def _not_utf8(part: str) -> ValueError:
+    """The error raised for a part this engine cannot edit as text."""
+    return ValueError(
+        f"{part} is not UTF-8 encoded; the fillxl engine only edits UTF-8 parts. "
+        "Use engine='win32com'.",
+    )
+
 
 @define(frozen=True)
 class Relationship:
@@ -114,8 +125,21 @@ class OoxmlPackage:
         return self._parts[part]
 
     def text(self, part: str) -> str:
-        """*part* decoded as UTF-8 XML."""
-        return self._parts[part].decode("utf-8")
+        """*part* decoded as UTF-8 XML.
+
+        Raises:
+            ValueError: If the part is not UTF-8 (a UTF-16 byte-order mark, or
+                bytes that do not decode).  Editing such a part as text would
+                destroy it, and the other engine can read it.
+
+        """
+        data = self._parts[part]
+        if data.startswith((_UTF16_LE, _UTF16_BE)):
+            raise _not_utf8(part)
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise _not_utf8(part) from exc
 
     def set_text(self, part: str, text: str) -> None:
         """Replace *part* with *text*."""

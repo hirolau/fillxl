@@ -120,14 +120,20 @@ def _attribute_re(name: str) -> re.Pattern[str]:
 def attribute(tag: str, name: str) -> str | None:
     """The unescaped value of attribute *name* on the start tag *tag*.
 
+    Only the start tag is searched: callers pass whole elements too, and a
+    nested element may carry an attribute of the same name.
+
     Examples:
         >>> attribute('<c r="B5" s="2"/>', "s")
         '2'
         >>> attribute('<c r="B5"/>', "s") is None
         True
+        >>> attribute('<c r="A1"><f t="array">X</f></c>', "t") is None
+        True
 
     """
-    match = _attribute_re(name).search(tag)
+    opening = tag[: tag.find(">") + 1]
+    match = _attribute_re(name).search(opening)
     if match is None:
         return None
     return unescape(match.group(0).split('"', 1)[1][:-1])

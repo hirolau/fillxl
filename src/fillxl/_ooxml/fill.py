@@ -438,6 +438,11 @@ def _display_value(sheet: SheetPart, row: int, column: int) -> str:
     if formula is not None:
         return repr(formula)
     text = xmltext.element_text(xml, "v")
+    if xmltext.attribute(xml, "t") == "s" and text is not None and text.isdigit():
+        shared = sheet.package.shared_strings()
+        index = int(text)
+        if 0 <= index < len(shared):
+            return repr(shared[index])
     if text is None:
         inline = xmltext.element_text(xml, "t")
         return repr(inline) if inline is not None else "''"

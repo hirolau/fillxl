@@ -24,8 +24,11 @@ if TYPE_CHECKING:
 
 CONTENT_TYPES = "[Content_Types].xml"
 _ROOT_RELS = "_rels/.rels"
+SHARED_STRINGS = "xl/sharedStrings.xml"
 
 _RELATIONSHIP = xmltext.element_re("Relationship")
+_SHARED_ITEM = xmltext.element_re("si")
+_SHARED_TEXT = xmltext.element_re("t")
 
 
 @define(frozen=True)
@@ -93,6 +96,7 @@ class OoxmlPackage:
                 name: archive.read(name) for name in self._order
             }
         self._dirty: set[str] = set()
+        self._shared_strings: list[str] | None = None
 
     # ── parts ───────────────────────────────────────────────────────────────
 
@@ -123,6 +127,31 @@ class OoxmlPackage:
     def is_changed(self, part: str) -> bool:
         """Whether *part* was rewritten (as opposed to copied verbatim)."""
         return part in self._dirty
+
+    def shared_strings(self) -> list[str]:
+        """The texts of ``xl/sharedStrings.xml``, read on first use.
+
+        Only error messages need them, so the part is not parsed during a
+        normal fill.
+        """
+        if self._shared_strings is None:
+            self._shared_strings = self._read_shared_strings()
+        return self._shared_strings
+
+    def _read_shared_strings(self) -> list[str]:
+        if not self.has(SHARED_STRINGS):
+            return []
+        text = self.text(SHARED_STRINGS)
+        strings: list[str] = []
+        for item in _SHARED_ITEM.finditer(text):
+            element = item.group(0)
+            strings.append(
+                "".join(
+                    xmltext.element_text(run.group(0), "t") or ""
+                    for run in _SHARED_TEXT.finditer(element)
+                ),
+            )
+        return strings
 
     def drop(self, part: str) -> None:
         """Remove *part*, its relationship part and its content-type override."""

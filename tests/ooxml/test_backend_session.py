@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from fillxl import FillXLConfig, fill
+from fillxl._ooxml.package import OoxmlPackage
 from fillxl._ooxml.worksheet import SheetPart
 from tests.ooxml._build import body_rows, named_cell_template, table_template
 
@@ -19,7 +22,7 @@ if TYPE_CHECKING:
 
 def test_many_named_cells_on_one_sheet_parse_the_sheet_once(
     tmp_path: Path,
-    monkeypatch: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Three writes to one sheet must not mean three parses."""
     template = named_cell_template(
@@ -29,11 +32,11 @@ def test_many_named_cells_on_one_sheet_parse_the_sheet_once(
     parses: list[str] = []
     original = SheetPart.__init__
 
-    def counting(self: SheetPart, package: object, part: str) -> None:
+    def counting(self: SheetPart, package: OoxmlPackage, part: str) -> None:
         parses.append(part)
-        original(self, package, part)  # type: ignore[arg-type]
+        original(self, package, part)
 
-    monkeypatch.setattr(SheetPart, "__init__", counting)  # type: ignore[attr-defined]
+    monkeypatch.setattr(SheetPart, "__init__", counting)
 
     fill(
         template,

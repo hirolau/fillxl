@@ -12,6 +12,8 @@ import zipfile
 import zlib
 from typing import TYPE_CHECKING
 
+import pytest
+
 from fillxl import fill
 from tests.ooxml._build import named_cell_template
 
@@ -23,7 +25,7 @@ MEDIA_PREFIX = "xl/media/"
 
 def test_untouched_media_is_never_loaded_into_memory(
     tmp_path: Path,
-    monkeypatch: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The image part is copied without ever being read."""
     template = named_cell_template(tmp_path / "template.xlsx")
@@ -38,7 +40,7 @@ def test_untouched_media_is_never_loaded_into_memory(
         reads.append(name)
         return original(archive, name, pwd)
 
-    monkeypatch.setattr(zipfile.ZipFile, "read", counting)  # type: ignore[attr-defined]
+    monkeypatch.setattr(zipfile.ZipFile, "read", counting)
 
     output = fill(template, tmp_path / "out.xlsx", engine="fillxl", values={"report_title": 42})
 

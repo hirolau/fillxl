@@ -35,6 +35,17 @@ _SHEET_VIEW = xmltext.element_re("sheetView")
 _VISIBLE = "visible"
 _RELATIONSHIP_SUFFIX = "/officeDocument"
 
+# Where a missing <sheetViews> has to be inserted (ECMA-376 element order).
+_WORKSHEET_VIEW_ANCHORS = ("sheetFormatPr", "cols", "sheetData")
+_CHARTSHEET_VIEW_ANCHORS = (
+    "sheetProtection",
+    "customSheetViews",
+    "pageMargins",
+    "pageSetup",
+    "headerFooter",
+    "drawing",
+)
+
 # Element order inside <workbook> (ECMA-376 CT_Workbook): calcPr comes after
 # definedNames, so a missing element has to be inserted at the right place.
 _AFTER_CALC_PR = (
@@ -92,6 +103,19 @@ class DefinedNameEntry:
     name: str
     text: str
     local_sheet_id: int | None
+
+
+def _root_element_end(text: str) -> int:
+    """The index just past the root element's start tag.
+
+    ``text.find(">")`` is not that index: it stops at the end of the XML
+    declaration, or of a comment that precedes the root.
+    """
+    for match in re.finditer(r"<[^>]*>", text):
+        if match.group(0)[1:2] in ("?", "!"):
+            continue
+        return match.end()
+    return len(text)  # pragma: no cover - a part always has a root element
 
 
 def _renumber_defined_names(text: str, deleted: list[int]) -> str:
@@ -394,23 +418,26 @@ class WorkbookPart:
             return
         if not selected:
             return
-        # A sheet can be saved without a <sheetView>; add a minimal one where
-        # the schema expects it (after <dimension>, before <sheetFormatPr>).
+        # A sheet can be saved without a <sheetView>.  <sheetViews> follows
+        # <sheetPr> and <dimension> and precedes the row defaults, the columns
+        # and the data (on a chartsheet: the page setup and the drawing), so
+        # inserting it before the first of those keeps the schema order.
         new_view = '<sheetViews><sheetView workbookViewId="0" tabSelected="1"/></sheetViews>'
-        anchor = xmltext.start_tag_re("sheetFormatPr").search(text)
-        if anchor is not None:
-            updated = f"{text[: anchor.start()]}{new_view}{text[anchor.start() :]}"
-            self.package.set_text(part, updated)
-            return
+        anchors = _WORKSHEET_VIEW_ANCHORS if "/worksheets/" in part else _CHARTSHEET_VIEW_ANCHORS
+        for name in anchors:
+            anchor = xmltext.start_tag_re(name).search(text)
+            if anchor is not None:
+                self.package.set_text(
+                    part,
+                    f"{text[: anchor.start()]}{new_view}{text[anchor.start() :]}",
+                )
+                return
         views = _SHEET_VIEWS.search(text)
         if views is not None:  # pragma: no cover - a sheetViews block without a view
-            self.package.set_text(
-                part,
-                f"{text[: views.start()]}{new_view}{text[views.end() :]}",
-            )
+            self.package.set_text(part, f"{text[: views.start()]}{new_view}{text[views.end() :]}")
             return
-        opening_end = text.find(">")
-        self.package.set_text(part, f"{text[: opening_end + 1]}{new_view}{text[opening_end + 1 :]}")
+        root_end = _root_element_end(text)
+        self.package.set_text(part, f"{text[:root_end]}{new_view}{text[root_end:]}")
 
     # ── deleting sheets ────────────────────────────────────────────────────
 

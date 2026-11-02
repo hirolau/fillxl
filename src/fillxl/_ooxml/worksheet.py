@@ -48,9 +48,6 @@ _VALUE_ELEMENT = re.compile(
     re.S,
 )
 _INLINE_STRING = re.compile(rf"<{xmltext.any_prefix('is')}\b")
-_ARRAY_FORMULA = re.compile(
-    rf"<{xmltext.any_prefix('f')}\b[^>]*\bt=\"array\"[^>]*\bref=\"(?P<ref>[^\"]+)\"",
-)
 _MERGE_CELL = xmltext.element_re("mergeCell")
 _ROW_REFERENCE = re.compile(r"^\$?(?P<column>[A-Za-z]{1,3})\$?(?P<row>\d+)$")
 _HAS_FORMULA = re.compile(rf"<{_TAG}f\b")
@@ -138,15 +135,27 @@ def formula_text(xml: str) -> str | None:
 def array_range(xml: str) -> str | None:
     """The ``ref`` of the first array formula in a ``<c>`` element.
 
+    Attributes are read from the start tag, so their order in the file does
+    not matter: Excel writes ``t`` first, other writers put ``ref`` first.
+
     Examples:
         >>> array_range('<c r="F8" cm="1"><f t="array" ref="F8:F12">_xlfn.SEQUENCE(5)</f></c>')
+        'F8:F12'
+        >>> array_range('<c r="F8" cm="1"><f ref="F8:F12" t="array">_xlfn.SEQUENCE(5)</f></c>')
         'F8:F12'
         >>> array_range('<c r="F8"><f>SUM(A1)</f></c>') is None
         True
 
     """
-    match = _ARRAY_FORMULA.search(xml)
-    return None if match is None else xmltext.unescape(match.group("ref"))
+    tag = xmltext.start_tag(xml, "f")
+    if tag is None or xmltext.attribute(tag, "t") != "array":
+        return None
+    return xmltext.attribute(tag, "ref")
+
+
+def _is_array_cell(xml: str | None) -> bool:
+    """Whether *xml* is a cell holding an array (spilled) formula."""
+    return xml is not None and array_range(xml) is not None
 
 
 @define
@@ -187,6 +196,7 @@ class SheetPart:
         self._attributes = match.group("attrs") or ""
         self._tail = text[match.end() :]
         self._rows = self._parse_rows(match.group("body") or "")
+        self._array_cache: list[CellRange] | None = None
         self._changed = False
 
     # ── parsing ────────────────────────────────────────────────────────────
@@ -240,8 +250,13 @@ class SheetPart:
         if entry is None:
             entry = _Row(attributes="", prefix=self._prefix)
             self._rows[row] = entry
+        previous = entry.cells.get(column)
         entry.cells[column] = xml
         entry.raw = None
+        if _is_array_cell(previous) or _is_array_cell(xml):
+            # Overwriting or deleting an anchor changes which cells are
+            # reserved, so checking only the new XML is not enough.
+            self._array_cache = None
         self._dirty()
 
     def delete_cell(self, row: int, column: int) -> None:
@@ -249,7 +264,8 @@ class SheetPart:
         entry = self._rows.get(row)
         if entry is None or column not in entry.cells:
             return
-        del entry.cells[column]
+        if _is_array_cell(entry.cells.pop(column)):
+            self._array_cache = None
         entry.raw = None
         self._dirty()
 
@@ -291,7 +307,15 @@ class SheetPart:
 
         Excel needs these treated as occupied: a spill can hold blank results,
         which store as an empty value and look like an empty cell.
+
+        The list is built once and cached; every cell write asks for it, so
+        re-scanning the sheet per write made filling a table quadratic.
         """
+        if self._array_cache is None:
+            self._array_cache = self._collect_array_ranges()
+        return self._array_cache
+
+    def _collect_array_ranges(self) -> list[CellRange]:
         ranges: list[CellRange] = []
         for _, _, xml in self.iter_cells():
             reference = array_range(xml)

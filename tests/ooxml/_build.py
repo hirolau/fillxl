@@ -52,21 +52,24 @@ def _build_table(
     totals: bool,
     calculated: str | None,
     number_formats: Mapping[str, str],
+    headerless: bool = False,
 ) -> tuple[Worksheet, int]:
     """Write the table into a fresh sheet; returns the sheet and its last row."""
     worksheet = workbook.active
     worksheet.title = sheet
-    for offset, name in enumerate(header, start=1):
-        worksheet.cell(row=top_row, column=offset, value=name)
+    if not headerless:
+        for offset, name in enumerate(header, start=1):
+            worksheet.cell(row=top_row, column=offset, value=name)
+    first_body_row = top_row if headerless else top_row + 1
     for index in range(rows):
-        row = top_row + 1 + index
+        row = first_body_row + index
         for offset, name in enumerate(header, start=1):
             cell = worksheet.cell(row=row, column=offset)
             cell.value = f"=[@{header[1]}]*2" if name == calculated else _placeholder(name, index)
             if name in number_formats:
                 cell.number_format = number_formats[name]
 
-    body_last_row = top_row + rows
+    body_last_row = first_body_row + rows - 1
     last_row = body_last_row
     columns = [TableColumn(id=index, name=name) for index, name in enumerate(header, start=1)]
     if totals:
@@ -87,6 +90,7 @@ def _build_table(
         displayName=table,
         ref=f"A{top_row}:{get_column_letter(len(header))}{last_row}",
         tableColumns=columns,
+        headerRowCount=0 if headerless else None,
         totalsRowCount=1 if totals else None,
         tableStyleInfo=TableStyleInfo(name="TableStyleMedium2", showRowStripes=True),
     )
@@ -108,6 +112,7 @@ def table_template(
     sum_below: bool = False,
     sum_sheet: str | None = None,
     number_formats: Mapping[str, str] | None = None,
+    headerless: bool = False,
 ) -> Path:
     """A workbook with one table of *rows* body rows.
 
@@ -123,6 +128,7 @@ def table_template(
         sum_below: Add ``=SUM(...)`` below the table on the same sheet.
         sum_sheet: Add a second sheet whose ``=SUM(...)`` refers to the table.
         number_formats: Per-column number format, by column name.
+        headerless: Table without a header row.
 
     Returns:
         *path*.
@@ -139,17 +145,21 @@ def table_template(
         totals=totals,
         calculated=calculated,
         number_formats=dict(number_formats or {}),
+        headerless=headerless,
     )
-    body_last_row = top_row + rows
+    first_body_row = top_row if headerless else top_row + 1
+    body_last_row = first_body_row + rows - 1
     if sum_below:
+        # Outside the table's columns: a summary directly under the body would
+        # be in the growth path, and both engines refuse to overwrite it.
         worksheet.cell(
-            row=last_row + 2,
-            column=2,
-            value=f"=SUM(B{top_row + 1}:B{body_last_row})",
+            row=last_row,
+            column=len(header) + 2,
+            value=f"=SUM(B{first_body_row}:B{body_last_row})",
         )
     if sum_sheet is not None:
         workbook.create_sheet(sum_sheet)["A1"] = (
-            f"=SUM({sheet}!B{top_row + 1}:B{body_last_row})"
+            f"=SUM({sheet}!B{first_body_row}:B{body_last_row})"
         )
     workbook.save(path)
     workbook.close()

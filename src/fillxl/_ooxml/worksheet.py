@@ -5,10 +5,10 @@ that is never modified is written back with its original bytes, and a sheet
 that is never modified is not written back at all, so a fill cannot change
 anything it did not mean to change.
 
-The engine never inserts or removes rows (see ``IMPLEMENTATION-LOG.md``, D3):
-growing a table writes cells into rows that were verified empty, which keeps
-merges, data validations, drawings, hyperlinks, chart anchors, defined names
-and array-formula references valid without touching them.
+The engine never inserts or removes rows: growing a table writes cells into
+rows that were verified empty, which keeps merges, data validations, drawings,
+hyperlinks, chart anchors, defined names and array-formula references valid
+without touching them.
 """
 
 from __future__ import annotations

@@ -3,8 +3,7 @@
 Excel marks a spilled formula with ``<f t="array" ref="…">`` on the master
 cell, ``cm="1"`` to point at ``xl/metadata.xml``, and cached values on the
 children — nothing else.  openpyxl cannot write that markup, so these fixtures
-are authored with openpyxl and then patched to the exact shape Excel 16 writes
-(verified end to end in ``BACKEND-RESEARCH.md`` §3.5).
+are authored with openpyxl and then patched to the exact shape Excel 16 writes.
 """
 
 from __future__ import annotations

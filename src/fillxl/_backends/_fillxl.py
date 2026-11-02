@@ -5,8 +5,6 @@ parts byte for byte and rewrites only the ones a fill has to change, so
 everything the openpyxl model cannot represent — spilled dynamic arrays and
 their ``xl/metadata.xml``, ``cm``/``vm`` cell metadata, slicers, ``chartEx``,
 rich data, VBA — survives by construction.
-
-See ``IMPLEMENTATION-LOG.md`` for the design decisions.
 """
 
 from __future__ import annotations

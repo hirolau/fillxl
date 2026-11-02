@@ -7,9 +7,8 @@ arithmetic), ``_formulas`` (calculated columns and range resizing),
 ``_charts`` (reference rewriting) — and applies it with the surgical editors in
 :mod:`fillxl._ooxml`.
 
-The engine never inserts worksheet rows (see ``IMPLEMENTATION-LOG.md``, D3).
-Growth lands in cells verified empty, exactly like the openpyxl engine, so
-nothing below the table ever moves.
+The engine never inserts worksheet rows.  Growth lands in cells verified empty,
+exactly like the openpyxl engine, so nothing below the table ever moves.
 """
 
 from __future__ import annotations

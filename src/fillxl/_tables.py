@@ -19,11 +19,8 @@ from ._formulas import (
     warn_about_ignored_formula_data,
 )
 from ._normalize import (
-    check_cell_value,
-    check_nonfinite_value,
-    check_table_cell_scalar,
     is_text_cell_value,
-    prepare_cell_value,
+    prepare_table_cell,
 )
 from ._plan import (
     BlockedRegion,
@@ -310,20 +307,17 @@ def populate_table(
             for row_ix, row_values in enumerate(rows):
                 cell = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
                 raw_value = row_values[data_col_idx]
-                check_table_cell_scalar(
-                    raw_value, table=table_name, row=row_ix + 1, column=column_name
-                )
-                check_nonfinite_value(
-                    raw_value, table=table_name, row=row_ix + 1, column=column_name, warned=warned
+                value = prepare_table_cell(
+                    raw_value,
+                    table=table_name,
+                    row=row_ix + 1,
+                    column=column_name,
+                    warned=warned,
                 )
                 # Style first: a date format must be in place before the value
                 # arrives, or openpyxl replaces it with its default date format.
                 if copy_style_in_tables:
                     cell._style = copy(first_row_style)
-                value = prepare_cell_value(raw_value)
-                check_cell_value(
-                    value, table=table_name, row=row_ix + 1, column=column_name, warned=warned
-                )
                 cell.value = value
                 # Force text for strings openpyxl would reinterpret: error
                 # values such as "#N/A", and formulas when escaping is on.

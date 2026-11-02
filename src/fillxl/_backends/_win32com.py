@@ -34,9 +34,9 @@ from fillxl._normalize import (
     check_cell_value,
     check_named_cell_scalar,
     check_nonfinite_value,
-    check_table_cell_scalar,
     com_value_from_normalized,
     prepare_cell_value,
+    prepare_table_cell,
 )
 from fillxl._plan import BlockedRegion, TableGeometry, blocked_area, plan_table_fill
 from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
@@ -1020,22 +1020,8 @@ def _write_rows_com(
             source = sources[col_idx]
             normalized = None
             if source is not None:
-                check_table_cell_scalar(
+                normalized = prepare_table_cell(
                     row[source],
-                    table=table_name,
-                    row=row_number,
-                    column=table_columns[col_idx],
-                )
-                check_nonfinite_value(
-                    row[source],
-                    table=table_name,
-                    row=row_number,
-                    column=table_columns[col_idx],
-                    warned=warned,
-                )
-                normalized = prepare_cell_value(row[source])
-                check_cell_value(
-                    normalized,
                     table=table_name,
                     row=row_number,
                     column=table_columns[col_idx],

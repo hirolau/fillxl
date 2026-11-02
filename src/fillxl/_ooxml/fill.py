@@ -37,8 +37,8 @@ from fillxl._normalize import (
     check_cell_value,
     check_named_cell_scalar,
     check_nonfinite_value,
-    check_table_cell_scalar,
     prepare_cell_value,
+    prepare_table_cell,
 )
 from fillxl._ooxml import xmltext
 from fillxl._ooxml.cells import build_cell
@@ -651,22 +651,8 @@ def _write_body(
             data_index = data_column_map[column_name]
             for row_index, row_values in enumerate(rows):
                 raw = row_values[data_index]
-                check_table_cell_scalar(
+                value = prepare_table_cell(
                     raw,
-                    table=table_name,
-                    row=row_index + 1,
-                    column=column_name,
-                )
-                check_nonfinite_value(
-                    raw,
-                    table=table_name,
-                    row=row_index + 1,
-                    column=column_name,
-                    warned=warned,
-                )
-                value = prepare_cell_value(raw)
-                check_cell_value(
-                    value,
                     table=table_name,
                     row=row_index + 1,
                     column=column_name,

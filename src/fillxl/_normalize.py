@@ -775,6 +775,43 @@ def prepare_cell_value(value: Any) -> Any:  # noqa: ANN401
     return normalize_value(_to_python_datetime(value))
 
 
+def prepare_table_cell(
+    raw: Any,  # noqa: ANN401
+    *,
+    table: str,
+    row: int,
+    column: str,
+    warned: set[tuple[str | None, str | None]] | None = None,
+) -> Any:  # noqa: ANN401
+    """Validate and normalise one table cell value, the same way in every engine.
+
+    Args:
+        raw: The value the caller supplied.
+        table: Table name, for error and warning messages.
+        row: 1-based data row, for messages.
+        column: Column name, for messages.
+        warned: Columns already warned about, so a warning is not repeated.
+
+    Returns:
+        The value to write.
+
+    Raises:
+        CellValueError: If *raw* is not a single Excel value, or the value
+            cannot be stored.
+
+    Examples:
+        >>> import datetime as dt
+        >>> prepare_table_cell(dt.date(2025, 1, 2), table="T", row=1, column="A")
+        datetime.date(2025, 1, 2)
+
+    """
+    check_table_cell_scalar(raw, table=table, row=row, column=column)
+    check_nonfinite_value(raw, table=table, row=row, column=column, warned=warned)
+    value = prepare_cell_value(raw)
+    check_cell_value(value, table=table, row=row, column=column, warned=warned)
+    return value
+
+
 def prepare_com_value(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
     """Prepare *value* for writing through the win32com backend.
 

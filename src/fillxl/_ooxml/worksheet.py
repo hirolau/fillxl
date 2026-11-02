@@ -502,6 +502,11 @@ class SheetPart:
         def replace(match: re.Match[str]) -> str:
             element = match.group(0)
             sqref = xmltext.attribute(element, "sqref")
+            # x14 blocks hold their range in a child <xm:sqref> element.
+            in_child = False
+            if not sqref:
+                sqref = xmltext.element_text(element, "sqref")
+                in_child = sqref is not None
             if not sqref:  # pragma: no cover - sqref is required
                 return element
             areas = sqref.split()
@@ -538,6 +543,8 @@ class SheetPart:
             new_sqref = " ".join(resized)
             changes.append((sqref, new_sqref))
             self._dirty()
+            if in_child:
+                return xmltext.replace_element_text(element, "sqref", new_sqref)
             return xmltext.set_tag_attribute(element, "sqref", new_sqref)
 
         self._tail = _CONDITIONAL_FORMATTING.sub(replace, self._tail)

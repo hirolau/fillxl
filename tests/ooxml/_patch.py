@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+from fillxl._ooxml import xmltext
+
 _TAG = r"(?:[A-Za-z_][\w.\-]*:)?"
 
 
@@ -25,6 +27,81 @@ def part_text(path: Path, part_name: str) -> str:
     """The decoded text of *part_name* in the package at *path*."""
     with zipfile.ZipFile(path) as archive:
         return archive.read(part_name).decode("utf-8")
+
+
+def _cell_regex(reference: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"<(?P<prefix>{_TAG})c\b[^>]*\br=\"{reference}\"[^>]*?(?:/>|>.*?</(?P=prefix)c>)",
+        re.S,
+    )
+
+
+_FORMULA_ELEMENT = re.compile(
+    rf"<(?P<prefix>{_TAG})f\b[^>]*?(?:/>|>.*?</(?P=prefix)f>)",
+    re.S,
+)
+
+
+def share_formulas(
+    sheet_xml: str,
+    first: str,
+    last: str,
+    *,
+    si: str = "0",
+    master_text: str | None = None,
+) -> str:
+    """Make the formulas from *first* to *last* one shared group.
+
+    The master keeps its text and gains ``t="shared" ref="…" si="…"``; every
+    other cell of the range gets an empty ``<f t="shared" si="…"/>``, which is
+    what Excel writes when a formula is filled down or right.
+
+    Examples:
+        >>> xml = '<row r="2"><c r="A2"><f>B2*2</f></c><c r="B2"><f>C2*2</f></c></row>'
+        >>> share_formulas(xml, "A2", "B2")
+        '<row r="2"><c r="A2"><f t="shared" ref="A2:B2" si="0">B2*2</f></c><c r="B2"><f t="shared" si="0"/></c></row>'
+
+    """
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.cell_range import CellRange
+
+    bounds = CellRange(f"{first}:{last}")
+    addresses = [
+        f"{get_column_letter(column)}{row}"
+        for cells in bounds.rows
+        for row, column in cells
+    ]
+    if master_text is None:
+        cell = _cell_regex(addresses[0]).search(sheet_xml)
+        if cell is None:
+            msg = f"no cell {addresses[0]} in the sheet"
+            raise AssertionError(msg)
+        formula = _FORMULA_ELEMENT.search(cell.group(0))
+        if formula is None:
+            msg = f"cell {addresses[0]} has no formula to share"
+            raise AssertionError(msg)
+        master_text = xmltext.element_text(formula.group(0), "f")
+        if master_text is None:
+            msg = f"cell {addresses[0]} has an empty formula to share"
+            raise AssertionError(msg)
+    for index, address in enumerate(addresses):
+        element = (
+            f'<f t="shared" ref="{bounds.coord}" si="{si}">{master_text}</f>'
+            if index == 0
+            else f'<f t="shared" si="{si}"/>'
+        )
+        cell = _cell_regex(address).search(sheet_xml)
+        if cell is None:
+            msg = f"no cell {address} in the sheet"
+            raise AssertionError(msg)
+        cell_xml = cell.group(0)
+        formula = _FORMULA_ELEMENT.search(cell_xml)
+        if formula is None:
+            msg = f"cell {address} has no formula to share"
+            raise AssertionError(msg)
+        updated = f"{cell_xml[: formula.start()]}{element}{cell_xml[formula.end() :]}"
+        sheet_xml = f"{sheet_xml[: cell.start()]}{updated}{sheet_xml[cell.end() :]}"
+    return sheet_xml
 
 
 def put_cell(sheet_xml: str, element: str) -> str:
@@ -47,13 +124,17 @@ def put_cell(sheet_xml: str, element: str) -> str:
         raise AssertionError(msg)
     address = reference.group(1)
     row_number = int(address[len(address.rstrip("0123456789")) :])
-    row = re.compile(
-        rf"<(?P<prefix>{_TAG})row\b[^>]*\br=\"{row_number}\"[^>]*?(?:/>|>.*?</(?P=prefix)row>)",
+    row_pattern = re.compile(
+        rf"<(?P<prefix>{_TAG})row\b[^>]*\br=\"(?P<row>\d+)\"[^>]*?"
+        rf"(?:/>|>.*?</(?P=prefix)row>)",
         re.S,
-    ).search(sheet_xml)
+    )
+    row = next(
+        (match for match in row_pattern.finditer(sheet_xml) if int(match.group("row")) == row_number),
+        None,
+    )
     if row is None:
-        msg = f"no <row> for {address}"
-        raise AssertionError(msg)
+        return _insert_row(sheet_xml, row_pattern, row_number, element)
     element_xml = row.group(0)
     if element_xml.endswith("/>"):
         opening = element_xml[:-2].rstrip()
@@ -71,6 +152,24 @@ def put_cell(sheet_xml: str, element: str) -> str:
     else:
         updated = f"{element_xml[: cell.start()]}{element}{element_xml[cell.end() :]}"
     return f"{sheet_xml[: row.start()]}{updated}{sheet_xml[row.end() :]}"
+
+
+def _insert_row(
+    sheet_xml: str,
+    row_pattern: re.Pattern[str],
+    row_number: int,
+    element: str,
+) -> str:
+    """*sheet_xml* with a new row *row_number* holding *element*, in row order."""
+    new_row = f'<row r="{row_number}">{element}</row>'
+    for match in row_pattern.finditer(sheet_xml):
+        if int(match.group("row")) > row_number:
+            return f"{sheet_xml[: match.start()]}{new_row}{sheet_xml[match.start() :]}"
+    closing = re.search(rf"</(?P<prefix>{_TAG})sheetData>", sheet_xml)
+    if closing is None:
+        msg = "the part has no <sheetData>"
+        raise AssertionError(msg)
+    return f"{sheet_xml[: closing.start()]}{new_row}{sheet_xml[closing.start() :]}"
 
 
 

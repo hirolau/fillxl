@@ -20,6 +20,7 @@ import sys
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from openpyxl.formula import Tokenizer
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._utils import table_column_name
@@ -37,6 +38,7 @@ BodyState = Literal["formula", "mixed", "empty", "values"]
 CellKind = Literal["formula", "empty", "value"]
 
 _MAX_ROW = 1_048_576
+_MAX_COLUMN = 16_384
 # A single A1 reference, optionally qualified by a sheet name.  A defined name
 # such as ``Rate`` has no digits and a structured reference contains ``[``, so
 # neither matches; ``LOG10(`` is a function token, never an operand.
@@ -120,24 +122,74 @@ def _with_row(reference: str, row: int) -> str:
     return f"{match.group('col')}{dollar}{row}"
 
 
-def _shift_operand(operand: str, offset: int) -> str:
-    """Move every relative row of *operand* down by *offset* rows."""
+def _shift_operand(operand: str, row_offset: int, column_offset: int) -> str:
+    """Move every relative reference of *operand* by the given offsets."""
     prefix, refs = _split_sheet(operand)
 
     def replace(match: re.Match[str]) -> str:
+        column_text = match.group("col")
         row_text = match.group("row")
-        if row_text.startswith("$"):
-            return match.group(0)
-        new_row = int(row_text) + offset
-        if not 1 <= new_row <= _MAX_ROW:
-            msg = (
-                f"Filling this table would move the reference {operand!r} to row "
-                f"{new_row}, outside the sheet"
-            )
-            raise ValueError(msg)
-        return f"{match.group('col')}{new_row}"
+        column = column_text.lstrip("$")
+        row = row_text.lstrip("$")
+        if row_offset and not row_text.startswith("$"):
+            new_row = int(row) + row_offset
+            if not 1 <= new_row <= _MAX_ROW:
+                msg = (
+                    f"Filling this table would move the reference {operand!r} to row "
+                    f"{new_row}, outside the sheet"
+                )
+                raise ValueError(msg)
+            row = str(new_row)
+        if column_offset and not column_text.startswith("$"):
+            new_column = _column_index(column) + column_offset
+            if not 1 <= new_column <= _MAX_COLUMN:
+                msg = (
+                    f"Filling this table would move the reference {operand!r} to "
+                    f"column {new_column}, outside the sheet"
+                )
+                raise ValueError(msg)
+            column = get_column_letter(new_column)
+        dollar_column = "$" if column_text.startswith("$") else ""
+        dollar_row = "$" if row_text.startswith("$") else ""
+        return f"{dollar_column}{column}{dollar_row}{row}"
 
     return prefix + _COLUMN_ROW.sub(replace, refs)
+
+
+def shift_relative(formula: str, *, rows: int = 0, columns: int = 0) -> str:
+    """*formula* with its relative A1 references moved by *rows* and *columns*.
+
+    Excel moves relative references when a formula is copied, including the
+    column part when it is filled right — which is how a shared formula group
+    is stored: one text, many positions.
+
+    Examples:
+        >>> shift_relative("=B5*C5", rows=2)
+        '=B7*C7'
+        >>> shift_relative("=SUM(B5:B5)", columns=2)
+        '=SUM(D5:D5)'
+        >>> shift_relative("=B5*$C5", rows=1, columns=1)
+        '=C6*$C6'
+        >>> shift_relative("=[@Qty]*2", rows=3, columns=1)
+        '=[@Qty]*2'
+
+    """
+    if rows == 0 and columns == 0:
+        return formula
+    tokenizer = Tokenizer(formula)
+    parts: list[str] = []
+    changed = False
+    for token in tokenizer.items:
+        if token.type == "OPERAND" and token.subtype == "RANGE" and _A1_OPERAND.match(token.value):
+            shifted = _shift_operand(token.value, rows, columns)
+            changed = changed or shifted != token.value
+            parts.append(shifted)
+        else:
+            parts.append(token.value)
+    if not changed:
+        return formula
+    joined = "".join(parts)
+    return f"={joined}" if formula.startswith("=") else joined
 
 
 def shift_relative_rows(formula: str, offset: int) -> str:
@@ -167,22 +219,7 @@ def shift_relative_rows(formula: str, offset: int) -> str:
         '=LOG10(B6)'
 
     """
-    if offset == 0:
-        return formula
-    tokenizer = Tokenizer(formula)
-    parts: list[str] = []
-    changed = False
-    for token in tokenizer.items:
-        if token.type == "OPERAND" and token.subtype == "RANGE" and _A1_OPERAND.match(token.value):
-            shifted = _shift_operand(token.value, offset)
-            changed = changed or shifted != token.value
-            parts.append(shifted)
-        else:
-            parts.append(token.value)
-    if not changed:
-        return formula
-    joined = "".join(parts)
-    return f"={joined}" if formula.startswith("=") else joined
+    return shift_relative(formula, rows=offset)
 
 
 def extend_table_ranges(

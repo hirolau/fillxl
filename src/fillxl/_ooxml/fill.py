@@ -198,6 +198,14 @@ def fill_table(
     sheets = SheetStore(package)
     styles = StylesPart(package)
     sheet = sheets.get(table.sheet.part)
+    # The fill rewrites the table area; a shared group that reaches into it is
+    # unshared first, so no dependent is left without its master.
+    sheet.unshare_range(
+        geometry.top_row,
+        max(geometry.last_row, plan.new_last_row),
+        geometry.first_col,
+        geometry.last_col,
+    )
 
     columns = table.columns()
     formula_columns = _calculated_columns(columns, sheet, geometry)
@@ -319,7 +327,7 @@ def _calculated_columns(
         if not definition:
             continue
         kinds = [
-            _cell_kind(sheet.cell(row, geometry.first_col + offset))
+            _cell_kind(sheet, row, geometry.first_col + offset)
             for row in range(geometry.first_data_row, geometry.body_last_row + 1)
         ]
         evidence = ColumnFormulaEvidence(column.name, definition, True, classify_body(kinds))
@@ -329,11 +337,12 @@ def _calculated_columns(
     return formulas
 
 
-def _cell_kind(xml: str | None) -> Any:  # noqa: ANN401
+def _cell_kind(sheet: SheetPart, row: int, column: int) -> Any:  # noqa: ANN401
     """What a template body cell holds: a formula, a value, or nothing."""
+    xml = sheet.cell(row, column)
     if xml is None:
         return "empty"
-    if formula_text(xml) is not None:
+    if sheet.formula(row, column) is not None:
         return "formula"
     return "value" if xmltext.element_text(xml, "v") is not None else "empty"
 
@@ -400,7 +409,7 @@ def _refuse_occupied_growth(
                 )
                 raise ValueError(msg)
             if sheet.has_value(row, column):
-                current = _display_value(sheet.cell(row, column))
+                current = _display_value(sheet, row, column)
                 msg = (
                     f"Table '{table_name}' cannot expand to {data_rows} rows: "
                     f"cell {reference} already contains data ({current}). Move or "
@@ -409,11 +418,12 @@ def _refuse_occupied_growth(
                 raise ValueError(msg)
 
 
-def _display_value(xml: str | None) -> str:
+def _display_value(sheet: SheetPart, row: int, column: int) -> str:
     """A short description of what a cell holds, for an error message."""
+    xml = sheet.cell(row, column)
     if xml is None:
         return "''"
-    formula = formula_text(xml)
+    formula = sheet.formula(row, column)
     if formula is not None:
         return repr(formula)
     text = xmltext.element_text(xml, "v")

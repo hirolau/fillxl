@@ -20,6 +20,7 @@ from attrs import define, field
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
 
+from fillxl._formulas import shift_relative
 from fillxl._ooxml import xmltext
 
 if TYPE_CHECKING:
@@ -158,6 +159,28 @@ def _is_array_cell(xml: str | None) -> bool:
     return xml is not None and array_range(xml) is not None
 
 
+def _plain_formula(xml: str, text: str) -> str:
+    """*xml* with its ``<f>`` element rewritten as a plain formula holding *text*.
+
+    The ``t``, ``si`` and ``ref`` attributes describe a shared group; a cell
+    that is no longer shared must not keep them.
+    """
+    match = _FORMULA.search(xml)
+    if match is None:  # pragma: no cover - only formula cells are unshared
+        return xml
+    element = match.group(0)
+    opening = element[: element.find(">") + 1]
+    name = re.match(rf"<({xmltext.any_prefix('f')})", opening)
+    if name is None:  # pragma: no cover - the pattern found an <f> start tag
+        return xml
+    for attribute in ("t", "si", "ref"):
+        opening = xmltext.remove_attribute(opening, attribute)
+    if opening.endswith("/>"):
+        opening = f"{opening[:-2].rstrip()}>"
+    replacement = f"{opening}{xmltext.escape_text(text)}</{name.group(1)}>"
+    return f"{xml[: match.start()]}{replacement}{xml[match.end() :]}"
+
+
 @define
 class _Row:
     """One ``<row>`` element, decomposed into its attributes and cells."""
@@ -197,6 +220,10 @@ class SheetPart:
         self._tail = text[match.end() :]
         self._rows = self._parse_rows(match.group("body") or "")
         self._array_cache: list[CellRange] | None = None
+        self._shared_master: dict[str, tuple[int, int, str]] = {}
+        self._shared_members: dict[str, list[tuple[int, int]]] = {}
+        self._cell_group: dict[tuple[int, int], str] = {}
+        self._index_shared()
         self._changed = False
 
     # ── parsing ────────────────────────────────────────────────────────────
@@ -227,6 +254,27 @@ class SheetPart:
 
     def _dirty(self) -> None:
         self._changed = True
+
+    def _index_shared(self) -> None:
+        """Index the shared-formula groups of the sheet.
+
+        Excel stores a formula filled down or right once, on a master cell,
+        plus an empty ``<f t="shared" si="…"/>`` on every other cell of the
+        group.  A dependent has no text of its own, so without this index it
+        looks like a cell that holds no formula at all.
+        """
+        for row, column, xml in self.iter_cells():
+            tag = xmltext.start_tag(xml, "f")
+            if tag is None or xmltext.attribute(tag, "t") != "shared":
+                continue
+            si = xmltext.attribute(tag, "si")
+            if si is None:  # pragma: no cover - Excel always writes si
+                continue
+            self._cell_group[(row, column)] = si
+            self._shared_members.setdefault(si, []).append((row, column))
+            text = xmltext.element_text(xml, "f")
+            if text is not None:
+                self._shared_master.setdefault(si, (row, column, text))
 
     # ── cells ──────────────────────────────────────────────────────────────
 
@@ -339,13 +387,79 @@ class SheetPart:
 
     def formula_cells(self) -> Iterator[tuple[int, int, str]]:
         """Yield ``(row, column, formula)`` for every cell that holds a formula."""
-        for row, column, xml in self.iter_cells():
-            text = formula_text(xml)
-            if text is not None:
-                yield row, column, text
+        for number in sorted(self._rows):
+            for column in sorted(self._rows[number].cells):
+                text = self.formula(number, column)
+                if text is not None:
+                    yield number, column, text
+
+    def formula(self, row: int, column: int) -> str | None:
+        """The formula of a cell, with Excel's leading ``=``.
+
+        A cell that belongs to a shared-formula group gets the master's text
+        moved to its own position, which is the formula Excel displays.
+        """
+        xml = self.cell(row, column)
+        if xml is None:
+            return None
+        si = self._cell_group.get((row, column))
+        if si is None:
+            return formula_text(xml)
+        master = self._shared_master.get(si)
+        if master is None:  # pragma: no cover - a group without a master is corrupt
+            return None
+        master_row, master_column, text = master
+        return shift_relative(
+            f"={text}",
+            rows=row - master_row,
+            columns=column - master_column,
+        )
+
+    def unshare(self, si: str) -> None:
+        """Replace the shared-formula group *si* with one formula per cell.
+
+        Editing one member of a group in place would either orphan the others
+        or leave a master whose ``ref`` no longer covers them.
+        """
+        master = self._shared_master.pop(si, None)
+        members = self._shared_members.pop(si, [])
+        for cell in members:
+            self._cell_group.pop(cell, None)
+        if master is None:  # pragma: no cover - groups always have a master
+            return
+        master_row, master_column, text = master
+        for row, column in members:
+            xml = self.cell(row, column)
+            if xml is None:  # pragma: no cover - members always exist
+                continue
+            moved = shift_relative(
+                text,
+                rows=row - master_row,
+                columns=column - master_column,
+            )
+            self.write_cell(row, column, _plain_formula(xml, moved))
+
+    def unshare_range(
+        self,
+        first_row: int,
+        last_row: int,
+        first_col: int,
+        last_col: int,
+    ) -> None:
+        """Unshare every group with at least one member inside the rectangle."""
+        doomed = {
+            si
+            for (row, column), si in self._cell_group.items()
+            if first_row <= row <= last_row and first_col <= column <= last_col
+        }
+        for si in sorted(doomed):
+            self.unshare(si)
 
     def set_formula(self, row: int, column: int, formula: str) -> None:
         """Replace the formula of an existing cell, keeping everything else."""
+        si = self._cell_group.get((row, column))
+        if si is not None:
+            self.unshare(si)
         xml = self.cell(row, column)
         if xml is None:  # pragma: no cover - callers rewrite existing formulas
             return

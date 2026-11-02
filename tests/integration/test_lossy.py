@@ -11,7 +11,6 @@ import openpyxl
 import pytest
 
 from fillxl import FillXLConfig, LossyTemplateError, LossyTemplateWarning, fill
-from tests._assets import TEMPLATE
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -80,17 +79,47 @@ def test_an_embedded_object_is_reported_and_keeps_the_previous_output(
         assert [n for n in archive.namelist() if n.startswith("xl/embeddings/")] == []
 
 
+def _plain_template(path: Path) -> Path:
+    """A template with nothing the openpyxl engine can lose."""
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Data"
+    worksheet["A1"] = "Name"
+    worksheet["A2"] = "sample"
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
 def test_a_plain_template_does_not_warn(tmp_path: Path) -> None:
     """An ordinary template has no features to lose."""
+    template = _plain_template(tmp_path / "plain.xlsx")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        fill(
-            template=TEMPLATE,
-            output=tmp_path / "out.xlsx",
-            values={"single_cell": "x"},
-        )
+        fill(template=template, output=tmp_path / "out.xlsx")
 
     assert not [item for item in caught if "did not preserve" in str(item.message)]
+
+
+def test_losing_cell_metadata_is_reported(tmp_path: Path) -> None:
+    """``xl/metadata.xml`` carries spilling and data-type information.
+
+    It is what makes an edited formula start spilling again, so a fill that
+    drops it silently changes what the user's formulas do.
+    """
+    template = _plain_template(tmp_path / "metadata.xlsx")
+    _inject_part(
+        template,
+        "xl/metadata.xml",
+        b'<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>',
+    )
+
+    with pytest.raises(LossyTemplateError, match="cell metadata"):
+        fill(
+            template=template,
+            output=tmp_path / "out.xlsx",
+            config=FillXLConfig(on_lossy="raise"),
+        )
 
 
 def test_on_lossy_rejects_unknown_values() -> None:

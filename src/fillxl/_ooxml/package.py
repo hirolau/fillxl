@@ -1,0 +1,263 @@
+"""An OOXML package held in memory, edited part by part.
+
+The package is a ZIP of XML parts.  Reading it into memory lets the engine copy
+every part it does not understand byte for byte, which is what keeps spilled
+arrays, slicers, rich data and VBA alive: they are never parsed, so they cannot
+be lost.
+"""
+
+from __future__ import annotations
+
+import posixpath
+import re
+import zipfile
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from attrs import define
+
+from fillxl._ooxml import xmltext
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+CONTENT_TYPES = "[Content_Types].xml"
+_ROOT_RELS = "_rels/.rels"
+
+_RELATIONSHIP = xmltext.element_re("Relationship")
+
+
+@define(frozen=True)
+class Relationship:
+    """One entry of a ``.rels`` part.
+
+    Attributes:
+        rel_id: The ``Id`` used to reference this relationship.
+        rel_type: The full relationship type URI.
+        target: The target as written in the part.
+        external: ``True`` for ``TargetMode="External"`` targets.
+
+    """
+
+    rel_id: str
+    rel_type: str
+    target: str
+    external: bool = False
+
+
+def rels_part(part: str) -> str:
+    """The ``.rels`` part that lists relationships *part* owns.
+
+    Examples:
+        >>> rels_part("xl/workbook.xml")
+        'xl/_rels/workbook.xml.rels'
+        >>> rels_part("")
+        '_rels/.rels'
+
+    """
+    if not part:
+        return _ROOT_RELS
+    folder, _, name = part.rpartition("/")
+    return posixpath.join(folder, "_rels", f"{name}.rels")
+
+
+class OoxmlPackage:
+    """A workbook package whose parts can be read, rewritten and dropped."""
+
+    def __init__(self, path: Path) -> None:
+        """Read the package at *path*.
+
+        Args:
+            path: Path to an ``.xlsx``/``.xlsm`` file.
+
+        Raises:
+            ValueError: If the file is not a ZIP package (an encrypted
+                workbook, or a binary ``.xls``/``.xlsb`` file).
+
+        """
+        if not zipfile.is_zipfile(path):
+            msg = (
+                f"{path} is not an OOXML (zip) workbook. Password-protected workbooks, "
+                ".xls and .xlsb files cannot be filled by the fillxl engine; use "
+                "engine='win32com' instead."
+            )
+            raise ValueError(msg)
+        self.path = path
+        with zipfile.ZipFile(path) as archive:
+            self._order: list[str] = list(archive.namelist())
+            self._infos: dict[str, zipfile.ZipInfo] = {
+                info.filename: info for info in archive.infolist()
+            }
+            self._parts: dict[str, bytes] = {
+                name: archive.read(name) for name in self._order
+            }
+        self._dirty: set[str] = set()
+
+    # ── parts ───────────────────────────────────────────────────────────────
+
+    @property
+    def part_names(self) -> list[str]:
+        """Every part name, in the order the archive stores them."""
+        return [name for name in self._order if name in self._parts]
+
+    def has(self, part: str) -> bool:
+        """Whether the package holds *part*."""
+        return part in self._parts
+
+    def raw(self, part: str) -> bytes:
+        """The bytes of *part*."""
+        return self._parts[part]
+
+    def text(self, part: str) -> str:
+        """*part* decoded as UTF-8 XML."""
+        return self._parts[part].decode("utf-8")
+
+    def set_text(self, part: str, text: str) -> None:
+        """Replace *part* with *text*."""
+        self._parts[part] = text.encode("utf-8")
+        if part not in self._order:
+            self._order.append(part)
+        self._dirty.add(part)
+
+    def is_changed(self, part: str) -> bool:
+        """Whether *part* was rewritten (as opposed to copied verbatim)."""
+        return part in self._dirty
+
+    def drop(self, part: str) -> None:
+        """Remove *part*, its relationship part and its content-type override."""
+        self._parts.pop(part, None)
+        self._order = [name for name in self._order if name != part]
+        self._dirty.discard(part)
+        rels = rels_part(part)
+        if rels in self._parts and rels != _ROOT_RELS:
+            self._parts.pop(rels)
+            self._order = [name for name in self._order if name != rels]
+            self._dirty.discard(rels)
+        self.remove_override(part)
+
+    # ── relationships ───────────────────────────────────────────────────────
+
+    def relationships(self, owner: str) -> list[Relationship]:
+        """The relationships *owner* declares (``""`` means the package root)."""
+        part = rels_part(owner)
+        if part not in self._parts:
+            return []
+        found: list[Relationship] = []
+        text = self.text(part)
+        for match in _RELATIONSHIP.finditer(text):
+            element = match.group(0)
+            rel_id = xmltext.attribute(element, "Id")
+            rel_type = xmltext.attribute(element, "Type")
+            target = xmltext.attribute(element, "Target")
+            if rel_id is None or rel_type is None or target is None:
+                continue
+            found.append(
+                Relationship(
+                    rel_id=rel_id,
+                    rel_type=rel_type,
+                    target=target,
+                    external=xmltext.attribute(element, "TargetMode") == "External",
+                ),
+            )
+        return found
+
+    def target_part(self, owner: str, rel_id: str) -> str | None:
+        """The package part a relationship of *owner* points at."""
+        for relationship in self.relationships(owner):
+            if relationship.rel_id != rel_id or relationship.external:
+                continue
+            return self._resolve(owner, relationship.target)
+        return None
+
+    def related_parts(self, owner: str, type_suffix: str) -> list[str]:
+        """Every internal part *owner* relates to with a type ending in *type_suffix*."""
+        parts: list[str] = []
+        for relationship in self.relationships(owner):
+            if relationship.external or not relationship.rel_type.endswith(type_suffix):
+                continue
+            resolved = self._resolve(owner, relationship.target)
+            if resolved is not None and self.has(resolved):
+                parts.append(resolved)
+        return parts
+
+    def remove_relationship(self, owner: str, rel_id: str) -> None:
+        """Delete the relationship *rel_id* from *owner*'s ``.rels`` part."""
+        part = rels_part(owner)
+        if part not in self._parts:
+            return
+        text = self.text(part)
+
+        def keep(match: re.Match[str]) -> str:
+            return "" if xmltext.attribute(match.group(0), "Id") == rel_id else match.group(0)
+
+        self.set_text(part, _RELATIONSHIP.sub(keep, text))
+
+    def dependencies(self, owner: str) -> Iterator[tuple[str, str]]:
+        """Yield ``(owner, part)`` for every internal relationship of *owner*."""
+        for relationship in self.relationships(owner):
+            if relationship.external:
+                continue
+            resolved = self._resolve(owner, relationship.target)
+            if resolved is not None:
+                yield owner, resolved
+
+    def reachable_from(self, roots: list[str]) -> set[str]:
+        """Every part reachable from *roots* through internal relationships."""
+        seen: set[str] = set()
+        pending = list(roots)
+        while pending:
+            part = pending.pop()
+            if part in seen or not self.has(part):
+                continue
+            seen.add(part)
+            pending.extend(target for _, target in self.dependencies(part))
+        return seen
+
+    @staticmethod
+    def _resolve(owner: str, target: str) -> str | None:
+        if target.startswith("/"):
+            return target.lstrip("/")
+        folder = posixpath.dirname(owner)
+        resolved = posixpath.normpath(posixpath.join(folder, target))
+        return None if resolved.startswith("..") else resolved
+
+    # ── content types ───────────────────────────────────────────────────────
+
+    def remove_override(self, part: str) -> None:
+        """Delete the content-type ``<Override>`` of *part*, if there is one."""
+        if CONTENT_TYPES not in self._parts:
+            return
+        pattern = re.compile(
+            rf'<{xmltext.any_prefix("Override")}\b[^>]*\bPartName="/{re.escape(part)}"[^>]*/>',
+        )
+        text = self.text(CONTENT_TYPES)
+        updated = pattern.sub("", text)
+        if updated != text:
+            self.set_text(CONTENT_TYPES, updated)
+
+    def add_override(self, part: str, content_type: str) -> None:
+        """Declare the content type of *part*."""
+        text = self.text(CONTENT_TYPES)
+        if f'PartName="/{part}"' in text:
+            return
+        override = f'<Override PartName="/{part}" ContentType="{content_type}"/>'
+        self.set_text(CONTENT_TYPES, text.replace("</Types>", f"{override}</Types>"))
+
+    # ── writing ─────────────────────────────────────────────────────────────
+
+    def save(self, path: Path) -> None:
+        """Write the package to *path*.
+
+        Parts that were not rewritten are copied with their original ZIP entry
+        (compression method and timestamp included), so an untouched part is
+        indistinguishable from the template's.
+        """
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name in self._order:
+                if name not in self._parts:
+                    continue
+                info = self._infos.get(name)
+                if info is not None:
+                    archive.writestr(info, self._parts[name])
+                else:  # pragma: no cover - parts are never added to the archive
+                    archive.writestr(name, self._parts[name])

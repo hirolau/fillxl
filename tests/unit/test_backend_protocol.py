@@ -8,6 +8,8 @@ user behavior.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from fillxl._backend import Backend
@@ -51,6 +53,41 @@ class TestBackendProtocol:
         """Isinstance check works against the Backend protocol."""
         backend = OpenpyxlBackend()
         assert isinstance(backend, Backend)
+
+    def test_fillxl_backend_is_runtime_checkable_as_backend(self) -> None:
+        """The package-editing engine implements the same protocol."""
+        from fillxl._backends._fillxl import FillxlBackend
+
+        assert isinstance(FillxlBackend(), Backend)
+
+
+class TestFillxlBackendRuntimeErrorGuards:
+    """The fillxl engine refuses work before load() as the other engines do."""
+
+    def test_operations_raise_when_not_loaded(self) -> None:
+        from fillxl._backends._fillxl import FillxlBackend
+        from fillxl._config import FillXLConfig
+
+        backend = FillxlBackend()
+        with pytest.raises(RuntimeError, match="No workbook loaded"):
+            backend.fill_named_cell("test", 42, FillXLConfig())
+        with pytest.raises(RuntimeError, match="No workbook loaded"):
+            backend.fill_table("test", [], FillXLConfig())
+        with pytest.raises(RuntimeError, match="No workbook loaded"):
+            backend.set_pivot_refresh()
+        with pytest.raises(RuntimeError, match="No workbook loaded"):
+            backend.hide_sheets("_")
+        with pytest.raises(RuntimeError, match="No workbook loaded"):
+            backend.delete_sheets(["Sheet1"])
+        with pytest.raises(RuntimeError, match="No workbook loaded"):
+            backend.set_active_sheet("Sheet1")
+        with pytest.raises(RuntimeError, match="No workbook loaded"):
+            backend.save(Path("out.xlsx"))
+
+    def test_close_without_load_is_safe(self) -> None:
+        from fillxl._backends._fillxl import FillxlBackend
+
+        FillxlBackend().close()
 
 
 class TestOpenpyxlBackendRuntimeErrorGuards:

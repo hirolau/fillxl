@@ -61,10 +61,12 @@ def fill(
         output: Path where the filled output will be saved.
         values: Mapping of named cell / defined name to scalar values.
         tables: Mapping of Excel table names to tabular data.
-        engine: ``"openpyxl"``, ``"win32com"`` or ``"auto"`` (default).
-            ``"auto"`` uses openpyxl for ``.xlsx``/``.xlsm`` templates saved in
-            the same format, and Excel (win32com) when it is needed and
-            available: ``.xlsb``/``.xls`` templates, or a different output format.
+        engine: ``"openpyxl"``, ``"fillxl"``, ``"win32com"`` or ``"auto"``
+            (default).  ``"auto"`` uses openpyxl for ``.xlsx``/``.xlsm``
+            templates saved in the same format, and Excel (win32com) when it is
+            needed and available: ``.xlsb``/``.xls`` templates, or a different
+            output format.  ``"fillxl"`` edits the OOXML package itself: no
+            Excel, and no template feature lost.
         config: Configuration options.  Uses :class:`FillXLConfig` defaults
             if not provided.
 

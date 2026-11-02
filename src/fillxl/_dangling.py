@@ -31,7 +31,7 @@ _STRING_LITERAL = re.compile(r'"(?:[^"]|"")*"')
 _MAX_REPORTED = 5
 
 
-def _names_deleted_sheet(text: object, deleted: set[str]) -> bool:
+def names_deleted_sheet(text: object, deleted: set[str]) -> bool:
     """Whether *text* references one of *deleted*, ignoring string literals.
 
     *deleted* holds lower-case sheet names, so the lookup stays free of the
@@ -39,17 +39,17 @@ def _names_deleted_sheet(text: object, deleted: set[str]) -> bool:
     non-empty string (an empty cell, a number, a date) names nothing.
 
     Examples:
-        >>> _names_deleted_sheet("=SUM(RawData!B2:B2)", {"rawdata"})
+        >>> names_deleted_sheet("=SUM(RawData!B2:B2)", {"rawdata"})
         True
-        >>> _names_deleted_sheet("=SUM('Raw Data'!B2)", {"raw data"})
+        >>> names_deleted_sheet("=SUM('Raw Data'!B2)", {"raw data"})
         True
-        >>> _names_deleted_sheet("=SUM(rawdata!B2)", {"rawdata"})
+        >>> names_deleted_sheet("=SUM(rawdata!B2)", {"rawdata"})
         True
-        >>> _names_deleted_sheet("=SUM(MyData!B2)", {"data"})
+        >>> names_deleted_sheet("=SUM(MyData!B2)", {"data"})
         False
-        >>> _names_deleted_sheet('="RawData!A1 is gone"', {"rawdata"})
+        >>> names_deleted_sheet('="RawData!A1 is gone"', {"rawdata"})
         False
-        >>> _names_deleted_sheet(None, {"rawdata"})
+        >>> names_deleted_sheet(None, {"rawdata"})
         False
 
     """
@@ -79,7 +79,7 @@ def _defined_names(workbook: Workbook) -> Iterable[tuple[str, DefinedName]]:
 
 def _chart_mentions(chart: Any, deleted: set[str]) -> bool:  # noqa: ANN401
     """Whether any series of *chart* reads from a deleted sheet."""
-    return any(_names_deleted_sheet(reference.f, deleted) for reference in chart_references(chart))
+    return any(names_deleted_sheet(reference.f, deleted) for reference in chart_references(chart))
 
 
 def _pivot_mentions(pivot: Any, deleted: set[str]) -> bool:  # noqa: ANN401
@@ -110,7 +110,7 @@ def find_dangling_references(workbook: Workbook, deleted: Sequence[str]) -> list
         found.extend(
             f"{title}!{cell.coordinate}"
             for cell in _formula_cells(sheet)
-            if _names_deleted_sheet(cell.value, names)
+            if names_deleted_sheet(cell.value, names)
         )
         charts = getattr(sheet, "_charts", [])
         if any(_chart_mentions(chart, names) for chart in charts):
@@ -121,7 +121,7 @@ def find_dangling_references(workbook: Workbook, deleted: Sequence[str]) -> list
     found.extend(
         f"the defined name {name!r}"
         for name, defined in _defined_names(workbook)
-        if _names_deleted_sheet(defined.attr_text, names)
+        if names_deleted_sheet(defined.attr_text, names)
     )
     return found
 

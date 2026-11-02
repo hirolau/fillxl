@@ -34,7 +34,7 @@ lists what else changed.
 | `output` | `str \| Path` | Path where the filled workbook will be saved. |
 | `values` | `dict[str, Any] \| None` | Map of named cell → value to fill. |
 | `tables` | `dict[str, TabularData] \| None` | Map of table name → data to fill. |
-| `engine` | `Engine` | Backend engine: `"auto"`, `"openpyxl"`, or `"win32com"`. Default: `"auto"` (see below). |
+| `engine` | `Engine` | Backend engine: `"auto"`, `"openpyxl"`, `"fillxl"`, or `"win32com"`. Default: `"auto"` (see below). |
 | `config` | `FillXLConfig \| None` | Advanced configuration (see below). |
 
 ### Returns

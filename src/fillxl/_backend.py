@@ -132,6 +132,7 @@ class Backend(Protocol):
 _KNOWN_ENGINES: frozenset[str] = frozenset(get_args(Engine))
 _OPENPYXL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
 _WIN32COM_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xlsb", ".xls"})
+_FILLXL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
 
 
 def _win32com_available() -> bool:
@@ -145,7 +146,10 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
     template saved in the same format.  Otherwise it picks win32com when Excel
     automation is available (``.xlsb``/``.xls`` templates, format conversion).
 
-    A format openpyxl cannot write raises here, before the template is loaded,
+    ``"fillxl"`` edits the OOXML package itself: no Excel, and no feature loss.
+    It reads and writes ``.xlsx``/``.xlsm`` only, in the same format.
+
+    A format an engine cannot write raises here, before the template is loaded,
     instead of at ``save()`` after all the filling work is done.
 
     Examples:
@@ -154,6 +158,12 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
         'openpyxl'
         >>> resolve_engine("win32com", Path("t.xlsx"), Path("o.xlsx"))
         'win32com'
+        >>> resolve_engine("fillxl", Path("t.xlsx"), Path("o.xlsx"))
+        'fillxl'
+        >>> resolve_engine("fillxl", Path("t.xlsx"), Path("o.xlsb"))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: The fillxl engine cannot write a '.xlsb' file ...
         >>> resolve_engine("openpyxl", Path("t.xlsx"), Path("o.xlsb"))  # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
@@ -166,6 +176,9 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
         raise ValueError(msg)
     if engine == "win32com":
         _require_excel_output(output)
+        return engine
+    if engine == "fillxl":
+        _require_fillxl_output(template, output)
         return engine
     if engine == "auto" and _needs_excel(template, output) and _win32com_available():
         # The suffix is checked here too: "auto" must not start Excel for a
@@ -208,6 +221,41 @@ def _require_excel_output(output: Path, *, engine: str = "win32com") -> None:
     else:
         msg = f"The win32com engine cannot write {what}. Use one of: .xlsx, .xlsm, .xlsb or .xls."
     raise ValueError(msg)
+
+
+def _require_fillxl_output(template: Path, output: Path) -> None:
+    """Raise unless the fillxl engine can turn *template* into *output*.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> _require_fillxl_output(Path("t.xlsx"), Path("o.xlsx"))
+        >>> _require_fillxl_output(Path("t.xlsx"), Path("o.xlsb"))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: The fillxl engine cannot write a '.xlsb' file...
+        >>> _require_fillxl_output(Path("t.xls"), Path("o.xls"))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: The fillxl engine cannot read a '.xls' template...
+
+    """
+    template_suffix = template.suffix.lower()
+    output_suffix = output.suffix.lower()
+    if template_suffix not in _FILLXL_SUFFIXES:
+        msg = (
+            f"The fillxl engine cannot read a '{template_suffix}' template "
+            "(it reads .xlsx and .xlsm). Use engine='win32com' for .xlsb and .xls, "
+            "or save the template as .xlsx."
+        )
+        raise ValueError(msg)
+    if output_suffix != template_suffix:
+        what = f"a '{output_suffix}' file" if output_suffix else "a file without an extension"
+        msg = (
+            f"The fillxl engine cannot write {what} from a '{template_suffix}' "
+            f"template. Save to a '{template_suffix}' path, or use engine='win32com' "
+            "to convert between formats."
+        )
+        raise ValueError(msg)
 
 
 def _needs_excel(template: Path, output: Path) -> bool:
@@ -264,6 +312,11 @@ def get_backend(engine: Engine) -> Backend:
         from fillxl._backends._win32com import Win32ComBackend
 
         return Win32ComBackend()
+
+    if engine == "fillxl":
+        from fillxl._backends._fillxl import FillxlBackend
+
+        return FillxlBackend()
 
     # All known engine names are handled above — this line is unreachable.
     msg = f"Unhandled engine {engine!r}"

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 ENGINES = [
     pytest.param("openpyxl", id="openpyxl"),
     pytest.param("win32com", id="win32com", marks=pytest.mark.win32com),
+    pytest.param("fillxl", id="fillxl"),
 ]
 
 

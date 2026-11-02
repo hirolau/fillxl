@@ -24,5 +24,5 @@ else:
 PathLike: TypeAlias = Union[str, "Path"]
 
 # Backend engine selection
-Engine: TypeAlias = Literal["auto", "openpyxl", "win32com"]
-ConcreteEngine: TypeAlias = Literal["openpyxl", "win32com"]
+Engine: TypeAlias = Literal["auto", "openpyxl", "win32com", "fillxl"]
+ConcreteEngine: TypeAlias = Literal["openpyxl", "win32com", "fillxl"]

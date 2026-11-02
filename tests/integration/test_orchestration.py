@@ -71,6 +71,24 @@ def test_win32com_rejects_an_output_format_excel_cannot_save_before_any_work_is_
         resolve_engine("win32com", Path("t.xlsx"), Path("o.csv"))
 
 
+def test_fillxl_is_selected_by_name_and_needs_no_excel() -> None:
+    """The package engine never consults Excel, so no availability check applies."""
+    assert resolve_engine("fillxl", Path("t.xlsx"), Path("o.xlsx")) == "fillxl"
+    assert resolve_engine("fillxl", Path("t.xlsm"), Path("o.xlsm")) == "fillxl"
+
+
+def test_fillxl_refuses_a_binary_template_before_any_work_is_done() -> None:
+    """A .xlsb template cannot be read as a zip, so the error names win32com."""
+    with pytest.raises(ValueError, match=r"engine='win32com' for \.xlsb"):
+        resolve_engine("fillxl", Path("t.xlsb"), Path("o.xlsb"))
+
+
+def test_fillxl_refuses_format_conversion() -> None:
+    """fillxl rewrites an existing package; it cannot change the format."""
+    with pytest.raises(ValueError, match=r"fillxl engine cannot write a '\.xlsm' file"):
+        resolve_engine("fillxl", Path("t.xlsx"), Path("o.xlsm"))
+
+
 def test_an_unknown_engine_is_refused_before_any_file_is_touched(tmp_path: Path) -> None:
     """A typo in the engine name must not leave a half-written output behind."""
     template = _xlsx_template(tmp_path)

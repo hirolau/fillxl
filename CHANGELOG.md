@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `engine="fillxl"`: a third backend that fills a workbook by editing the OOXML
+  package itself instead of loading it into an object model. It needs no Excel
+  (and no workbook model), runs on every platform, and rewrites only the parts a
+  fill has to change, so everything the openpyxl engine drops survives: spilled
+  dynamic arrays (`SEQUENCE`, `FILTER`, `SORT`, …) with their
+  `xl/metadata.xml` and cell metadata, slicers, timelines, `chartEx`, rich data,
+  embedded objects and VBA. `on_lossy` stays silent for this engine because
+  nothing is lost — if anything were, it would say so. It reads and writes
+  `.xlsx`/`.xlsm` in the same format; `.xlsb`, `.xls`, encrypted workbooks and
+  format conversion are refused with an error that names `engine="win32com"`.
+  A table that would grow into an array (spill) range is refused rather than
+  overwriting part of a formula, including when the spill's results are blank.
+- `on_lossy` now reports `xl/metadata.xml`, the part that carries spilling and
+  data-type information. Without it a template's dynamic arrays become ordinary
+  formulas, which used to happen silently.
+- `names_deleted_sheet` (formerly the private `_names_deleted_sheet`) and
+  `cf_range_tracks_table` are public, so the fillxl engine shares the same
+  sheet-reference matching and conditional-formatting rule as the openpyxl one.
+
 ## [0.8.0] - 2026-11-01
 
 Correctness release, not yet 1.0. The public API is unchanged since 0.7.1 —

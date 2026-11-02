@@ -540,7 +540,7 @@ def _extend_conditional_formatting(
 
         cell_ranges: list[Any] = sorted(conditional_formatting.sqref.ranges, key=str)
         for cell_range in cell_ranges:
-            if _cf_range_tracks_table(
+            if cf_range_tracks_table(
                 cell_range,
                 table_start_column=table_start_column,
                 table_end_column=table_end_column,
@@ -577,7 +577,7 @@ def _extend_conditional_formatting(
         logger.debug("Extended conditional formatting: %s -> %s", old_sqref, new_sqref)
 
 
-def _cf_range_tracks_table(
+def cf_range_tracks_table(
     cell_range: CellRange,
     *,
     table_start_column: int,
@@ -601,7 +601,7 @@ def _cf_range_tracks_table(
 
     Examples:
         >>> def tracks(area, new_last, old_last=20):
-        ...     return _cf_range_tracks_table(
+        ...     return cf_range_tracks_table(
         ...         CellRange(area),
         ...         table_start_column=2,
         ...         table_end_column=13,

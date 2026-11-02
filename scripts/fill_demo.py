@@ -4,6 +4,7 @@ Usage:
     uv run python scripts/fill_demo.py                        # both backends → filled_templates/
     uv run python scripts/fill_demo.py --engine openpyxl
     uv run python scripts/fill_demo.py --engine win32com
+    uv run python scripts/fill_demo.py --engine fillxl
     uv run python scripts/fill_demo.py --output-dir tests/assets/golden  # golden copies
 
 Output is written to ``filled_templates/`` (or ``--output-dir``) at the repo
@@ -211,7 +212,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Fill demo templates with sample data.")
     parser.add_argument(
         "--engine",
-        choices=["openpyxl", "win32com", "both"],
+        choices=["openpyxl", "fillxl", "win32com", "both"],
         default="both",
         help="Backend engine to use (default: both).",
     )

@@ -60,6 +60,15 @@ class TestBackendFactory:
         backend = get_backend("win32com")
         assert isinstance(backend, Win32ComBackend)
 
+    def test_get_backend_returns_fillxl_backend_for_fillxl(
+        self,
+    ) -> None:
+        """'fillxl' gives the package-editing backend (no workbook read yet)."""
+        from fillxl._backends._fillxl import FillxlBackend
+
+        backend = get_backend("fillxl")
+        assert isinstance(backend, FillxlBackend)
+
     def test_get_backend_raises_valueerror_for_unknown_engine(
         self,
     ) -> None:
@@ -68,7 +77,7 @@ class TestBackendFactory:
             # Intentionally passing invalid engine name to test error handling
             get_backend(cast(Any, "xlwings"))
 
-    @pytest.mark.parametrize("engine", ["auto", "openpyxl", "win32com"])
+    @pytest.mark.parametrize("engine", ["auto", "openpyxl", "win32com", "fillxl"])
     def test_known_engine_name_returns_a_valid_backend(self, engine: str) -> None:
         """Every known engine name returns a backend implementing the protocol."""
         backend = get_backend(cast(Engine, engine))

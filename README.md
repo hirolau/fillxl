@@ -88,10 +88,21 @@ matter, and every format produces the same workbook.
 | `.xlsb`/`.xls` template, or a format conversion | `win32com` when Excel is available |
 | anything else, without Excel | `openpyxl`, whose error says what is missing |
 
+Three engines are available, and `engine=` selects one explicitly:
+
+| Engine | Needs Excel | Keeps spilled arrays and everything else |
+|--------|:---:|---|
+| `openpyxl` (default) | no | drops parts the object model cannot hold |
+| `fillxl` | no | **yes** — edits the OOXML package, never rewrites what it does not understand |
+| `win32com` | yes | yes (Windows, Excel required) |
+
 `openpyxl` runs anywhere; `win32com` drives Microsoft Excel on Windows (pywin32
 installs with fillxl there) and keeps what openpyxl drops (modern charts,
-slicers, macro-heavy workbooks). Both engines write the same values for the same
-template and data; the
+slicers, macro-heavy workbooks). `engine="fillxl"` is the third way: it needs
+no Excel, works on any platform, and keeps spilled dynamic arrays
+(`SEQUENCE`, `FILTER`, `SORT`, …), cell metadata, slicers and VBA by writing
+only the parts a fill has to change. All engines write the same values for the
+same template and data; the
 [Backends](https://hirolau.github.io/fillxl/backends/) page lists what still
 differs.
 
@@ -110,6 +121,8 @@ differs.
   recalculate on open (`engine="win32com"` saves computed values).
 - `openpyxl` drops some modern chart types, slicers and similar parts, and says
   so: `on_lossy="warn"` (default) warns, `on_lossy="raise"` fails the fill.
+  Use `engine="fillxl"` when the template has spilled dynamic arrays or other
+  parts openpyxl cannot write: it keeps them.
 - `delete_sheets` does not rewrite formulas, charts, names or pivots that point
   at the deleted sheet; fillxl warns with `DanglingReferenceWarning` because
   Excel shows `#REF!` there.

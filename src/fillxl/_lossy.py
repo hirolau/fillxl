@@ -44,6 +44,7 @@ _PART_FEATURES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^xl/connections\.xml$"), "data connections"),
     (re.compile(r"^xl/queryTables/[^/]+\.xml$"), "query tables"),
     (re.compile(r"^xl/richData/[^/]+$"), "rich data (pictures in cells, data types)"),
+    (re.compile(r"^xl/metadata\.xml$"), "cell metadata (dynamic arrays, data types)"),
     (re.compile(r"^xl/externalLinks/externalLink\d+\.xml$"), "external links"),
     (re.compile(r"^xl/webextensions/[^/]+$"), "Office add-ins"),
     # openpyxl writes no embeddings at all, so an embedded Word document, PDF
@@ -235,6 +236,7 @@ def check_lossy(
     policy: OnLossy,
     *,
     deleted_sheets: Collection[str] = (),
+    engine: str = "openpyxl",
 ) -> None:
     """Apply the ``on_lossy`` policy to a filled *output*."""
     if policy == "ignore":
@@ -243,7 +245,7 @@ def check_lossy(
     if not lost:
         return
     msg = (
-        "The openpyxl engine did not preserve these template features: "
+        f"The {engine} engine did not preserve these template features: "
         + "; ".join(lost)
         + ". Use engine='win32com' to keep them, or set on_lossy='ignore'."
     )

@@ -33,11 +33,7 @@ _HOSTILE = [
     pytest.param("prefixed", id="prefixed"),
     pytest.param("cdata", id="cdata"),
     pytest.param("extlst_lookalikes", id="extlst-lookalikes"),
-    pytest.param(
-        "no_cell_refs",
-        id="no-cell-refs",
-        marks=pytest.mark.xfail(reason="Task 9: cells without an r attribute"),
-    ),
+    pytest.param("no_cell_refs", id="no-cell-refs"),
     pytest.param("no_sheet_views", id="no-sheet-views"),
     pytest.param("libreoffice", id="libreoffice"),
     pytest.param("streaming_writer", id="streaming-writer", marks=_NEEDS_XLSXWRITER),

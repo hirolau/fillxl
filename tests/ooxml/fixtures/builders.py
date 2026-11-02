@@ -88,7 +88,7 @@ def _without_cell_references(path: Path, *, rows: tuple[int, int]) -> Path:
             start = xml.find(f'<row r="{row}"')
             end = xml.find("</row>", start)
             body = xml[start:end]
-            xml = f"{xml[:start]}{re.sub(r' r=\"[A-Z]+\\d+\"', '', body)}{xml[end:]}"
+            xml = f"{xml[:start]}{re.sub(r' r=[\"][A-Z]+[0-9]+[\"]', '', body)}{xml[end:]}"
         return xml
 
     patch_part(path, SHEET_PART, transform)

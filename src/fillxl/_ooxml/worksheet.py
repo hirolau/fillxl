@@ -237,12 +237,22 @@ class SheetPart:
             row_number = int(number) if number is not None and number.isdigit() else previous + 1
             previous = row_number
             cells: dict[int, str] = {}
+            previous_column = 0
             for cell in _CELL.finditer(match.group("body") or ""):
                 xml = cell.group(0)
                 reference = xmltext.attribute(xml, "r")
-                if reference is None:  # pragma: no cover - Excel always writes r
-                    continue
-                _, column = split_reference(reference)
+                if reference is None:
+                    # The reference is optional: a cell without one follows the
+                    # previous cell of its row.
+                    column = previous_column + 1
+                    xml = xmltext.set_tag_attribute(
+                        xml,
+                        "r",
+                        f"{get_column_letter(column)}{row_number}",
+                    )
+                else:
+                    _, column = split_reference(reference)
+                previous_column = column
                 cells[column] = xml
             rows[row_number] = _Row(
                 attributes=attributes,

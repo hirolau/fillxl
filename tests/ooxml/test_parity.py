@@ -22,6 +22,7 @@ from fillxl import FillXLConfig, fill
 from tests.ooxml._build import (
     HEADERS,
     body_rows,
+    date1904_template,
     named_cell_template,
     table_template,
     table_with_calculated_column_template,
@@ -226,6 +227,16 @@ def _formula_text_unescaped(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     )
 
 
+def _date_1904(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+    return (
+        date1904_template(tmp_path / "template.xlsx"),
+        {
+            "tables": {"Data": body_rows(2)},
+            "values": {"a_date": dt.date(2025, 5, 5)},
+        },
+    )
+
+
 def _named_cell_scalars(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     template = named_cell_template(
         tmp_path / "template.xlsx",
@@ -282,6 +293,7 @@ SCENARIOS = [
     pytest.param(_sum_below_other_sheet, id="sum-below-other-sheet"),
     pytest.param(_general_dates, id="general-dates"),
     pytest.param(_formatted_dates, id="formatted-dates"),
+    pytest.param(_date_1904, id="date-1904"),
     pytest.param(_text_that_looks_like_an_error, id="hash-na-text"),
     pytest.param(_formula_text_escaped, id="formula-text-escaped"),
     pytest.param(_formula_text_unescaped, id="formula-text-unescaped"),

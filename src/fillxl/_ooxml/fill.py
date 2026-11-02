@@ -14,10 +14,12 @@ nothing below the table ever moves.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from typing import TYPE_CHECKING, Any
 
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.datetime import MAC_EPOCH, WINDOWS_EPOCH
 from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._adapters import TabularAdapter
@@ -125,11 +127,17 @@ def fill_named_cell(
             normalised,
             style=_date_style(styles, sheet.style(row, column), normalised),
             escape_formulas=escape_formulas,
+            epoch=_epoch(workbook),
         ),
     )
     sheet.save()
     styles.save()
     logger.debug("Set named cell '%s' (%s!%s) = %s", name, sheet_name, address, normalised)
+
+
+def _epoch(workbook: WorkbookPart) -> dt.datetime:
+    """The day zero *workbook* counts dates from."""
+    return MAC_EPOCH if workbook.date1904 else WINDOWS_EPOCH
 
 
 def _refuse_header_write(
@@ -275,6 +283,7 @@ def fill_table(
         formula_columns=formula_columns,
         config=config,
         table_name=name,
+        epoch=_epoch(workbook),
     )
 
     if totals_row is not None:
@@ -483,6 +492,7 @@ def _write(
     style: str | None,
     *,
     escape_formulas: bool,
+    epoch: dt.datetime,
 ) -> None:
     """Write one cell value with the style a template cell gave it."""
     _refuse_spill_write(sheet, row, column)
@@ -494,6 +504,7 @@ def _write(
             value,
             style=_date_style(styles, style, value),
             escape_formulas=escape_formulas,
+            epoch=epoch,
         ),
     )
 
@@ -600,6 +611,7 @@ def _write_body(
     formula_columns: dict[str, str],
     config: FillXLConfig,
     table_name: str,
+    epoch: dt.datetime,
 ) -> None:
     """Write the data body: calculated columns, data columns, cleared leftovers."""
     data_column_map = {str(name): index for index, name in enumerate(data_columns)}
@@ -626,6 +638,7 @@ def _write_body(
                     # A calculated column is template content, not user data:
                     # escape_formulas must not turn its definition into text.
                     escape_formulas=False,
+                    epoch=epoch,
                 )
         elif column_name in data_column_map:
             data_index = data_column_map[column_name]
@@ -661,6 +674,7 @@ def _write_body(
                     value,
                     _cell_style(sheet, row, column_number, template_style, config),
                     escape_formulas=config.escape_formulas,
+                    epoch=epoch,
                 )
         else:
             # The data has no such column: clear the template's sample values.

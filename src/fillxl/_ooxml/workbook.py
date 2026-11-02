@@ -355,6 +355,12 @@ class WorkbookPart:
 
     # ── calculation ────────────────────────────────────────────────────────
 
+    @property
+    def date1904(self) -> bool:
+        """Whether the workbook counts days from 1904 instead of 1900."""
+        tag = xmltext.start_tag(self.text, "workbookPr")
+        return tag is not None and xmltext.attribute(tag, "date1904") in ("1", "true")
+
     def set_full_calc_on_load(self) -> None:
         """Mark the workbook so Excel recalculates every formula when it opens."""
         text = self.text

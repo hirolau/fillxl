@@ -8,9 +8,10 @@ write.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import TYPE_CHECKING, Any
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.chart import BarChart, Reference
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
@@ -20,6 +21,9 @@ from openpyxl.worksheet.table import (
     TableFormula,
     TableStyleInfo,
 )
+
+from fillxl._ooxml import xmltext
+from tests.ooxml._patch import patch_part
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -294,3 +298,32 @@ def body_rows(count: int, *, first_day: dt.date | None = None) -> list[dict[str,
         }
         for index in range(count)
     ]
+
+
+WORKBOOK_PART = "xl/workbook.xml"
+
+
+def date1904_template(path: Path, *, rows: int = 1) -> Path:
+    """The table template plus a named date cell, in the 1904 date system."""
+    table_template(path, rows=rows)
+    workbook = load_workbook(path)
+    try:
+        workbook["Data"]["G1"] = dt.date(2020, 1, 1)
+        workbook.defined_names.add(DefinedName("a_date", attr_text="Data!$G$1"))
+        workbook.save(path)
+    finally:
+        workbook.close()
+    patch_part(path, WORKBOOK_PART, _with_date1904)
+    return path
+
+
+def _with_date1904(workbook_xml: str) -> str:
+    """Add ``date1904="1"`` to ``<workbookPr>``, creating the element if needed."""
+    match = re.search(r"<workbookPr\b[^>]*/>", workbook_xml)
+    if match is not None:
+        updated = xmltext.set_tag_attribute(match.group(0), "date1904", "1")
+        return f"{workbook_xml[: match.start()]}{updated}{workbook_xml[match.end() :]}"
+    root = re.search(r"<workbook\b[^>]*>", workbook_xml)
+    assert root is not None
+    element = '<workbookPr date1904="1"/>'
+    return f"{workbook_xml[: root.end()]}{element}{workbook_xml[root.end() :]}"

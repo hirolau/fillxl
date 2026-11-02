@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from openpyxl.utils.datetime import to_excel
+from openpyxl.utils.datetime import MAC_EPOCH, WINDOWS_EPOCH, to_excel
 
 from fillxl._normalize import is_text_cell_value
 from fillxl._ooxml import xmltext
@@ -31,17 +31,28 @@ def number_text(value: int | float) -> str:
     return str(value)
 
 
-def serial_text(value: dt.date | dt.datetime) -> str:
+def serial_text(
+    value: dt.date | dt.datetime,
+    *,
+    epoch: dt.datetime = WINDOWS_EPOCH,
+) -> str:
     """The Excel serial number of a date or datetime, as ``<v>`` text.
+
+    Args:
+        value: The date or datetime to store.
+        epoch: The workbook's day zero.  A workbook saved with the 1904 date
+            system counts 1462 days fewer than a 1900-based one.
 
     Examples:
         >>> serial_text(dt.date(1900, 3, 1))
         '61'
         >>> serial_text(dt.datetime(1900, 3, 1, 12))
         '61.5'
+        >>> serial_text(dt.date(1904, 1, 1), epoch=MAC_EPOCH)
+        '0'
 
     """
-    serial = to_excel(value)
+    serial = to_excel(value, epoch=epoch)
     # Excel stores whole days as integers; writing 61.0 instead is equivalent
     # but noisier in the file.
     return str(int(serial)) if float(serial).is_integer() else repr(serial)
@@ -53,6 +64,7 @@ def build_cell(
     *,
     style: str | None,
     escape_formulas: bool,
+    epoch: dt.datetime = WINDOWS_EPOCH,
 ) -> str:
     """The ``<c>`` element holding *value*.
 
@@ -62,6 +74,7 @@ def build_cell(
             :func:`fillxl._normalize.prepare_cell_value`).
         style: Style index to apply, or ``None`` for the default style.
         escape_formulas: Whether a string starting with ``=`` is text.
+        epoch: The workbook's day zero, for date values.
 
     Examples:
         >>> build_cell("B7", 42, style="1", escape_formulas=False)
@@ -86,7 +99,7 @@ def build_cell(
     if isinstance(value, (int, float)):
         return f"<c{attributes}><v>{number_text(value)}</v></c>"
     if isinstance(value, (dt.date, dt.datetime)):
-        return f"<c{attributes}><v>{serial_text(value)}</v></c>"
+        return f"<c{attributes}><v>{serial_text(value, epoch=epoch)}</v></c>"
     text = str(value)
     if not is_text_cell_value(text, escape_formulas=escape_formulas):
         return f"<c{attributes}><f>{xmltext.escape_text(text[1:])}</f></c>"

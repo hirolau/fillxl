@@ -244,11 +244,18 @@ def check_lossy(
     lost = find_lost_features(template, output, deleted_sheets=deleted_sheets)
     if not lost:
         return
-    msg = (
-        f"The {engine} engine did not preserve these template features: "
-        + "; ".join(lost)
-        + ". Use engine='win32com' to keep them, or set on_lossy='ignore'."
-    )
+    features = "; ".join(lost)
+    if engine == "fillxl":
+        msg = (
+            f"The fillxl engine did not preserve these template features: {features}. "
+            "This is a fillxl engine bug; please report it with the template. "
+            "engine='win32com' preserves them meanwhile, or set on_lossy='ignore'."
+        )
+    else:
+        msg = (
+            f"The {engine} engine did not preserve these template features: {features}. "
+            "Use engine='win32com' to keep them, or set on_lossy='ignore'."
+        )
     if policy == "raise":
         raise LossyTemplateError(msg)
     warn_user(msg, LossyTemplateWarning)

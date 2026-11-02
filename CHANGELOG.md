@@ -27,6 +27,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cf_range_tracks_table` are public, so the fillxl engine shares the same
   sheet-reference matching and conditional-formatting rule as the openpyxl one.
 
+### Fixed
+- `engine="fillxl"` failed on shapes a surgical editor has to understand but
+  openpyxl cannot write: shared formulas (`<f t="shared">`, which made a
+  calculated column stored the way Excel stores it look like data and could
+  overwrite a live formula), cells without an `r` attribute, the 1904 date
+  system (dates landed four years and a day off), `x14` conditional formatting
+  whose range lives in a child `<xm:sqref>`, a `sortState` left pointing past a
+  shrunk table, and `definedName`/`firstSheet` positions after a sheet was
+  deleted (a print area could end up on another sheet).
+- `engine="fillxl"` widened a chart's series *name* when the table grew: the
+  name is stored as the same reference block as the data, so only the data
+  sources (`cat`, `val`, `xVal`, `yVal`, `bubbleSize`, error-bar bounds) are
+  rewritten now.
+- `engine="fillxl"` wrote 1900-based date serials into a `date1904` workbook,
+  turned a name defined by a formula (`OFFSET(...)`) into a `KeyError` where the
+  other engines warn, inserted a missing `<sheetViews>` after the XML
+  declaration (producing malformed XML), and wrote carriage returns that XML
+  normalised to newlines.
+- `engine="fillxl"` filling a table was quadratic in the row count and took
+  about two minutes for 4,000 rows; a cached spill-range list makes it linear
+  (0.4 s here). It also now reads parts lazily and streams untouched entries, so
+  a one-cell fill no longer loads a workbook's images into memory.
+- `engine="fillxl"` refuses to write a package whose rewritten XML no longer
+  parses, raising a `RuntimeError` that asks for a bug report instead of
+  leaving a file no reader can open. It also refuses a non-UTF-8 part with a
+  message naming `engine="win32com"`.
+
+### Changed
+- `engine="fillxl"` is documented as experimental and opt-in: `engine="auto"`
+  never selects it, and the README lists its limits (no `.xlsb`/`.xls` or
+  format conversion, no encrypted files, pivot tables only flagged for refresh,
+  `chartEx` ranges untouched, pivot sources and data validations unaffected)
+  and a "Cached values" section: the engine does not calculate, so the file
+  stays stale until Excel recalculates.
+
 ## [0.8.0] - 2026-11-01
 
 Correctness release, not yet 1.0. The public API is unchanged since 0.7.1 —

@@ -195,13 +195,20 @@ opened fine in no reader, so only an explicit parse assertion surfaces it.
 
 ### Verification
 
+Hardening pass (Tasks 0–13; `tests/ooxml/test_excel_opens.py` is the COM check):
+
 | Check | Result |
 |---|---|
-| `pytest tests/ -q` (full suite, Excel available) | 1128 passed, 1 xfailed |
-| `pytest --doctest-modules src/fillxl/` | 87 passed |
-| `ruff check src/fillxl tests` | clean |
+| `pytest` (full suite, Excel available) | 1221 passed, 4 skipped, 3 xfailed |
+| `pytest --doctest-modules src` | 89 passed |
+| `ruff check src/fillxl tests` / `ruff format --check` | clean / clean |
 | `mypy src/fillxl` (strict) | clean |
-| `pyrefly check` | clean |
-| `ty check src/fillxl tests` | 12 pre-existing errors in `tests/unit/test_formulas.py` (not touched by this work) |
+| `pyrefly check` | 0 errors |
+| `mypy src/fillxl tests` | 1 pre-existing error in `tests/integration/test_lossy.py` (file untouched by this work) |
+| `ty check src/fillxl tests` | pre-existing errors only (see the `tests/unit/test_formulas.py` note below) |
+| Excel 16 `Workbooks.Open(..., CorruptLoad=0)` on every parity and hostile-fixture output | no repair, no refusal (one fixture is skipped: Excel rejects that template itself) |
 | Real Excel 16: spill authored by Excel survives a fill and grows with the table | `HasSpill=True`, `B2:B7`, values 1…6 |
 | Real Excel 16: the repository's macro template opens without repair, VBA byte-identical | verified |
+
+The first release of the engine reported `1128 passed, 1 xfailed` and
+`87 doctests`; the numbers above are after the hardening pass.

@@ -10,7 +10,7 @@ are authored with openpyxl and then patched to the exact shape Excel 16 writes
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ElementTree
+import xml.parsers.expat as expat
 import zipfile
 from pathlib import Path
 
@@ -216,8 +216,9 @@ def assert_well_formed(path: Path) -> None:
         for name in archive.namelist():
             if not name.endswith((".xml", ".rels")):
                 continue
+            parser = expat.ParserCreate()
             try:
-                ElementTree.fromstring(archive.read(name))
-            except ElementTree.ParseError as exc:
+                parser.Parse(archive.read(name), True)
+            except expat.ExpatError as exc:
                 msg = f"{name} is not well-formed XML: {exc}"
                 raise AssertionError(msg) from exc

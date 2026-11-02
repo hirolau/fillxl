@@ -58,7 +58,9 @@ def test_a_calculated_column_stored_as_shared_formulas_is_still_recognised_as_ca
     workbook = openpyxl.load_workbook(output)
     try:
         sheet = workbook["Data"]
-        assert [sheet.cell(row=row, column=4).value for row in range(2, 6)] == ["=[@Amount]*2"] * 4
+        assert [sheet.cell(row=row, column=4).value for row in range(2, 6)] == [
+            "=Data[[#This Row],[Amount]]*2"
+        ] * 4
     finally:
         workbook.close()
 

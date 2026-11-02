@@ -65,11 +65,12 @@ def _build_table(
         for offset, name in enumerate(header, start=1):
             worksheet.cell(row=top_row, column=offset, value=name)
     first_body_row = top_row if headerless else top_row + 1
+    formula = f"{table}[[#This Row],[{header[1]}]]*2"
     for index in range(rows):
         row = first_body_row + index
         for offset, name in enumerate(header, start=1):
             cell = worksheet.cell(row=row, column=offset)
-            cell.value = f"=[@{header[1]}]*2" if name == calculated else _placeholder(name, index)
+            cell.value = f"={formula}" if name == calculated else _placeholder(name, index)
             if name in number_formats:
                 cell.number_format = number_formats[name]
 
@@ -87,7 +88,7 @@ def _build_table(
             columns[offset - 1].totalsRowFunction = "sum"
     if calculated is not None:
         columns[list(header).index(calculated)].calculatedColumnFormula = TableFormula(
-            attr_text=f"[@{header[1]}]*2",
+            attr_text=f"{table}[[#This Row],[{header[1]}]]*2",
         )
 
     definition = Table(

@@ -93,7 +93,7 @@ Three engines are available, and `engine=` selects one explicitly:
 | Engine | Needs Excel | Keeps spilled arrays and everything else |
 |--------|:---:|---|
 | `openpyxl` (default) | no | drops parts the object model cannot hold |
-| `fillxl` | no | **yes** — edits the OOXML package, never rewrites what it does not understand |
+| `fillxl` (experimental) | no | **yes** — edits the OOXML package, never rewrites what it does not understand |
 | `win32com` | yes | yes (Windows, Excel required) |
 
 `openpyxl` runs anywhere; `win32com` drives Microsoft Excel on Windows (pywin32
@@ -106,8 +106,14 @@ same template and data; the
 [Backends](https://hirolau.github.io/fillxl/backends/) page lists what still
 differs.
 
-`engine="fillxl"` is **experimental and opt-in**: `engine="auto"` never selects
-it, so a fill only uses it when you ask for it. Its limits:
+> **`engine="fillxl"` is experimental and opt-in.** `engine="auto"` never
+> selects it, so a fill only uses it when you ask for it. It keeps spilled
+> dynamic arrays, but **it does not calculate them**: the spill is written as
+> the template had it, and Excel grows and computes it when it opens the file.
+> Until then, anything that reads cached values — `pandas`, `openpyxl` with
+> `data_only=True`, previews, search indexers — sees the old numbers or nothing.
+
+**Its limits:**
 
 - `.xlsx` and `.xlsm` only, with no format conversion (use `win32com` for
   `.xlsb`, `.xls` and converting between formats).
@@ -147,6 +153,9 @@ Dynamic arrays survive on Linux, but they are not computed there either. Use
   so: `on_lossy="warn"` (default) warns, `on_lossy="raise"` fails the fill.
   Use `engine="fillxl"` when the template has spilled dynamic arrays or other
   parts openpyxl cannot write: it keeps them.
+- `engine="fillxl"` (experimental) keeps spilled arrays and everything else
+  unchanged, but it computes nothing: Excel fills the spill and recalculates
+  every formula when it opens the file, so cached values stay stale until then.
 - `delete_sheets` does not rewrite formulas, charts, names or pivots that point
   at the deleted sheet; fillxl warns with `DanglingReferenceWarning` because
   Excel shows `#REF!` there.

@@ -27,6 +27,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def name_destinations(refers_to: str) -> list[tuple[str, str]]:
+    """Destinations of a defined name, parsed exactly as openpyxl parses them.
+
+    Every engine shares this parser: win32com hands it ``Name.RefersTo`` and
+    the fillxl engine hands it the text of ``<definedName>``, so all three
+    agree on where a name points — including quoted sheet names, names with
+    several destinations and names defined by a formula.
+
+    Examples:
+        >>> name_destinations("Data!$A$1")
+        [('Data', '$A$1')]
+        >>> name_destinations("'Bob''s Data'!$A$1")
+        [("Bob''s Data", '$A$1')]
+        >>> name_destinations("Data!$A$1,Other!$B$2:$C$3")
+        [('Data', '$A$1'), ('Other', '$B$2:$C$3')]
+        >>> name_destinations("'My, Sheet'!A1")
+        [('My, Sheet', 'A1')]
+        >>> name_destinations("OFFSET(Data!$A$1,0,0)")
+        []
+
+    """
+    from openpyxl.workbook.defined_name import DefinedName
+
+    probe = DefinedName("fillxl_probe", attr_text=refers_to.removeprefix("="))
+    return list(probe.destinations)
+
+
 def named_cell_target(
     name: str,
     destinations: Sequence[tuple[str, str]],

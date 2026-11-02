@@ -14,13 +14,14 @@ from typing import TYPE_CHECKING
 import pytest
 
 from fillxl._charts import TableChangeSpecs
+from fillxl._cells import name_destinations
 from fillxl._ooxml import xmltext
 from fillxl._ooxml.charts import update_chart_references
 from fillxl._ooxml.package import OoxmlPackage
 from fillxl._ooxml.pivots import set_refresh_on_load
 from fillxl._ooxml.styles import StylesPart
 from fillxl._ooxml.tables import TablePart
-from fillxl._ooxml.workbook import WorkbookPart, name_destinations
+from fillxl._ooxml.workbook import WorkbookPart
 from fillxl._ooxml.worksheet import SheetPart, cell_has_value, column_index, split_reference
 
 if TYPE_CHECKING:
@@ -535,7 +536,7 @@ def test_name_destinations_match_the_openpyxl_shape() -> None:
         ("Data", "$A$1"),
         ("Other", "$B$2:$C$3"),
     ]
-    assert name_destinations("_xlnm.Print_Area") == []
+    assert name_destinations("OFFSET(Data!$A$1,0,0)") == []
 
 
 def test_calculation_settings_and_the_calc_chain(package_path: Path) -> None:

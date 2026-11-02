@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._adapters import TabularAdapter
-from fillxl._cells import header_write_error, named_cell_target
+from fillxl._cells import header_write_error, name_destinations, named_cell_target
 from fillxl._charts import TableChangeSpecs, split_formula_arguments, update_reference_text
 from fillxl._formats import needs_temporal_format, temporal_format, temporal_format_runs
 from fillxl._formulas import (
@@ -210,7 +210,7 @@ class Win32ComBackend:
             msg = f"Named cell '{name}' not found in workbook"
             raise KeyError(msg) from exc
 
-        target = named_cell_target(name, _com_name_destinations(str(name_obj.RefersTo)))
+        target = named_cell_target(name, name_destinations(str(name_obj.RefersTo)))
         if target is None:
             return
         sheet_name, address = target
@@ -767,14 +767,6 @@ def _check_overflow_com(
                     "Move or remove the content below the table first."
                 )
                 raise ValueError(msg)
-
-
-def _com_name_destinations(refers_to: str) -> list[tuple[str, str]]:
-    """Parse ``Name.RefersTo`` exactly the way the openpyxl backend parses names."""
-    from openpyxl.workbook.defined_name import DefinedName
-
-    probe = DefinedName("fillxl_probe", attr_text=refers_to.removeprefix("="))
-    return list(probe.destinations)
 
 
 def _read_table_formula_definitions(

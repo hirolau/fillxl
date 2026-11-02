@@ -94,58 +94,6 @@ class DefinedNameEntry:
     local_sheet_id: int | None
 
 
-def name_destinations(text: str) -> list[tuple[str, str]]:
-    """The ``(sheet, address)`` pairs a defined-name definition points at.
-
-    Mirrors what openpyxl's ``DefinedName.destinations`` yields, because
-    ``named_cell_target`` is shared by every engine: the sheet keeps its
-    doubled quotes (``Bob''s Data``) and the address keeps its ``$`` markers.
-
-    Examples:
-        >>> name_destinations("Data!$A$1")
-        [('Data', '$A$1')]
-        >>> name_destinations("'Bob''s Data'!$A$1")
-        [("Bob''s Data", '$A$1')]
-        >>> name_destinations("Data!$A$1,Other!$B$2:$C$3")
-        [('Data', '$A$1'), ('Other', '$B$2:$C$3')]
-        >>> name_destinations("'My, Sheet'!A1")
-        [('My, Sheet', 'A1')]
-        >>> name_destinations("_xlnm.Print_Area")
-        []
-
-    """
-    destinations: list[tuple[str, str]] = []
-    for part in _split_quoted(text):
-        sheet, separator, address = part.strip().rpartition("!")
-        if not separator or not address:
-            continue
-        if len(sheet) >= 2 and sheet.startswith("'") and sheet.endswith("'"):
-            sheet = sheet[1:-1]
-        destinations.append((sheet, address))
-    return destinations
-
-
-def _split_quoted(text: str) -> list[str]:
-    """Split *text* on commas that are not inside a quoted sheet name."""
-    parts: list[str] = []
-    start = 0
-    index = 0
-    quoted = False
-    while index < len(text):
-        character = text[index]
-        if character == "'":
-            if quoted and index + 1 < len(text) and text[index + 1] == "'":
-                index += 1
-            else:
-                quoted = not quoted
-        elif character == "," and not quoted:
-            parts.append(text[start:index])
-            start = index + 1
-        index += 1
-    parts.append(text[start:])
-    return [part for part in parts if part.strip()]
-
-
 def _renumber_defined_names(text: str, deleted: list[int]) -> str:
     """*text* with the names of deleted sheets gone and the rest renumbered.
 

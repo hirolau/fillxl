@@ -23,7 +23,7 @@ from openpyxl.utils.datetime import MAC_EPOCH, WINDOWS_EPOCH
 from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._adapters import TabularAdapter
-from fillxl._cells import header_write_error, named_cell_target
+from fillxl._cells import header_write_error, name_destinations, named_cell_target
 from fillxl._formats import needs_temporal_format, temporal_format
 from fillxl._formulas import (
     ColumnFormulaEvidence,
@@ -44,7 +44,6 @@ from fillxl._ooxml import xmltext
 from fillxl._ooxml.cells import build_cell
 from fillxl._ooxml.styles import StylesPart
 from fillxl._ooxml.tables import TableColumnInfo, TablePart, find_table, tables_on_sheet
-from fillxl._ooxml.workbook import name_destinations
 from fillxl._ooxml.worksheet import (
     SheetPart,
     SheetStore,
@@ -117,6 +116,7 @@ def fill_named_cell(
     sheet = SheetStore(package).get(sheet_entry.part)
     row, column = split_reference(address.replace("$", ""))
     _refuse_header_write(package, sheet_entry, row, column, sheet_name, address)
+    _refuse_spill_write(sheet, row, column)
 
     styles = StylesPart(package)
     sheet.write_cell(

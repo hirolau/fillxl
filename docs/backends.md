@@ -126,17 +126,13 @@ dynamic arrays and their `xl/metadata.xml`, `cm`/`vm` cell metadata, slicers,
 
 ### How it stays safe
 
-- **Rows are never inserted or removed.** A growing table writes into cells
-  verified empty — the same contract the other engines implement — so merges,
-  data validations, hyperlinks, drawing anchors, defined names, other tables
-  and array-formula ranges never move and never go stale.
-- **An array range counts as occupied.** A spill can hold blank results
-  (`<c t="str"><v/></c>`), which looks like an empty cell; growing a table into
-  one is refused with an error naming the array formula.
-- **`xl/calcChain.xml` is dropped** on save. Excel rebuilds it, and a chain
-  that disagrees with the workbook makes Excel refuse the file.
-- **`on_lossy` becomes an assertion**: if anything at all is missing from the
-  output, the fill says so.
+Rows are never inserted or removed — a growing table writes into cells verified
+empty — and an array (spill) range counts as occupied even when its cells look
+empty. A save parses every part the fill rewrote before the output file is
+opened, so a bad edit raises `RuntimeError` instead of producing a workbook no
+reader can open. `on_lossy` acts as an assertion here: if anything at all were
+missing from the output, the fill would say so. [The fillxl
+engine](fillxl-engine.md) explains how it works and where its limits are.
 
 ---
 

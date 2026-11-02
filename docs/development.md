@@ -93,7 +93,7 @@ supported release line of each backend on Python 3.12.
 fillxl/
 ├── src/fillxl/          # Package source
 │   ├── _core.py         # Main fill() entry point
-│   ├── _backends/       # openpyxl and win32com backends
+│   ├── _backends/       # openpyxl, fillxl and win32com backends
 │   ├── _cells.py        # Named cell handling
 │   ├── _tables.py       # Excel table population
 │   ├── _charts.py       # Chart range updates

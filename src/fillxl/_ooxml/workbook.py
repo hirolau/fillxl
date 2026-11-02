@@ -146,6 +146,51 @@ def _split_quoted(text: str) -> list[str]:
     return [part for part in parts if part.strip()]
 
 
+def _renumber_defined_names(text: str, deleted: list[int]) -> str:
+    """*text* with the names of deleted sheets gone and the rest renumbered.
+
+    A name scoped to a deleted sheet has nowhere left to point; every later
+    ``localSheetId`` moves up by the number of deleted sheets before it.
+    """
+    block = _DEFINED_NAMES.search(text)
+    if block is None:
+        return text
+
+    def keep(match: re.Match[str]) -> str:
+        element = match.group(0)
+        scope = xmltext.attribute(element, "localSheetId")
+        if scope is None or not scope.isdigit():
+            return element
+        index = int(scope)
+        if index in deleted:
+            return ""
+        shift = sum(1 for gone in deleted if gone < index)
+        if not shift:
+            return element
+        return xmltext.set_tag_attribute(element, "localSheetId", str(index - shift))
+
+    updated = _DEFINED_NAME.sub(keep, block.group(0))
+    if _DEFINED_NAME.search(updated) is None:
+        return f"{text[: block.start()]}{text[block.end() :]}"
+    return f"{text[: block.start()]}{updated}{text[block.end() :]}"
+
+
+def _reset_first_sheet(text: str, deleted: list[int], remaining: int) -> str:
+    """Point ``firstSheet`` back at the first sheet when it no longer exists."""
+    view = _WORKBOOK_VIEW.search(text)
+    if view is None:  # pragma: no cover - every workbook has a book view
+        return text
+    element = view.group(0)
+    value = xmltext.attribute(element, "firstSheet")
+    if value is None or not value.isdigit():
+        return text
+    index = int(value)
+    if index not in deleted and index < remaining:
+        return text
+    updated = xmltext.set_tag_attribute(element, "firstSheet", "0")
+    return f"{text[: view.start()]}{updated}{text[view.end() :]}"
+
+
 class WorkbookPart:
     """Reader/editor for ``xl/workbook.xml`` and the sheets it lists."""
 
@@ -426,6 +471,10 @@ class WorkbookPart:
         doomed = [entry for entry in entries if entry.name in set(names)]
         if not doomed:
             return []
+        # ``localSheetId`` and ``firstSheet`` are positions in <sheets>, so
+        # deleting a sheet shifts every later one.
+        deleted_indices = sorted(entry.index for entry in doomed)
+        remaining = len(entries) - len(doomed)
         orphaned = set().union(
             *(self.package.reachable_from([entry.part]) for entry in doomed if entry.part),
         )
@@ -433,6 +482,8 @@ class WorkbookPart:
         for entry in doomed:
             text = self._without_sheet_element(text, entry.name)
             self.package.remove_relationship(self.part, entry.rel_id)
+        text = _renumber_defined_names(text, deleted_indices)
+        text = _reset_first_sheet(text, deleted_indices, remaining)
         self._set(text)
         for part in sorted(orphaned - self.package.reachable_from([self.part])):
             self.package.drop(part)

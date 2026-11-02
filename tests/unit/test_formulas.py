@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from openpyxl import Workbook
@@ -151,7 +151,7 @@ def test_shift_relative_rows_leaves_a_formula_without_references_alone() -> None
 # Resizing formulas that track the table body, as Excel does
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_RESIZE = {
+_RESIZE: dict[str, Any] = {
     "sheet_title": "Data",
     "first_col": 2,
     "last_col": 2,
@@ -210,3 +210,22 @@ def test_extend_table_ranges_shrinks_when_the_table_shrinks() -> None:
         )
         == "=SUM(B4:B4)"
     )
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=YTD2024*2",  # a defined name that looks like column YTD
+        "=ZAR1*2",  # column ZAR is past XFD
+        "=YTD1+ZAR2024",
+        "=SUM(YTD2024:YTD2024)",
+    ],
+)
+def test_defined_names_are_not_mistaken_for_references(formula: str) -> None:
+    """A name beyond column XFD is a name, and Excel never shifts it."""
+    assert shift_relative_rows(formula, 1) == formula
+
+
+def test_a_defined_name_is_left_alone_where_the_body_tracks_the_table() -> None:
+    """The same bounds check guards the range-resize rule."""
+    assert extend_table_ranges("=SUM(YTD2024:YTD2024)", **_RESIZE) is None

@@ -27,6 +27,7 @@ def validate_columns(
     *,
     formula_columns: list[str] | None = None,
     table_name: str | None = None,
+    data_rows: int = 0,
 ) -> None:
     """Validate data columns against Excel table columns.
 
@@ -52,13 +53,26 @@ def validate_columns(
         formula_columns: Names of table columns that are formulas.  Only
             relevant for ``"all_but_formulas"`` / ``"all_but_formulas_strict"``.
         table_name: Name of the table, used in error and log messages.
+        data_rows: Number of rows the data holds.  Data with rows but no
+            columns still has to pass validation: the table is resized and
+            every data column is cleared, which ``"strict"`` must refuse.
+            Empty data (no rows, no columns) keeps the old behaviour of
+            clearing the table.
 
     Raises:
         ValueError: If *strategy* is ``"strict"``, ``"all_but_formulas"``, or
             ``"all_but_formulas_strict"`` and the validation fails.
 
+    Examples:
+        >>> validate_columns(["A"], [], "all_but_formulas")  # a cleared table
+        >>> try:
+        ...     validate_columns(["A"], [], "strict", data_rows=3)
+        ... except ValueError as error:
+        ...     str(error).startswith("Column mismatch for table: missing columns")
+        True
+
     """
-    if strategy == "none" or not data_columns:
+    if strategy == "none" or (not data_columns and not data_rows):
         return
 
     where = f"table {table_name!r}" if table_name else "table"

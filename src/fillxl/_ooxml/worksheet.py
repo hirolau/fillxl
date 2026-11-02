@@ -52,6 +52,7 @@ _INLINE_STRING = re.compile(rf"<{xmltext.any_prefix('is')}\b")
 _MERGE_CELL = xmltext.element_re("mergeCell")
 _ROW_REFERENCE = re.compile(r"^\$?(?P<column>[A-Za-z]{1,3})\$?(?P<row>\d+)$")
 _HAS_FORMULA = re.compile(rf"<{_TAG}f\b")
+_HIDDEN_ATTRIBUTE = re.compile(r'\s+hidden\s*=\s*"[^"]*"')
 
 
 def column_index(letters: str) -> int:
@@ -179,6 +180,49 @@ def _plain_formula(xml: str, text: str) -> str:
         opening = f"{opening[:-2].rstrip()}>"
     replacement = f"{opening}{xmltext.escape_text(text)}</{name.group(1)}>"
     return f"{xml[: match.start()]}{replacement}{xml[match.end() :]}"
+
+
+def clear_cached_value(xml: str) -> str:
+    """*xml* without the cached result of its formula, and without its type.
+
+    A cached ``<v>`` is what every reader that cannot calculate sees: the
+    template's number, presented as the filled workbook's number.  Dropping it
+    makes such a reader see an obviously missing value instead of a plausibly
+    wrong one; Excel recalculates on open (the engine sets ``fullCalcOnLoad``).
+
+    Examples:
+        >>> clear_cached_value('<c r="B7"><f>SUM(B1:B6)</f><v>42</v></c>')
+        '<c r="B7"><f>SUM(B1:B6)</f></c>'
+        >>> clear_cached_value('<c r="B7" t="str"><f t="array" ref="B7:B9">X</f><v>x</v></c>')
+        '<c r="B7"><f t="array" ref="B7:B9">X</f></c>'
+        >>> clear_cached_value('<c r="B7"><v>42</v></c>')
+        '<c r="B7"><v>42</v></c>'
+
+    """
+    if _FORMULA.search(xml) is None:
+        return xml
+    return strip_value(xml)
+
+
+def strip_value(xml: str) -> str:
+    """*xml* without its ``<v>`` element or its ``t`` type attribute.
+
+    Examples:
+        >>> strip_value('<c r="F9" t="str"><v>2</v></c>')
+        '<c r="F9"></c>'
+        >>> strip_value('<c r="F9"></c>')
+        '<c r="F9"></c>'
+        >>> strip_value('<c r="F9" t="inlineStr"><is><t>x</t></is></c>')
+        '<c r="F9" t="inlineStr"><is><t>x</t></is></c>'
+
+    """
+    stripped = _VALUE_ELEMENT.sub("", xml)
+    if stripped == xml:
+        return xml
+    opening_end = stripped.find(">")
+    if opening_end < 0:  # pragma: no cover - a <c> element always has a start tag
+        return stripped
+    return f"{xmltext.remove_attribute(stripped[:opening_end], 't')}{stripped[opening_end:]}"
 
 
 @define
@@ -351,6 +395,31 @@ class SheetPart:
         """The row numbers present in the sheet, ascending."""
         return sorted(self._rows)
 
+    def unhide_rows(self, first_row: int, last_row: int) -> list[int]:
+        """Clear the ``hidden`` flag of rows *first_row* through *last_row*.
+
+        A template row can be hidden by the author or by a filter that was
+        applied when it was saved.  Data written into it would be invisible,
+        and ``SUBTOTAL(109, …)`` would leave it out of a totals row, so the
+        rows a fill writes to are always shown.
+
+        Returns:
+            The row numbers that were hidden and are now shown.
+
+        """
+        shown: list[int] = []
+        for number in sorted(self._rows):
+            if not first_row <= number <= last_row:
+                continue
+            row = self._rows[number]
+            if xmltext.attribute(f"<row{row.attributes}/>", "hidden") is None:
+                continue
+            row.attributes = _HIDDEN_ATTRIBUTE.sub("", row.attributes)
+            row.raw = None
+            self._dirty()
+            shown.append(number)
+        return shown
+
     # ── sheet features ─────────────────────────────────────────────────────
 
     def merged_ranges(self) -> list[str]:
@@ -466,7 +535,11 @@ class SheetPart:
             self.unshare(si)
 
     def set_formula(self, row: int, column: int, formula: str) -> None:
-        """Replace the formula of an existing cell, keeping everything else."""
+        """Replace the formula of an existing cell, keeping everything else.
+
+        The template's cached result goes with it: it describes a formula that
+        no longer exists.
+        """
         si = self._cell_group.get((row, column))
         if si is not None:
             self.unshare(si)
@@ -474,7 +547,43 @@ class SheetPart:
         if xml is None:  # pragma: no cover - callers rewrite existing formulas
             return
         text = formula[1:] if formula.startswith("=") else formula
-        self.write_cell(row, column, xmltext.replace_element_text(xml, "f", text))
+        self.write_cell(
+            row,
+            column,
+            clear_cached_value(xmltext.replace_element_text(xml, "f", text)),
+        )
+
+    def clear_stale_results(self) -> None:
+        """Drop every cached formula result of the sheet, spills included.
+
+        The engine cannot calculate, so a cached value on this sheet would be
+        the template's number shown as the filled report's number.  Removing it
+        means a reader that cannot recalculate sees a blank rather than a
+        plausible lie, which is what the openpyxl engine produces too.
+
+        A spilled array keeps its anchor formula and its ``ref``; only the
+        results below the anchor (cells that hold nothing but a ``<v>``) are
+        cleared, and Excel refills them when it recalculates.
+        """
+        for row, column, xml in list(self.iter_cells()):
+            stripped = clear_cached_value(xml)
+            if stripped != xml:
+                self.write_cell(row, column, stripped)
+        for cell_range in self.array_ranges():
+            self._clear_spill_results(cell_range)
+
+    def _clear_spill_results(self, cell_range: CellRange) -> None:
+        """Clear the non-anchor cells of one spilled array range."""
+        for row in range(cell_range.min_row, cell_range.max_row + 1):
+            for column in range(cell_range.min_col, cell_range.max_col + 1):
+                xml = self.cell(row, column)
+                if xml is None or _FORMULA.search(xml) is not None:
+                    # The anchor holds the formula; a mid-range formula means
+                    # the range is not a simple spill.
+                    continue
+                stripped = strip_value(xml)
+                if stripped != xml:
+                    self.write_cell(row, column, stripped)
 
     def extend_conditional_formatting(
         self,

@@ -17,6 +17,10 @@ if TYPE_CHECKING:
 
 OnLossy = Literal["ignore", "warn", "raise"]
 
+# The formats whose parts this module can compare part by part.
+_XML_SUFFIXES = (".xlsx", ".xlsm")
+_VBA_LABEL = "VBA project"
+
 
 class LossyTemplateError(RuntimeError):
     """The output lost template features and ``on_lossy="raise"`` was set."""
@@ -251,11 +255,68 @@ def check_lossy(
             "This is a fillxl engine bug; please report it with the template. "
             "engine='win32com' preserves them meanwhile, or set on_lossy='ignore'."
         )
+    elif engine == "win32com":
+        msg = (
+            f"The {engine} engine lost these template features while saving "
+            f"'{output.suffix}': {features}. Save to the template's own format to "
+            "keep them, or set on_lossy='ignore'."
+        )
     else:
         msg = (
             f"The {engine} engine did not preserve these template features: {features}. "
             "Use engine='win32com' to keep them, or set on_lossy='ignore'."
         )
+    _apply_lossy_policy(msg, policy)
+
+
+def check_conversion_losses(
+    template: Path,
+    output: Path,
+    policy: OnLossy,
+    *,
+    engine: str = "win32com",
+) -> None:
+    """Report template features that writing *output* in another format dropped.
+
+    Excel writes back everything it read, but the format it wrote to may have
+    no room for it: an ``.xlsm`` template saved as ``.xlsx`` loses its VBA
+    project, and ``.xls`` cannot hold macros at all.  Nothing warns about that
+    on its own -- Excel's compatibility checker is silenced along with the
+    other alerts during a fill.
+
+    Args:
+        template: The template the workbook was filled from.
+        output: The file the backend wrote.
+        policy: The ``on_lossy`` policy.
+        engine: Engine name for the message.
+
+    """
+    if policy == "ignore" or template.suffix.lower() == output.suffix.lower():
+        return
+    template_suffix = template.suffix.lower()
+    output_suffix = output.suffix.lower()
+    if template_suffix in _XML_SUFFIXES:
+        if output_suffix in _XML_SUFFIXES:
+            # Both sides are XML packages, so their parts can be compared.
+            check_lossy(template, output, policy, engine=engine)
+            return
+        if output_suffix != ".xls":
+            # Binary OOXML (``.xlsb``) holds the same feature set; comparing
+            # parts by name would report every XML part as lost.
+            return
+    vba = feature_counts(template).get(_VBA_LABEL, 0)
+    if not vba:
+        return
+    msg = (
+        f"The {engine} engine saved a '{template.suffix}' template as "
+        f"'{output.suffix}', which cannot hold VBA: VBA project ({vba} lost). "
+        "Save to a macro-enabled format, or set on_lossy='ignore'."
+    )
+    _apply_lossy_policy(msg, policy)
+
+
+def _apply_lossy_policy(message: str, policy: OnLossy) -> None:
+    """Raise or warn about *message*, depending on *policy*."""
     if policy == "raise":
-        raise LossyTemplateError(msg)
-    warn_user(msg, LossyTemplateWarning)
+        raise LossyTemplateError(message)
+    warn_user(message, LossyTemplateWarning)

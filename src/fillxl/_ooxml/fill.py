@@ -41,6 +41,7 @@ from fillxl._normalize import (
 )
 from fillxl._ooxml import xmltext
 from fillxl._ooxml.cells import build_cell
+from fillxl._ooxml.pivots import pivot_worksheet_sources
 from fillxl._ooxml.styles import StylesPart
 from fillxl._ooxml.tables import TableColumnInfo, TablePart, find_table, tables_on_sheet
 from fillxl._ooxml.worksheet import (
@@ -50,6 +51,7 @@ from fillxl._ooxml.worksheet import (
     split_reference,
 )
 from fillxl._plan import BlockedRegion, blocked_area, plan_table_fill
+from fillxl._references import RangeSource, warn_about_untracked_ranges
 from fillxl._validation import validate_columns
 
 if TYPE_CHECKING:
@@ -62,6 +64,8 @@ if TYPE_CHECKING:
     from fillxl._plan import TableGeometry, TablePlan
 
 logger = logging.getLogger(__name__)
+
+_DATA_VALIDATION = xmltext.element_re("dataValidation")
 
 
 # ── named cells ─────────────────────────────────────────────────────────────
@@ -225,6 +229,7 @@ def fill_table(
         strategy=config.column_validation_strategy,
         formula_columns=list(formula_columns),
         table_name=name,
+        data_rows=len(adapter.rows),
     )
     warn_about_ignored_formula_data(name, adapter.columns, adapter.rows, formula_columns)
 
@@ -241,6 +246,12 @@ def fill_table(
 
     if plan.overflow_rows is not None:
         _refuse_occupied_growth(package, table, sheet, plan, len(adapter.rows), name)
+
+    # A template saved with a filter applied (or with rows hidden by hand)
+    # would keep some of the filled rows out of sight -- and out of a
+    # SUBTOTAL(109, …) totals row.  The fill shows everything it writes.
+    table.clear_filters()
+    sheet.unhide_rows(plan.first_data_row, plan.new_last_row)
 
     table.set_refs(plan.new_ref, plan.new_autofilter_ref, plan.new_body_ref)
 
@@ -301,6 +312,13 @@ def fill_table(
 
     if plan.new_body_last_row != geometry.body_last_row:
         _resize_adjacent_formulas(workbook, table, plan, sheets)
+        warn_about_untracked_ranges(
+            _untracked_range_sources(package, workbook),
+            table_name=name,
+            sheet_title=table.sheet.name,
+            geometry=geometry,
+            new_body_last_row=plan.new_body_last_row,
+        )
 
     if config.extend_conditional_formatting:
         changes = sheet.extend_conditional_formatting(
@@ -315,6 +333,9 @@ def fill_table(
             logger.debug("Extended conditional formatting: %s -> %s", old_sqref, new_sqref)
 
     sheet.expand_dimension(plan.new_last_row)
+    # The fill rewrote this sheet's data; keeping its cached formula results
+    # would present the template's numbers as the filled report's numbers.
+    sheet.clear_stale_results()
     logger.debug("Table '%s' resized: %s -> %s", name, table.ref, plan.new_ref)
     return plan.change_spec(table.sheet.name)
 
@@ -687,9 +708,12 @@ def _resize_adjacent_formulas(
 
     Excel rewrites ``=SUM(B4:B4)`` to ``=SUM(B4:B7)`` when the table grows, on
     the table's sheet and on any other sheet that refers to it.
+
+    The table's data body is skipped: those formulas belong to the table.  The
+    totals row is *not* skipped -- it moved with the table, and an A1 formula
+    there has to follow the body too.
     """
     geometry = plan.geometry
-    current = CellRange(table.ref)
     table_sheet = table.sheet.name
     parts = [entry.part for entry in workbook.worksheet_parts()]
     for sheet in sheets.formula_parts(parts):
@@ -700,12 +724,12 @@ def _resize_adjacent_formulas(
                 # openpyxl leaves array formulas alone; rewriting half of one
                 # would desynchronise the ref Excel validates.
                 continue
-            inside = (
+            in_body = (
                 own_sheet
-                and current.min_row <= row <= current.max_row
-                and current.min_col <= column <= current.max_col
+                and plan.first_data_row <= row <= plan.new_body_last_row
+                and geometry.first_col <= column <= geometry.last_col
             )
-            if inside:
+            if in_body:
                 continue
             updated = extend_table_ranges(
                 formula,
@@ -727,3 +751,40 @@ def _sheet_title(workbook: WorkbookPart, part: str) -> str:
         if entry.part == part:
             return entry.name
     return ""  # pragma: no cover - every part comes from the workbook's sheets
+
+
+def _untracked_range_sources(
+    package: OoxmlPackage,
+    workbook: WorkbookPart,
+) -> list[RangeSource]:
+    """Every defined name, pivot source and validation list that holds a range."""
+    sources: list[RangeSource] = [
+        RangeSource(f"the defined name {entry.name!r}", sheet_title, reference)
+        for entry in workbook.defined_names()
+        for sheet_title, reference in name_destinations(entry.text)
+    ]
+    sources.extend(
+        RangeSource("a pivot cache source", sheet_title, reference)
+        for sheet_title, reference in pivot_worksheet_sources(package)
+    )
+    for entry in workbook.worksheet_parts():
+        sources.extend(_validation_sources(package, entry.part))
+    return sources
+
+
+def _validation_sources(package: OoxmlPackage, part: str) -> list[RangeSource]:
+    """The ranges a sheet's data validations read their lists from."""
+    sources: list[RangeSource] = []
+    for match in _DATA_VALIDATION.finditer(package.text(part)):
+        element = match.group(0)
+        sqref = xmltext.attribute(element, "sqref")
+        description = f"the data validation over {sqref}" if sqref else "a data validation"
+        for name in ("formula1", "formula2"):
+            formula = xmltext.element_text(element, name)
+            if formula is None:
+                continue
+            sources.extend(
+                RangeSource(description, sheet_title, reference)
+                for sheet_title, reference in name_destinations(formula)
+            )
+    return sources

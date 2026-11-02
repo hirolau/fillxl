@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import warnings
 import zipfile
 from pathlib import Path
@@ -11,6 +12,9 @@ import openpyxl
 import pytest
 
 from fillxl import FillXLConfig, LossyTemplateError, LossyTemplateWarning, fill
+from tests._assets import ASSETS
+
+MACRO_TEMPLATE = ASSETS / "test_template_1_slsm.xlsm"
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -166,3 +170,40 @@ def test_the_openpyxl_backend_excuses_the_sheets_it_deleted(
     )
 
     assert recorded["deleted"] == ["Scratch"]
+
+
+def _vba_template(tmp_path: Path) -> Path:
+    """A real macro-enabled template: the VBA project is what a format change drops."""
+    target = tmp_path / "macro.xlsm"
+    shutil.copyfile(MACRO_TEMPLATE, target)
+    return target
+
+
+@pytest.mark.win32com
+def test_converting_a_macro_template_to_xlsx_reports_the_vba_loss(tmp_path: Path) -> None:
+    """Excel writes back what it read, but ``.xlsx`` cannot hold a macro project."""
+    from tests._engines import _fill_output
+
+    template = _vba_template(tmp_path)
+    output = tmp_path / "out.xlsx"
+
+    with pytest.warns(LossyTemplateWarning, match="VBA project"):
+        result = _fill_output(template, output, "win32com")
+
+    assert result.suffix == ".xlsx"
+
+
+@pytest.mark.win32com
+def test_converting_a_macro_template_to_xlsx_can_fail_the_fill(tmp_path: Path) -> None:
+    """``on_lossy="raise"`` has to apply to a conversion, not only to a lossy engine."""
+    from tests._engines import _fill_output
+
+    template = _vba_template(tmp_path)
+
+    with pytest.raises(LossyTemplateError, match="VBA project"):
+        _fill_output(
+            template,
+            tmp_path / "out.xlsx",
+            "win32com",
+            config=FillXLConfig(on_lossy="raise"),
+        )

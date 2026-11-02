@@ -114,3 +114,20 @@ def test_validate_columns_warn_logs_warning_about_extra_and_missing(
     assert any(
         record.levelname == "WARNING" and "missing" in record.message for record in caplog.records
     )
+
+
+def test_validate_columns_still_checks_data_with_rows_but_no_columns() -> None:
+    """A DataFrame with an index and no columns resizes the table to blank rows."""
+    with pytest.raises(ValueError, match="missing columns"):
+        validate_columns(["A", "B"], [], "strict", data_rows=5)
+
+
+def test_validate_columns_still_checks_all_but_formulas_with_rows_but_no_columns() -> None:
+    with pytest.raises(ValueError, match="no data column"):
+        validate_columns(["A", "B"], [], "all_but_formulas", data_rows=3)
+
+
+def test_validate_columns_accepts_data_with_no_rows_and_no_columns() -> None:
+    """Empty data is the "clear the table" case, which stays allowed."""
+    validate_columns(["A", "B"], [], "strict")
+    validate_columns(["A", "B"], [], "strict", data_rows=0)

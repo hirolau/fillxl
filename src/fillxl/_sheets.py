@@ -28,6 +28,29 @@ def warn_sheet_not_found(name: str, consequence: str) -> None:
     warn_user(f"Sheet {name!r} not found; {consequence}")
 
 
+def resolve_sheet_name(name: str, titles: Sequence[str]) -> str | None:
+    """The sheet that *name* refers to, matching exactly first and then ignoring case.
+
+    Excel resolves sheet names without regard to case: ``Sheets("rawdata")``
+    finds ``RawData``.  Every engine has to do the same, or a fill that asks
+    to delete an internal sheet leaves it in the distributed report.
+
+    Examples:
+        >>> resolve_sheet_name("rawdata", ["RawData", "Report"])
+        'RawData'
+        >>> resolve_sheet_name("Report", ["_data", "Report"])
+        'Report'
+        >>> resolve_sheet_name("missing", ["RawData"]) is None
+        True
+
+    """
+    if name in titles:
+        return name
+    folded = name.casefold()
+    matches = [title for title in titles if title.casefold() == folded]
+    return matches[0] if len(matches) == 1 else None
+
+
 def require_a_visible_sheet(
     visible: Sequence[str],
     removed: Collection[str],

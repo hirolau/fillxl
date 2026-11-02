@@ -10,7 +10,8 @@ import openpyxl
 import pytest
 from openpyxl.workbook.protection import WorkbookProtection
 
-from fillxl import FillXLConfig, fill
+from fillxl import Engine, FillXLConfig, FillXLWarning, fill
+from tests._engines import ENGINES, _fill_output
 from tests.parity.builders import chart_sheet_first_template, sheets_template
 
 
@@ -246,3 +247,48 @@ def test_a_failed_delete_is_reported_not_mistaken_for_a_missing_sheet(
             engine="win32com",
             config=FillXLConfig(hide_underscore_sheets=False, delete_sheets=["Report"]),
         )
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_sheet_name_is_matched_without_regard_to_case(engine: Engine, tmp_path: Path) -> None:
+    """``Sheets("rawdata")`` in Excel finds ``RawData``; every engine has to agree.
+
+    A "delete the internal sheet before distribution" step that silently keeps
+    the sheet is a confidentiality bug, not just a missing delete.
+    """
+    template = sheets_template(tmp_path / "template.xlsx", "RawData", "Report")
+
+    output = _fill_output(
+        template,
+        tmp_path / "out.xlsx",
+        engine,
+        config=FillXLConfig(hide_underscore_sheets=False, delete_sheets=["rawdata"]),
+    )
+
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert workbook.sheetnames == ["Report"]
+    finally:
+        workbook.close()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_sheet_name_that_matches_nothing_warns_and_deletes_nothing(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    template = sheets_template(tmp_path / "template.xlsx", "RawData", "Report")
+
+    with pytest.warns(FillXLWarning, match="not found"):
+        output = _fill_output(
+            template,
+            tmp_path / "out.xlsx",
+            engine,
+            config=FillXLConfig(hide_underscore_sheets=False, delete_sheets=["Nowhere"]),
+        )
+
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert workbook.sheetnames == ["RawData", "Report"]
+    finally:
+        workbook.close()

@@ -196,10 +196,16 @@ class FillxlBackend:
 
         """
         package, workbook = self._require_workbook()
-        present = [name for name in dict.fromkeys(names) if workbook.sheet(name) is not None]
+        # Excel resolves sheet names without regard to case, so a requested
+        # name has to be resolved to the sheet's own spelling before it is used
+        # for removal, for the visible-sheet check and for the lossy check.
+        present: list[str] = []
         for name in names:
-            if workbook.sheet(name) is None:
+            entry = workbook.sheet(name)
+            if entry is None:
                 warn_sheet_not_found(name, "nothing was deleted")
+            elif entry.name not in present:
+                present.append(entry.name)
         if not present:
             return
         visible = [entry.name for entry in workbook.sheets() if entry.visible]

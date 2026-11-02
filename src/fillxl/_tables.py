@@ -30,6 +30,7 @@ from ._plan import (
     blocked_area,
     plan_table_fill,
 )
+from ._references import openpyxl_range_sources, warn_about_untracked_ranges
 from ._utils import find_worksheet_and_table, table_column_name
 
 if TYPE_CHECKING:
@@ -100,6 +101,37 @@ def _clear_rows(
             cell = worksheet._cells.get((row, col))
             if cell is not None and is_single_cell(cell):
                 cell.value = None
+
+
+def _show_rows_and_drop_filters(
+    worksheet: Worksheet,
+    table: Table,
+    plan: TablePlan,
+    original_autofilter_ref: str | None,
+) -> None:
+    """Show the rows a fill writes and drop the table's filter criteria.
+
+    Excel does not reapply a filter when a table is resized, and a row hidden
+    by the author stays hidden.  Both hide data a fill has just written, and a
+    ``SUBTOTAL(109, …)`` totals row silently leaves hidden rows out.  The
+    worksheet-level filter is cleared only when it covered the table itself.
+    """
+    for row in range(plan.first_data_row, plan.new_last_row + 1):
+        dimension = worksheet.row_dimensions.get(row)
+        if dimension is not None and dimension.hidden:
+            dimension.hidden = False
+    cleared: list[Any] = []
+    table_filter = table.autoFilter
+    if table_filter is not None and table_filter.filterColumn:
+        table_filter.filterColumn = cleared
+    sheet_filter = worksheet.auto_filter
+    if (
+        sheet_filter is not None
+        and sheet_filter.filterColumn
+        and original_autofilter_ref is not None
+        and sheet_filter.ref == original_autofilter_ref
+    ):
+        sheet_filter.filterColumn = cleared
 
 
 def _check_overflow_region(
@@ -252,9 +284,14 @@ def populate_table(
 
     # The autoFilter must stay in step with the table, or Excel repairs the file.
     original_ref = table.ref
+    original_autofilter_ref = table.autoFilter.ref if table.autoFilter is not None else None
     table.ref = plan.new_ref
     if table.autoFilter is not None:
         table.autoFilter.ref = plan.new_autofilter_ref
+    # A template saved with a filter applied (or with rows hidden by hand)
+    # would keep some of the filled rows out of sight -- and out of a
+    # SUBTOTAL(109, …) totals row.  The fill shows everything it writes.
+    _show_rows_and_drop_filters(worksheet, table, plan, original_autofilter_ref)
     logger.debug("Table '%s' resized: %s -> %s", table_name, original_ref, plan.new_ref)
 
     table_first_cell = worksheet.cell(row=geometry.top_row, column=first_col)
@@ -348,7 +385,14 @@ def populate_table(
             )
 
     if plan.new_body_last_row != geometry.body_last_row:
-        _resize_adjacent_formulas(workbook, worksheet, table, plan)
+        _resize_adjacent_formulas(workbook, worksheet, plan)
+        warn_about_untracked_ranges(
+            openpyxl_range_sources(workbook, worksheet),
+            table_name=table_name,
+            sheet_title=str(worksheet.title),
+            geometry=geometry,
+            new_body_last_row=plan.new_body_last_row,
+        )
 
     if extend_conditional_formatting:
         _extend_conditional_formatting(
@@ -367,7 +411,6 @@ def populate_table(
 def _resize_adjacent_formulas(
     workbook: Workbook,
     worksheet: Worksheet,
-    table: Table,
     plan: TablePlan,
 ) -> None:
     """Resize the formulas that tracked the table body, as Excel does.
@@ -377,22 +420,25 @@ def _resize_adjacent_formulas(
     sheet that refers to it.  openpyxl writes formula text, so the range has to
     be rewritten here or the summary keeps summing the first row only.
 
-    Cells inside the table are skipped: their formulas belong to the table and
-    are written by :func:`populate_table`.  Ranges that only look like they
-    track the table are left alone (see :func:`extend_table_ranges`).
+    Cells in the table's data body are skipped: their formulas belong to the
+    table and are written by :func:`populate_table`.  The totals row is *not*
+    skipped -- it moved with the table, and an A1 formula there such as
+    ``=SUM(B4:B4)`` has to follow the body like any other.  Ranges that only
+    look like they track the table are left alone (see
+    :func:`extend_table_ranges`).
     """
     geometry = plan.geometry
-    current = CellRange(table.ref)
+    first_col, last_col = geometry.first_col, geometry.last_col
     table_sheet = str(worksheet.title)
     for sheet in workbook.worksheets:
         own_sheet = str(sheet.title) == table_sheet
         for (row, column), cell in list(sheet._cells.items()):
-            inside = (
+            in_body = (
                 own_sheet
-                and current.min_row <= row <= current.max_row
-                and current.min_col <= column <= current.max_col
+                and plan.first_data_row <= row <= plan.new_body_last_row
+                and first_col <= column <= last_col
             )
-            if inside or not is_single_cell(cell) or cell.data_type != "f":
+            if in_body or not is_single_cell(cell) or cell.data_type != "f":
                 continue
             formula = cell.value
             if not isinstance(formula, str):

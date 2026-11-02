@@ -78,11 +78,15 @@ def test_a_fill_keeps_the_spilled_arrays(spill_template: Path, tmp_path: Path) -
         worksheet = workbook["Data"]
         master = worksheet.cell(row=8, column=6).value
         assert getattr(master, "text", master) == "=_xlfn.SEQUENCE(5)"
+        # The spill itself is untouched, but the results the template cached
+        # are gone: after the fill they describe a different table, and a
+        # reader that cannot recalculate must see blank rather than the
+        # template's numbers.  Excel refills F8:F12 and J3:J4 on open.
         assert [worksheet.cell(row=row, column=6).value for row in range(9, 13)] == [
-            2,
-            3,
-            4,
-            5,
+            None,
+            None,
+            None,
+            None,
         ]
         assert worksheet["H8"].value == "=SUM(_xlfn.ANCHORARRAY(F8))"
     finally:

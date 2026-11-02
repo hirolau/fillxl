@@ -45,6 +45,10 @@ differently and the difference is described below.
 | Pivot caches marked for refresh on open | yes | yes | yes |
 | Pivot tables refreshed immediately | differs — open-to-refresh | differs — open-to-refresh | yes |
 | Formula results recalculated before saving | differs — recalc on open | differs — recalc on open | yes |
+| Cached results on the sheet a fill writes | dropped | dropped | computed |
+| Summary formulas and A1 totals formulas follow a resize | yes | yes | yes (Excel does it) |
+| Pivot sources, defined names, validation lists follow a resize | warns — `UntrackedRangeWarning` | warns — `UntrackedRangeWarning` | yes (Excel does it) |
+| Hidden rows shown and table filters cleared by a fill | yes | yes | yes |
 | Sheet hiding, deletion and activation | yes | yes | yes |
 | Spilled dynamic arrays (`SEQUENCE`, `FILTER`, `SORT`, …) and cell metadata | differs — lost | yes | yes |
 | Slicers, timelines, `chartEx`, rich data, VBA, embedded objects | differs — lost | yes | yes |
@@ -84,6 +88,8 @@ fill(template="tpl.xlsx", output="out.xlsx", ..., engine="openpyxl")
 - Writes no cached formula results: the output sets `fullCalcOnLoad` so Excel
   recalculates on open. Use `engine="win32com"` when the saved file must
   already contain computed values.
+- Pivot sources, defined names and validation lists that cover a table body are
+  not resized; the fill warns with `UntrackedRangeWarning` instead.
 - Deleting a sheet leaves formulas, charts, names and pivots that refer to it
   pointing at a sheet that no longer exists, and warns
   (`DanglingReferenceWarning`) rather than rewriting them.
@@ -119,8 +125,11 @@ dynamic arrays and their `xl/metadata.xml`, `cm`/`vm` cell metadata, slicers,
   `.xls`, encrypted workbooks and format conversion stay on `win32com`
 - Modern charts (`chartEx`) are left untouched, so they do not follow a table
   resize
-- Writes no cached formula results: the output asks Excel to recalculate on
-  open, like the openpyxl engine
+- Writes no cached formula results, and drops the ones the template stored on
+  the sheet a fill writes; the output asks Excel to recalculate on open, like
+  the openpyxl engine
+- Pivot sources, defined names and validation lists that cover a table body are
+  not resized — it warns with `UntrackedRangeWarning` instead
 - Deleting a sheet leaves formulas, charts, names and pivots that refer to it
   pointing at a sheet that no longer exists, and warns
   (`DanglingReferenceWarning`) rather than rewriting them

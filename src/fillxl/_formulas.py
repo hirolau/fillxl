@@ -42,6 +42,9 @@ _MAX_COLUMN = 16_384
 # A single A1 reference, optionally qualified by a sheet name.  A defined name
 # such as ``Rate`` has no digits and a structured reference contains ``[``, so
 # neither matches; ``LOG10(`` is a function token, never an operand.
+# The shape alone is not enough: ``YTD2024`` looks like column ``YTD`` and row
+# 2024, but that column is past ``XFD``, so Excel reads it as a defined name.
+# Every match therefore has to pass :func:`_is_a1_operand`.
 _A1_OPERAND = re.compile(
     r"^(?:(?:'(?:[^']|'')+'|[A-Za-z_][\w.]*)!)?\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?$"
 )
@@ -50,6 +53,46 @@ _TWO_CELL_RANGE = re.compile(
     r"(?P<first>\$?[A-Za-z]{1,3}\$?\d+):(?P<last>\$?[A-Za-z]{1,3}\$?\d+)$"
 )
 _COLUMN_ROW = re.compile(r"(?P<col>\$?[A-Za-z]{1,3})(?P<row>\$?\d+)")
+
+
+def _is_a1_operand(operand: str) -> bool:
+    """Whether *operand* is an A1 reference inside Excel's grid.
+
+    A defined name whose letters look like a column past ``XFD`` is spelled the
+    same way as a reference (``YTD2024``, ``ZAR1``), and Excel never shifts it
+    when a formula is copied.  Treating it as a reference would silently point
+    the copied formula at another name — or at nothing.
+
+    Examples:
+        >>> _is_a1_operand("B4")
+        True
+        >>> _is_a1_operand("Data!$B$4:$C$9")
+        True
+        >>> _is_a1_operand("XFD1048576")
+        True
+        >>> _is_a1_operand("YTD2024")
+        False
+        >>> _is_a1_operand("ZAR1")
+        False
+        >>> _is_a1_operand("Rate")
+        False
+
+    """
+    if _A1_OPERAND.match(operand) is None:
+        return False
+    _, refs = _split_sheet(operand)
+    return all(_endpoint_in_bounds(reference) for reference in refs.split(":"))
+
+
+def _endpoint_in_bounds(reference: str) -> bool:
+    """Whether one ``$?COL$?ROW`` reference lands inside the sheet."""
+    match = _COLUMN_ROW.fullmatch(reference)
+    if match is None:  # pragma: no cover - _A1_OPERAND guarantees the shape
+        return False
+    return (
+        1 <= _column_index(match.group("col")) <= _MAX_COLUMN
+        and 1 <= int(match.group("row").lstrip("$")) <= _MAX_ROW
+    )
 
 
 def _split_sheet(operand: str) -> tuple[str, str]:
@@ -180,7 +223,7 @@ def shift_relative(formula: str, *, rows: int = 0, columns: int = 0) -> str:
     parts: list[str] = []
     changed = False
     for token in tokenizer.items:
-        if token.type == "OPERAND" and token.subtype == "RANGE" and _A1_OPERAND.match(token.value):
+        if token.type == "OPERAND" and token.subtype == "RANGE" and _is_a1_operand(token.value):
             shifted = _shift_operand(token.value, rows, columns)
             changed = changed or shifted != token.value
             parts.append(shifted)
@@ -217,6 +260,10 @@ def shift_relative_rows(formula: str, offset: int) -> str:
         '=Data!B6*2'
         >>> shift_relative_rows("=LOG10(B5)", 1)
         '=LOG10(B6)'
+        >>> shift_relative_rows("=YTD2024*2", 1)
+        '=YTD2024*2'
+        >>> shift_relative_rows("=ZAR1*2", 1)
+        '=ZAR1*2'
 
     """
     return shift_relative(formula, rows=offset)
@@ -261,6 +308,8 @@ def extend_table_ranges(
         True
         >>> extend_table_ranges("=SUM(Z1:Z1)", **kw) is None
         True
+        >>> extend_table_ranges("=SUM(YTD2024:YTD2024)", **kw) is None
+        True
         >>> extend_table_ranges("=B4*2", **kw) is None
         True
         >>> extend_table_ranges('=IF(A1>0,"B4:B4",SUM(B4:B4))', **kw)
@@ -272,7 +321,12 @@ def extend_table_ranges(
     changed = False
     for token in tokenizer.items:
         value = token.value
-        if token.type == "OPERAND" and token.subtype == "RANGE" and _TWO_CELL_RANGE.match(value):
+        if (
+            token.type == "OPERAND"
+            and token.subtype == "RANGE"
+            and _TWO_CELL_RANGE.match(value)
+            and _is_a1_operand(value)
+        ):
             prefix, refs = _split_sheet(value)
             points_at_table = (
                 _sheet_matches(prefix, sheet_title)
@@ -306,6 +360,8 @@ def _tracks_body(
     new_body: tuple[int, int],
 ) -> bool:
     """Whether the range ``refs`` covers a table column run over the whole body."""
+    if not _is_a1_operand(refs):
+        return False
     match = _TWO_CELL_RANGE.match(refs)
     if match is None:
         return False

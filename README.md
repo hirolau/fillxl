@@ -120,8 +120,10 @@ differs.
 - Encrypted workbooks cannot be opened.
 - Pivot tables are only flagged for refresh on open; fillxl cannot pivot.
 - `chartEx` ranges are not updated.
-- Pivot sources and data validations do not follow a table resize — no engine
-  does this.
+- Pivot sources, defined names and data validations that cover a table body do
+  not follow a resize — no engine can rewrite them. fillxl and `openpyxl` warn
+  with `UntrackedRangeWarning`; `win32com` inserts rows, so Excel adjusts them
+  itself.
 
 ### Speed
 
@@ -133,14 +135,19 @@ has the tables, the method and the script to reproduce them.
 
 ### Cached values
 
-The fillxl engine does not calculate. Formulas it writes have no cached result,
-and every other cached result in the workbook — spills included — stays stale
-until Excel opens and recalculates the file; the workbook is flagged
-`fullCalcOnLoad` so that happens on open. A spill whose size depends on the
-table therefore grows only when Excel recalculates.
+No engine that writes without Excel can calculate. The fillxl engine writes
+formulas with no cached result at all, and the sheet a table fill changes keeps
+no cached results either: the numbers the template stored there belong to the
+template's data, not to the filled report. Spills are kept, but their stored
+results are cleared the same way. Everything else — every untouched sheet — is
+copied byte for byte and keeps the template's cached numbers until Excel opens
+and recalculates the file; the workbook is flagged `fullCalcOnLoad` so that
+happens on open. A spill whose size depends on the table therefore grows only
+when Excel recalculates.
 
 Tools that read cached values (`pandas`, `openpyxl` with `data_only=True`, file
-previews, search indexers) see blanks or old numbers in a fillxl output.
+previews, search indexers) see blanks or old numbers in a fillxl output — a
+blank is deliberate, because a stale number reads like the report's own.
 Dynamic arrays survive on Linux, but they are not computed there either. Use
 `engine="win32com"` when the saved file must contain computed values.
 
@@ -152,8 +159,8 @@ Dynamic arrays survive on Linux, but they are not computed there either. Use
 - `None` and `NaN` are missing values and become empty cells. ±Infinity cannot
   be stored either, but it warns rather than disappearing quietly.
 - Every warning is a `fillxl.FillXLWarning` subclass (`TimezoneWarning`,
-  `DanglingReferenceWarning`, `LossyTemplateWarning`), so
-  `warnings.simplefilter("error", fillxl.FillXLWarning)` makes data problems
+  `DanglingReferenceWarning`, `UntrackedRangeWarning`, `LossyTemplateWarning`),
+  so `warnings.simplefilter("error", fillxl.FillXLWarning)` makes data problems
   fail fast instead of quietly changing the output.
 - `openpyxl` writes no cached formula results; the output asks Excel to
   recalculate on open (`engine="win32com"` saves computed values).
@@ -164,6 +171,17 @@ Dynamic arrays survive on Linux, but they are not computed there either. Use
 - `engine="fillxl"` (experimental) keeps spilled arrays and everything else
   unchanged, but it computes nothing: Excel fills the spill and recalculates
   every formula when it opens the file, so cached values stay stale until then.
+  The sheet a table fill writes to keeps no cached results at all, so a reader
+  without a calculation engine sees blanks there instead of the template's
+  numbers.
+- `delete_sheets` matches sheet names the way Excel does, ignoring case:
+  `delete_sheets=["rawdata"]` deletes `RawData`. A name that matches nothing
+  warns rather than being ignored.
+- A table fill shows the rows it writes: a template saved with a filter applied
+  or with rows hidden by hand is filtered back to "all rows" and unhidden, so no
+  filled row stays invisible and no `SUBTOTAL(109, …)` total leaves it out.
+- A totals row that holds an A1 formula (`=SUM(B2:B2)`) is resized with the
+  body, like a formula anywhere else that tracked the table.
 - `delete_sheets` does not rewrite formulas, charts, names or pivots that point
   at the deleted sheet; fillxl warns with `DanglingReferenceWarning` because
   Excel shows `#REF!` there.

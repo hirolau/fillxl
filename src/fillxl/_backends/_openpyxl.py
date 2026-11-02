@@ -15,7 +15,12 @@ from fillxl._charts import (
 )
 from fillxl._dangling import find_dangling_references, warn_dangling_references
 from fillxl._lossy import check_lossy
-from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
+from fillxl._sheets import (
+    first_remaining,
+    require_a_visible_sheet,
+    resolve_sheet_name,
+    warn_sheet_not_found,
+)
 from fillxl._tables import populate_table
 from fillxl._validation import ColumnValidationStrategy, validate_columns
 
@@ -121,7 +126,7 @@ class OpenpyxlBackend:
         _validate_table_columns(
             workbook=workbook,
             table_name=name,
-            data_columns=adapter.columns,
+            adapter=adapter,
             strategy=config.column_validation_strategy,
         )
 
@@ -183,10 +188,14 @@ class OpenpyxlBackend:
 
         """
         workbook = self._require_workbook()
-        present = [name for name in dict.fromkeys(names) if name in workbook.sheetnames]
+        titles = workbook.sheetnames
+        present: list[str] = []
         for name in names:
-            if name not in workbook.sheetnames:
+            resolved = resolve_sheet_name(name, titles)
+            if resolved is None:
                 warn_sheet_not_found(name, "nothing was deleted")
+            elif resolved not in present:
+                present.append(resolved)
         if not present:
             return
         visible = _visible_titles(workbook)
@@ -297,7 +306,7 @@ def _set_tab_selected(sheet: Any, *, selected: bool) -> None:  # noqa: ANN401
 def _validate_table_columns(
     workbook: openpyxl.Workbook,
     table_name: str,
-    data_columns: list[str],
+    adapter: TabularAdapter,
     strategy: ColumnValidationStrategy,
 ) -> None:
     """Validate columns of incoming data against the Excel table definition.
@@ -305,7 +314,7 @@ def _validate_table_columns(
     Args:
         workbook: The openpyxl Workbook containing the table.
         table_name: Name of the table to validate against.
-        data_columns: Column names from the incoming data.
+        adapter: The incoming data, for its column names and row count.
         strategy: Validation strategy (see :func:`fillxl._validation.validate_columns`).
 
     Raises:
@@ -324,10 +333,11 @@ def _validate_table_columns(
     )
     validate_columns(
         table_columns=table_columns,
-        data_columns=data_columns,
+        data_columns=adapter.columns,
         strategy=strategy,
         formula_columns=formula_columns,
         table_name=table_name,
+        data_rows=len(adapter.rows),
     )
 
 

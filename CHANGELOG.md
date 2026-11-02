@@ -56,6 +56,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parses, raising a `RuntimeError` that asks for a bug report instead of
   leaving a file no reader can open. It also refuses a non-UTF-8 part with a
   message naming `engine="win32com"`.
+- `engine="fillxl"` silently kept a sheet `delete_sheets` asked for when the
+  name differed only by case (`"rawdata"` for `RawData`): Excel matches sheet
+  names without regard to case, `workbook.sheet()` found the sheet, and the
+  removal step then matched nothing. All three engines now resolve the name the
+  way Excel does, so "delete the internal sheet before distribution" cannot
+  quietly distribute it.
+- Cached formula results no longer outlive the data they describe. The fillxl
+  engine strips `<v>` and the cell's type from every formula it rewrites, and
+  from every formula on the sheet a table fill writes to, so a reader without a
+  calculation engine sees a blank instead of the template's number; stored
+  spilled results are cleared the same way, and the spill itself is kept.
+- A defined name that looks like a cell reference (`YTD2024`, `ZAR1` — a
+  "column" past `XFD`) was shifted per row when a calculated column was filled
+  or a shared formula was unshared, silently pointing the copied formula at
+  another name. Only operands inside the grid (16 384 × 1 048 576) count as
+  references now, so the openpyxl and fillxl engines agree with Excel.
+- win32com: saving a fill as `.xls` no longer truncates silently — rows past
+  65 536 or columns past 256 are refused with a `ValueError` before `SaveAs`,
+  because Excel's compatibility checker is disabled during a fill. A format
+  change now reports what the new format cannot hold (a `.xlsm` template saved
+  as `.xlsx` loses its VBA project) through `on_lossy`, which used to be a
+  no-op for that engine.
+- A table fill shows the rows it writes: a filter the template was saved with
+  is cleared and body rows hidden by hand are unhidden in all three engines.
+  Before, the filled rows stayed invisible and a `SUBTOTAL(109, …)` totals row
+  silently left them out of the total.
+- An A1 formula in a moved totals row (`=SUM(B2:B2)`) follows the body like any
+  other formula that tracked the table; it used to stay on the first row
+  because the rewrite skipped everything inside the table reference.
+- Pivot cache sources, defined names and data-validation lists that cover a
+  table body are not resized by the openpyxl and fillxl engines, so the rows a
+  fill wrote were missing from a pivot that refreshes on load. Those engines
+  now warn (`UntrackedRangeWarning`) instead of staying quiet; `win32com`
+  inserts rows, so Excel adjusts those references itself.
+- Column validation no longer skips data that has rows but no columns — a
+  `DataFrame` with only an index, `[{}, {}, {}]`, or a `select` that dropped
+  every column — which resized the table and cleared every data column even
+  under `"strict"`.
 
 ### Changed
 - `engine="fillxl"` is documented as experimental and opt-in: `engine="auto"`
@@ -64,6 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `chartEx` ranges untouched, pivot sources and data validations unaffected)
   and a "Cached values" section: the engine does not calculate, so the file
   stays stale until Excel recalculates.
+- `UntrackedRangeWarning` is new: it reports a pivot cache source, defined name
+  or data-validation list that still covers a table's old rows after a resize.
 
 ## [0.8.0] - 2026-11-01
 

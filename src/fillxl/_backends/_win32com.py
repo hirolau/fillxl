@@ -30,6 +30,7 @@ from fillxl._formulas import (
     resolve_formula,
     warn_about_ignored_formula_data,
 )
+from fillxl._lossy import check_conversion_losses
 from fillxl._normalize import (
     check_cell_value,
     check_named_cell_scalar,
@@ -38,8 +39,13 @@ from fillxl._normalize import (
     prepare_cell_value,
     prepare_table_cell,
 )
-from fillxl._plan import BlockedRegion, TableGeometry, blocked_area, plan_table_fill
-from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
+from fillxl._plan import BlockedRegion, TableGeometry, TablePlan, blocked_area, plan_table_fill
+from fillxl._sheets import (
+    first_remaining,
+    require_a_visible_sheet,
+    resolve_sheet_name,
+    warn_sheet_not_found,
+)
 from fillxl._utils import col_to_excel
 from fillxl._validation import validate_columns
 from fillxl._warnings import FillXLWarning, warn_user
@@ -309,6 +315,7 @@ class Win32ComBackend:
             strategy=config.column_validation_strategy,
             formula_columns=list(formulas),
             table_name=name,
+            data_rows=len(rows),
         )
         warn_about_ignored_formula_data(name, data_columns, rows, formulas)
 
@@ -358,6 +365,8 @@ class Win32ComBackend:
             worksheet.Range(f"{first_letter}{first_row}:{last_letter}{last_row}").ClearContents()
         logger.debug("[win32com] resize took %.3fs", time.perf_counter() - t_resize)
 
+        _show_filled_rows_com(list_obj, worksheet, plan)
+
         if rows:
             _write_rows_com(
                 list_obj,
@@ -383,6 +392,10 @@ class Win32ComBackend:
                 last_data_row=plan.new_body_last_row,
             )
 
+        # References that track the body -- summary formulas, defined names,
+        # pivot sources -- need no help here: ``ListObject.Resize`` inserts
+        # rows, so Excel adjusts every one of them itself.  The engines that
+        # write into empty cells cannot, and warn instead.
         return plan.change_spec(str(worksheet.Name))
 
     def update_charts(self, spec: TableChangeSpecs) -> None:
@@ -484,11 +497,14 @@ class Win32ComBackend:
     def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the sheets named in *names*."""
         self._ensure_workbook()
-        existing = set(self._sheet_names())
-        present = [name for name in dict.fromkeys(names) if name in existing]
+        titles = self._sheet_names()
+        present: list[str] = []
         for name in names:
-            if name not in existing:
+            resolved = resolve_sheet_name(name, titles)
+            if resolved is None:
                 warn_sheet_not_found(name, "nothing was deleted")
+            elif resolved not in present:
+                present.append(resolved)
         if not present:
             return
         visible = self._visible_sheet_names()
@@ -551,6 +567,10 @@ class Win32ComBackend:
         if self._previous_calculation is not None:
             self._app.Calculation = self._previous_calculation
             self._previous_calculation = None
+        if suffix == ".xls":
+            # Excel's compatibility checker is silenced during a fill, so it
+            # would drop the overflow without a word.
+            _refuse_truncation_to_xls(self._workbook, abs_path)
         logger.debug("Saving workbook to %s (format %d)", abs_path, file_format)
         self._workbook.SaveAs(str(abs_path), FileFormat=file_format)
         logger.debug("[win32com] save took %.3fs", time.perf_counter() - t0)
@@ -579,7 +599,14 @@ class Win32ComBackend:
                 self._release_com()
 
     def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
-        """Excel writes back every feature it read, so there is nothing to check."""
+        """Report template features the output format could not hold.
+
+        Excel writes back every feature it read, so a save to the template's
+        own format loses nothing.  A save to another format can: the VBA
+        project never survives an ``.xlsx`` or ``.xls`` output, and ``.xls``
+        cannot hold dynamic arrays or most of the newer feature set.
+        """
+        check_conversion_losses(template, output, policy, engine="win32com")
 
     def _release_com(self) -> None:
         if not self._com_initialized:
@@ -663,6 +690,59 @@ def set_number_format(target: Any, format_code: str) -> None:  # noqa: ANN401
 def _com_has_totals_row(list_obj: Any) -> bool:  # noqa: ANN401
     """Whether a COM ``ListObject`` is configured with a totals row."""
     return bool(getattr(list_obj, "ShowTotals", False))
+
+
+# ``.xls`` is BIFF8: 65 536 rows by 256 columns.  Everything outside that grid
+# is dropped when Excel saves, and the compatibility checker that would say so
+# is disabled for the fill.
+_XLS_MAX_ROWS = 65_536
+_XLS_MAX_COLUMNS = 256
+
+
+def _refuse_truncation_to_xls(workbook: Any, output: Path) -> None:  # noqa: ANN401
+    """Raise when the workbook does not fit in an ``.xls`` grid.
+
+    Args:
+        workbook: The COM workbook about to be saved.
+        output: The destination path, for the message.
+
+    Raises:
+        ValueError: If any sheet uses more rows or columns than BIFF8 holds.
+
+    """
+    for sheet in workbook.Worksheets:
+        used = sheet.UsedRange
+        last_row = int(used.Row) + int(used.Rows.Count) - 1
+        last_column = int(used.Column) + int(used.Columns.Count) - 1
+        if last_row <= _XLS_MAX_ROWS and last_column <= _XLS_MAX_COLUMNS:
+            continue
+        msg = (
+            f"Cannot save '{output.name}' as .xls: sheet '{sheet.Name}' uses "
+            f"{last_row} rows and {last_column} columns, but .xls holds only "
+            f"{_XLS_MAX_ROWS} rows and {_XLS_MAX_COLUMNS} columns. Everything "
+            "outside that grid would be dropped without a warning. Save as "
+            ".xlsx, .xlsm or .xlsb instead."
+        )
+        raise ValueError(msg)
+
+
+def _show_filled_rows_com(list_obj: Any, worksheet: Any, plan: TablePlan) -> None:  # noqa: ANN401
+    """Show the rows a fill writes and drop the table's filter criteria.
+
+    A template saved with a filter applied, or with rows hidden by hand, would
+    hide data the fill just wrote -- and a ``SUBTOTAL(109, …)`` totals row
+    leaves hidden rows out.  Excel does not reapply a filter on ``Resize``.
+    """
+    try:
+        autofilter = list_obj.AutoFilter
+        if autofilter is not None and autofilter.FilterMode:
+            autofilter.ShowAllData()
+    except Exception:  # a table without an enabled filter has nothing to clear
+        logger.debug("No table filter to clear on %s", list_obj.Name)
+    try:
+        worksheet.Rows(f"{plan.first_data_row}:{plan.new_last_row}").EntireRow.Hidden = False
+    except Exception:
+        logger.debug("Could not unhide rows on %s", worksheet.Name)
 
 
 def _resize_target_row(

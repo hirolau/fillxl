@@ -20,11 +20,30 @@ logger = logging.getLogger(__name__)
 
 PIVOT_CACHE = re.compile(r"^xl/pivotCache/pivotCacheDefinition\d*\.xml$")
 _ROOT = xmltext.start_tag_re("pivotCacheDefinition")
+_WORKSHEET_SOURCE = xmltext.element_re("worksheetSource")
 
 
 def pivot_cache_parts(package: OoxmlPackage) -> list[str]:
     """Every pivot cache definition part of the package."""
     return [part for part in package.part_names if PIVOT_CACHE.match(part)]
+
+
+def pivot_worksheet_sources(package: OoxmlPackage) -> list[tuple[str, str]]:
+    """``(sheet, ref)`` of every pivot cache source that names an A1 range.
+
+    A cache source can also name an Excel table (``<worksheetSource name="Sales"/>``);
+    Excel keeps that one in step with the table, so it is not returned.
+    """
+    sources: list[tuple[str, str]] = []
+    for part in pivot_cache_parts(package):
+        for match in _WORKSHEET_SOURCE.finditer(package.text(part)):
+            element = match.group(0)
+            sheet = xmltext.attribute(element, "sheet")
+            reference = xmltext.attribute(element, "ref")
+            if sheet is None or reference is None:
+                continue
+            sources.append((xmltext.unescape(sheet), xmltext.unescape(reference)))
+    return sources
 
 
 def set_refresh_on_load(package: OoxmlPackage) -> int:

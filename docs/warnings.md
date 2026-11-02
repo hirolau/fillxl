@@ -29,8 +29,9 @@ Two properties matter when you rely on that:
 |---|---|---|
 | `FillXLWarning` | Data was supplied but not written, or is stored differently than supplied: an integer with more than 15 significant digits (warned once per column), a ±infinity written as an empty cell (warned once per column), a DataFrame index that is not written, values supplied for a calculated column, all but the first destination of a defined name, a sheet name that matched nothing. | Fix the data or the configuration, or ignore the warning. |
 | `TimezoneWarning` | A tz-aware datetime was provided. Excel has no timezone support, so the offset is stripped and the wall-clock time kept. Warned once per fill. | Convert to naive datetimes yourself, or accept the loss. |
-| `LossyTemplateWarning` | The openpyxl engine did not write a template feature back (slicers, modern charts, pictures, threaded comments, …). Controlled by `on_lossy`. | Use `engine="win32com"`, or set `on_lossy="ignore"`. |
+| `LossyTemplateWarning` | The openpyxl engine did not write a template feature back (slicers, modern charts, pictures, threaded comments, …), or a format conversion dropped one (a `.xlsm` template saved as `.xlsx` loses its VBA project). Controlled by `on_lossy`. | Use `engine="win32com"`, save to the template's own format, or set `on_lossy="ignore"`. |
 | `DanglingReferenceWarning` | A sheet deleted by `delete_sheets` is still named by a formula, chart series, defined name or pivot cache. The openpyxl engine cannot rewrite those references, so Excel shows `#REF!` there. | Point the reference elsewhere, remove it, or keep the sheet. |
+| `UntrackedRangeWarning` | A table that changed size is still covered by a pivot cache source, a defined name or a data-validation list over its old rows. The `openpyxl` and `fillxl` engines cannot rewrite those references, so the rows the fill wrote are missing from them. | Resize the reference in the template; `engine="win32com"` adjusts them itself. |
 
 `on_lossy="raise"` turns the lossy case into `LossyTemplateError` instead of a
 warning.
@@ -41,7 +42,7 @@ warning.
 |---|---|
 | `CellValueError` | A value cannot be stored in a cell: text over 32,767 characters, illegal control characters, a lone surrogate, U+FFFE or U+FFFF (which XML 1.0 forbids), a date before 1900-03-01, an integer at or beyond 1e308, or a container (list, dict, bytes, DataFrame, …) where one value belongs. Carries the table, data row and column — or the named cell. |
 | `TypeError` | The wrong *kind* of input: `values`/`tables` is not a mapping or `config` is not a `FillXLConfig`, `delete_sheets` is a bare string or contains a non-name, a `list[dict]` row is not a dict, the data is not tabular at all, or `values`/`tables` were passed positionally. |
-| `ValueError` | Column validation failed, a table would grow into other content, a defined name points at a table header, the chosen engine cannot write the requested format, or the sheet settings would leave no visible sheet. `CellValueError` is a `ValueError` as well. |
+| `ValueError` | Column validation failed, a table would grow into other content, a defined name points at a table header, the chosen engine cannot write the requested format, the workbook does not fit in the requested `.xls` grid, or the sheet settings would leave no visible sheet. `CellValueError` is a `ValueError` as well. |
 | `IsADirectoryError` | `output=` names an existing directory. |
 | `KeyError` | A table or defined name in `values`/`tables` does not exist in the workbook. |
 | `PermissionError` | The finished file could not replace `output=`, usually because it is open in Excel. |

@@ -27,6 +27,7 @@ TABLE_SUFFIX = "/table"
 _COLUMNS = xmltext.element_re("tableColumns")
 _COLUMN = xmltext.element_re("tableColumn")
 _AUTOFILTER = xmltext.element_re("autoFilter")
+_FILTER_COLUMN = xmltext.element_re("filterColumn")
 _SORT_STATE = xmltext.element_re("sortState")
 _ROOT = xmltext.start_tag_re("table")
 
@@ -156,6 +157,30 @@ class TablePart:
                 text = text[: sorted_range.start()] + updated + text[sorted_range.end() :]
         if text != self.package.text(self.part):
             self.package.set_text(self.part, text)
+
+    def clear_filters(self) -> bool:
+        """Remove the filter criteria applied to the table.
+
+        Excel does not reapply a filter when a table is resized, so a template
+        saved with a filter hides some of the rows a fill writes -- and
+        ``SUBTOTAL(109, …)`` in a totals row then quietly leaves them out of
+        the total.  Clearing the criteria shows every row; the caller can
+        filter again.
+
+        Returns:
+            Whether any criteria were removed.
+
+        """
+        text = self.text
+        match = _AUTOFILTER.search(text)
+        if match is None:
+            return False
+        element = match.group(0)
+        cleared = _FILTER_COLUMN.sub("", element)
+        if cleared == element:
+            return False
+        self.package.set_text(self.part, f"{text[: match.start()]}{cleared}{text[match.end() :]}")
+        return True
 
 
 def tables_on_sheet(package: OoxmlPackage, sheet: SheetEntry) -> list[TablePart]:

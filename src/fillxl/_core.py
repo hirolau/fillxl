@@ -140,6 +140,8 @@ def fill(
                     backend.delete_sheets(cfg.delete_sheets)
                 if cfg.active_sheet is not None:
                     backend.set_active_sheet(cfg.active_sheet)
+                # Must stay inside the TemporaryDirectory block: the fillxl
+                # engine streams untouched parts from the temporary copy.
                 backend.save(staging_path)
             finally:
                 backend.close()

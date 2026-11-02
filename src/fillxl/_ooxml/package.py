@@ -8,8 +8,10 @@ be lost.
 
 from __future__ import annotations
 
+import os
 import posixpath
 import re
+import shutil
 import xml.parsers.expat as expat
 import zipfile
 from pathlib import Path
@@ -32,6 +34,8 @@ _SHARED_TEXT = xmltext.element_re("t")
 
 _UTF16_LE = b"\xff\xfe"
 _UTF16_BE = b"\xfe\xff"
+
+_COPY_CHUNK = 1024 * 1024
 
 
 def _not_utf8(part: str) -> ValueError:
@@ -103,9 +107,10 @@ class OoxmlPackage:
             self._infos: dict[str, zipfile.ZipInfo] = {
                 info.filename: info for info in archive.infolist()
             }
-            self._parts: dict[str, bytes] = {
-                name: archive.read(name) for name in self._order
-            }
+        # Parts are read on first access: a fill touches a handful of XML
+        # parts and must not pull a 20 MB image into memory to do it.
+        self._parts: dict[str, bytes] = {}
+        self._dropped: set[str] = set()
         self._dirty: set[str] = set()
         self._shared_strings: list[str] | None = None
 
@@ -114,26 +119,39 @@ class OoxmlPackage:
     @property
     def part_names(self) -> list[str]:
         """Every part name, in the order the archive stores them."""
-        return [name for name in self._order if name in self._parts]
+        return [name for name in self._order if self.has(name)]
 
     def has(self, part: str) -> bool:
-        """Whether the package holds *part*."""
-        return part in self._parts
+        """Whether the package holds *part* (from the archive, or added since)."""
+        if part in self._dropped:
+            return False
+        return part in self._infos or part in self._parts
 
     def raw(self, part: str) -> bytes:
-        """The bytes of *part*."""
+        """The bytes of *part*, read from the source archive on first access.
+
+        Raises:
+            KeyError: If the package has no such part, or it was dropped.
+
+        """
+        if part not in self._parts:
+            if not self.has(part):
+                raise KeyError(part)
+            with zipfile.ZipFile(self.path) as archive:
+                self._parts[part] = archive.read(part)
         return self._parts[part]
 
     def text(self, part: str) -> str:
         """*part* decoded as UTF-8 XML.
 
         Raises:
+            KeyError: If the package has no such part.
             ValueError: If the part is not UTF-8 (a UTF-16 byte-order mark, or
                 bytes that do not decode).  Editing such a part as text would
                 destroy it, and the other engine can read it.
 
         """
-        data = self._parts[part]
+        data = self.raw(part)
         if data.startswith((_UTF16_LE, _UTF16_BE)):
             raise _not_utf8(part)
         try:
@@ -146,6 +164,7 @@ class OoxmlPackage:
         self._parts[part] = text.encode("utf-8")
         if part not in self._order:
             self._order.append(part)
+        self._dropped.discard(part)
         self._dirty.add(part)
 
     def is_changed(self, part: str) -> bool:
@@ -179,12 +198,14 @@ class OoxmlPackage:
 
     def drop(self, part: str) -> None:
         """Remove *part*, its relationship part and its content-type override."""
+        self._dropped.add(part)
         self._parts.pop(part, None)
         self._order = [name for name in self._order if name != part]
         self._dirty.discard(part)
         rels = rels_part(part)
-        if rels in self._parts and rels != _ROOT_RELS:
-            self._parts.pop(rels)
+        if rels != _ROOT_RELS and self.has(rels):
+            self._dropped.add(rels)
+            self._parts.pop(rels, None)
             self._order = [name for name in self._order if name != rels]
             self._dirty.discard(rels)
         self.remove_override(part)
@@ -194,7 +215,7 @@ class OoxmlPackage:
     def relationships(self, owner: str) -> list[Relationship]:
         """The relationships *owner* declares (``""`` means the package root)."""
         part = rels_part(owner)
-        if part not in self._parts:
+        if not self.has(part):
             return []
         found: list[Relationship] = []
         text = self.text(part)
@@ -279,7 +300,7 @@ class OoxmlPackage:
 
     def remove_override(self, part: str) -> None:
         """Delete the content-type ``<Override>`` of *part*, if there is one."""
-        if CONTENT_TYPES not in self._parts:
+        if not self.has(CONTENT_TYPES):
             return
         pattern = re.compile(
             rf'<{xmltext.any_prefix("Override")}\b[^>]*\bPartName="/{re.escape(part)}"[^>]*/>',
@@ -304,7 +325,12 @@ class OoxmlPackage:
 
         Parts that were not rewritten are copied with their original ZIP entry
         (compression method and timestamp included), so an untouched part is
-        indistinguishable from the template's.
+        indistinguishable from the template's.  They are streamed from the
+        source archive, so an untouched image is never read into memory.
+
+        The source archive is the temporary copy ``fill()`` makes, and it has
+        to still exist here: ``save()`` must stay inside that temporary
+        directory's ``with`` block.
 
         Raises:
             RuntimeError: If a part this engine rewrote is no longer
@@ -313,15 +339,36 @@ class OoxmlPackage:
 
         """
         self._assert_well_formed()
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        # Writing over the source would close the archive being read, so go
+        # through a sibling file and swap it in at the end.
+        same_file = path.exists() and path.resolve() == self.path.resolve()
+        target = path.with_name(f"{path.name}.saving") if same_file else path
+        try:
+            self._write(target)
+        except BaseException:
+            if same_file:
+                target.unlink(missing_ok=True)
+            raise
+        if same_file:
+            os.replace(target, path)
+
+    def _write(self, path: Path) -> None:
+        """Write every surviving part, streaming the ones that were not touched."""
+        with (
+            zipfile.ZipFile(self.path) as source,
+            zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive,
+        ):
             for name in self._order:
-                if name not in self._parts:
+                if not self.has(name):
                     continue
                 info = self._infos.get(name)
-                if info is not None:
-                    archive.writestr(info, self._parts[name])
-                else:  # pragma: no cover - parts are never added to the archive
-                    archive.writestr(name, self._parts[name])
+                cached = self._parts.get(name)
+                if cached is None and info is not None:
+                    # Untouched: copy the entry without materialising it.
+                    with source.open(name) as original, archive.open(info, "w") as copy:
+                        shutil.copyfileobj(original, copy, length=_COPY_CHUNK)
+                    continue
+                archive.writestr(info if info is not None else name, cached or b"")
 
     def _assert_well_formed(self) -> None:
         """Refuse to write a package whose rewritten XML no longer parses.

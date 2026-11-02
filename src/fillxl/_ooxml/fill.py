@@ -244,7 +244,7 @@ def fill_table(
     if plan.overflow_rows is not None:
         _refuse_occupied_growth(package, table, sheet, plan, len(adapter.rows), name)
 
-    table.set_refs(plan.new_ref, plan.new_autofilter_ref)
+    table.set_refs(plan.new_ref, plan.new_autofilter_ref, plan.new_body_ref)
 
     formula_offsets = {
         offset for offset, column in enumerate(columns) if column.name in formula_columns

@@ -118,11 +118,14 @@ def test_a_sorted_table_keeps_the_sort_state_the_template_had(
     tmp_path: Path,
     engine: Engine,
 ) -> None:
-    """Neither engine rewrites ``sortState``, because Excel does not either.
+    """Excel keeps the old ``sortState`` ref; the fillxl engine keeps it valid.
 
-    Measured in Excel 16: resizing a table (in either direction) leaves the
-    old ``sortState`` ref in place, and the workbook still opens without a
-    repair prompt.  Rewriting it here would make the two engines disagree.
+    Measured in Excel 16: resizing a table leaves the old ``sortState`` ref in
+    place and the workbook still opens without a repair prompt, which the
+    openpyxl and win32com engines reproduce.  The fillxl engine deliberately
+    moves the range with the body instead — see
+    ``tests/ooxml/test_sort_state.py`` — so a stale range never points outside
+    the table it belongs to.
     """
     template = _sorted_template(tmp_path / "template.xlsx")
 
@@ -133,11 +136,12 @@ def test_a_sorted_table_keeps_the_sort_state_the_template_had(
         tables={"Sales": [{"fund": f"f{i}", "nav": i} for i in range(6)]},
     )
 
+    expected = "A2:B4" if engine in ("openpyxl", "win32com") else "A2:B7"
     workbook = openpyxl.load_workbook(output)
     try:
         sort_state = workbook["Data"].tables["Sales"].sortState
         assert sort_state is not None
-        assert sort_state.ref == "A2:B4"
+        assert sort_state.ref == expected
         assert [condition.ref for condition in sort_state.sortCondition] == ["A2:A4"]
     finally:
         workbook.close()

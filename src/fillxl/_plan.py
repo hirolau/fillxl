@@ -166,6 +166,15 @@ class TablePlan:
             f"{get_column_letter(g.last_col)}{self.new_body_last_row}"
         )
 
+    @property
+    def new_body_ref(self) -> str:
+        """The data body after the fill, e.g. ``B13:M20`` (totals excluded)."""
+        g = self.geometry
+        return (
+            f"{get_column_letter(g.first_col)}{self.first_data_row}:"
+            f"{get_column_letter(g.last_col)}{self.new_body_last_row}"
+        )
+
     def change_spec(self, worksheet_title: str) -> TableChangeSpecs:
         """The change in chart terms, for updating chart references."""
         g = self.geometry

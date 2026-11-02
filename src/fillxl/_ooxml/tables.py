@@ -27,6 +27,7 @@ TABLE_SUFFIX = "/table"
 _COLUMNS = xmltext.element_re("tableColumns")
 _COLUMN = xmltext.element_re("tableColumn")
 _AUTOFILTER = xmltext.element_re("autoFilter")
+_SORT_STATE = xmltext.element_re("sortState")
 _ROOT = xmltext.start_tag_re("table")
 
 
@@ -126,8 +127,13 @@ class TablePart:
             )
         return columns
 
-    def set_refs(self, ref: str, autofilter_ref: str | None) -> None:
-        """Point the table (and its autofilter) at the new range."""
+    def set_refs(
+        self,
+        ref: str,
+        autofilter_ref: str | None,
+        sort_ref: str | None = None,
+    ) -> None:
+        """Point the table (and its autofilter and sort state) at the new range."""
         text = self.text
         root = _ROOT.search(text)
         if root is None:  # pragma: no cover
@@ -139,6 +145,11 @@ class TablePart:
             if match is not None:
                 updated = xmltext.set_tag_attribute(match.group(0), "ref", autofilter_ref)
                 text = text[: match.start()] + updated + text[match.end() :]
+        if sort_ref is not None:
+            sorted_range = _SORT_STATE.search(text)
+            if sorted_range is not None:
+                updated = xmltext.set_tag_attribute(sorted_range.group(0), "ref", sort_ref)
+                text = text[: sorted_range.start()] + updated + text[sorted_range.end() :]
         if text != self.package.text(self.part):
             self.package.set_text(self.part, text)
 

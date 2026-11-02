@@ -106,6 +106,30 @@ same template and data; the
 [Backends](https://hirolau.github.io/fillxl/backends/) page lists what still
 differs.
 
+`engine="fillxl"` is **experimental and opt-in**: `engine="auto"` never selects
+it, so a fill only uses it when you ask for it. Its limits:
+
+- `.xlsx` and `.xlsm` only, with no format conversion (use `win32com` for
+  `.xlsb`, `.xls` and converting between formats).
+- Encrypted workbooks cannot be opened.
+- Pivot tables are only flagged for refresh on open; fillxl cannot pivot.
+- `chartEx` ranges are not updated.
+- Pivot sources and data validations do not follow a table resize — no engine
+  does this.
+
+### Cached values
+
+The fillxl engine does not calculate. Formulas it writes have no cached result,
+and every other cached result in the workbook — spills included — stays stale
+until Excel opens and recalculates the file; the workbook is flagged
+`fullCalcOnLoad` so that happens on open. A spill whose size depends on the
+table therefore grows only when Excel recalculates.
+
+Tools that read cached values (`pandas`, `openpyxl` with `data_only=True`, file
+previews, search indexers) see blanks or old numbers in a fillxl output.
+Dynamic arrays survive on Linux, but they are not computed there either. Use
+`engine="win32com"` when the saved file must contain computed values.
+
 ## Know the edge cases
 
 - One cell holds one value. A `list`, `dict`, `bytes` or a whole DataFrame in a

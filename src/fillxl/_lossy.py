@@ -23,7 +23,7 @@ class LossyTemplateError(RuntimeError):
 
 
 class LossyTemplateWarning(FillXLWarning):
-    """The openpyxl engine dropped template features."""
+    """An engine dropped template features the fill could not write back."""
 
 
 _MEDIA_PREFIX = "xl/media/"

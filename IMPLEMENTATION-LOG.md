@@ -73,6 +73,58 @@ never renumbering existing entries — a whole class of corruption for no benefi
   helpers (`CellRange`, `get_column_letter`, formula `Tokenizer`, number-format
   predicates) — none of which need Excel or parse a workbook.
 
+### D8 — Spill ranges are cached per sheet
+
+Every write asks "is this cell inside an array formula?".  Answering it by
+regex-scanning the sheet made filling a table quadratic (13.7 s for 1,000 rows,
+366 s for 4,000).  `SheetPart` builds the range list once and drops it when a
+write creates or destroys an array anchor — overwriting or deleting an anchor
+changes the ranges just as much as writing one, so both the old and the new cell
+XML are inspected.  The same 4,000-row fill now takes 0.4 s.
+
+### D9 — A save refuses to write malformed XML
+
+The engine edits parts as text, so a bad edit produces a workbook no reader can
+open, and a partial file is worse than none.  `OoxmlPackage.save()` parses every
+part it rewrote (expat) before the output zip is opened and raises a
+`RuntimeError` asking for a bug report.  The test suite asserts the same thing
+about every output, so a regression fails next to the code that caused it.
+
+### D10 — Shared formulas are indexed, and unshared where the fill touches them
+
+Excel stores a filled-down formula once, on a master cell, plus an empty
+`<f t="shared" si="…"/>` on every other cell.  A dependent has no text, so it
+used to look like a cell without a formula: shared calculated columns were
+misdetected, dangling references in dependents were missed, and rewriting one
+member produced a stale part.  `SheetPart` indexes the groups on load and
+resolves a dependent to the master's text moved to its own row and column
+(`shift_relative`).  A group that a fill touches is unshared first — every
+member gets its own text — so no dependent is ever left without its master; a
+group outside the filled rectangle keeps its exact bytes.
+
+### D11 — Dates use the workbook's own epoch
+
+`date1904="1"` moves every serial by 1462 days.  `WorkbookPart.date1904` is read
+once per fill and `serial_text`/`build_cell` take the epoch, so a date written
+into such a workbook reads back as the same date.
+
+### D12 — Chart rewriting touches data sources only
+
+A series name lives in `<c:tx>` and is stored as the same reference block as the
+data.  Applying the rewrite to the whole part turned a name pointing at the
+first data row into a range as soon as the table grew.  The rewrite now runs
+only inside the data-source blocks (`cat`, `val`, `xVal`, `yVal`, `bubbleSize`
+and the error-bar `plus`/`minus` sides).
+
+### D13 — Parts are read lazily, and untouched entries are streamed
+
+`OoxmlPackage.__init__` used to read every entry, so filling one named cell
+allocated a workbook's images and embedded objects.  The package now keeps the
+entry order and the `ZipInfo` map, reads a part on first access, and copies
+untouched entries straight from the source archive into the output (preserving
+`ZipInfo`, so bytes and timestamps survive).  Saving over the source file goes
+through a sibling file, because writing would close the archive being read.
+
 ---
 
 ## Task log

@@ -288,7 +288,8 @@ def get_backend(engine: Engine) -> Backend:
     """Return a :class:`Backend` implementation for *engine*.
 
     Args:
-        engine: Engine name (``"auto"``, ``"openpyxl"``, or ``"win32com"``).
+        engine: Engine name (``"auto"``, ``"openpyxl"``, ``"fillxl"``, or
+            ``"win32com"``).
 
     Returns:
         A backend instance ready to load workbooks.

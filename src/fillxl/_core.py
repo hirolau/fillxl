@@ -66,7 +66,11 @@ def fill(
             templates saved in the same format, and Excel (win32com) when it is
             needed and available: ``.xlsb``/``.xls`` templates, or a different
             output format.  ``"fillxl"`` edits the OOXML package itself: no
-            Excel, and no template feature lost.
+            Excel, and no template feature lost.  It is experimental and
+            opt-in — ``"auto"`` never selects it — and it only handles
+            ``.xlsx``/``.xlsm``, writes no calculated values, and leaves
+            ``chartEx``, pivot sources and data validations alone; see the
+            README for the full list.
         config: Configuration options.  Uses :class:`FillXLConfig` defaults
             if not provided.
 

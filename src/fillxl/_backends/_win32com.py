@@ -238,7 +238,7 @@ class Win32ComBackend:
         # name the caller never saw.  Refuse, as the openpyxl engine does, so
         # the engines cannot disagree.
         conflict = _list_object_of(target_range)
-        if conflict is not None and int(target_range.Row) == int(conflict.HeaderRowRange.Row):
+        if conflict is not None and _is_header_cell(target_range, conflict):
             raise header_write_error(sheet_name, address, str(conflict.Name))
         try:
             # Read the format first: Excel changes a General cell when a date arrives.
@@ -638,6 +638,19 @@ class Win32ComBackend:
 
 def _com_is_visible(sheet: Any) -> bool:  # noqa: ANN401
     return sheet.Visible not in (_XL_SHEET_HIDDEN, _XL_SHEET_VERY_HIDDEN)
+
+
+def _is_header_cell(target_range: Any, list_object: Any) -> bool:  # noqa: ANN401
+    """Whether *target_range* sits on *list_object*'s header row.
+
+    A headerless table (``ShowHeaders`` is ``False``) has no header row at all,
+    and Excel leaves ``HeaderRowRange`` empty for one, so no cell of it can be
+    a header cell.
+    """
+    if not bool(list_object.ShowHeaders):
+        return False
+    header = list_object.HeaderRowRange
+    return header is not None and int(target_range.Row) == int(header.Row)
 
 
 def _list_object_of(target_range: Any) -> Any:  # noqa: ANN401

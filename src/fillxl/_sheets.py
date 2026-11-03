@@ -42,6 +42,8 @@ def resolve_sheet_name(name: str, titles: Sequence[str]) -> str | None:
         'Report'
         >>> resolve_sheet_name("missing", ["RawData"]) is None
         True
+        >>> resolve_sheet_name("report", ["Report", "REPORT"]) is None
+        True
 
     """
     if name in titles:

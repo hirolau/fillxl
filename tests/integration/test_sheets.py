@@ -12,6 +12,7 @@ from openpyxl.workbook.protection import WorkbookProtection
 
 from fillxl import Engine, FillXLConfig, FillXLWarning, fill
 from tests._engines import ENGINES, _fill_output
+from tests.ooxml._patch import patch_part
 from tests.parity.builders import chart_sheet_first_template, sheets_template
 
 
@@ -20,6 +21,15 @@ def _active(path: Path) -> str | None:
     try:
         active = workbook.active
         return None if active is None else str(active.title)
+    finally:
+        workbook.close()
+
+
+def _active_index(path: Path) -> int:
+    workbook = openpyxl.load_workbook(path)
+    try:
+        active = workbook.active
+        return workbook.sheetnames.index(str(active.title))
     finally:
         workbook.close()
 
@@ -270,6 +280,54 @@ def test_a_sheet_name_is_matched_without_regard_to_case(engine: Engine, tmp_path
         assert workbook.sheetnames == ["Report"]
     finally:
         workbook.close()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_the_active_sheet_is_matched_without_regard_to_case(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    """``active_sheet="report"`` must find ``Report`` in every engine, without a warning."""
+    template = sheets_template(tmp_path / "template.xlsx", "Report", "Notes", active="Notes")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        output = _fill_output(
+            template,
+            tmp_path / "out.xlsx",
+            engine,
+            config=FillXLConfig(hide_underscore_sheets=False, active_sheet="report"),
+        )
+
+    assert _active(output) == "Report"
+    assert [warning for warning in caught if issubclass(warning.category, FillXLWarning)] == []
+
+
+def test_an_active_sheet_name_that_matches_two_sheets_case_insensitively_warns_and_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    """Neither sheet is an exact match, so guessing which one to show would be wrong.
+
+    Only the fillxl engine is checked: openpyxl renames the duplicate while it
+    reads the file, and Excel refuses to keep two sheets whose names differ
+    only in case.  ``_sheets.resolve_sheet_name`` documents the shared rule.
+    """
+    template = sheets_template(tmp_path / "template.xlsx", "Report", "Notes", active="Notes")
+    patch_part(
+        template,
+        "xl/workbook.xml",
+        lambda xml: xml.replace('name="Notes"', 'name="REPORT"'),
+    )
+
+    with pytest.warns(FillXLWarning, match="not found"):
+        output = _fill_output(
+            template,
+            tmp_path / "out.xlsx",
+            "fillxl",
+            config=FillXLConfig(hide_underscore_sheets=False, active_sheet="report"),
+        )
+
+    assert _active_index(output) == 1
 
 
 @pytest.mark.parametrize("engine", ENGINES)

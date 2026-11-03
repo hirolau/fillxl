@@ -526,15 +526,16 @@ class Win32ComBackend:
     def set_active_sheet(self, name: str) -> None:
         """Set the active (displayed) sheet."""
         self._ensure_workbook()
-        if name not in self._sheet_names():
+        resolved = resolve_sheet_name(name, self._sheet_names())
+        if resolved is None:
             warn_sheet_not_found(name, "the workbook keeps its active sheet")
             return
-        sheet = self._workbook.Sheets(name)
+        sheet = self._workbook.Sheets(resolved)
         if not _com_is_visible(sheet):
-            msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
+            msg = f"Sheet '{resolved}' is hidden and cannot be the active sheet."
             raise ValueError(msg)
         sheet.Activate()
-        logger.debug("Set active sheet to '%s'", name)
+        logger.debug("Set active sheet to '%s'", resolved)
 
     def save(self, path: Path) -> None:
         """Save the workbook to *path*.

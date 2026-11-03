@@ -223,14 +223,15 @@ class OpenpyxlBackend:
 
         """
         workbook = self._require_workbook()
-        if name not in workbook.sheetnames:
+        resolved = resolve_sheet_name(name, list(workbook.sheetnames))
+        if resolved is None:
             warn_sheet_not_found(name, "the workbook keeps its active sheet")
             return
-        if workbook[name].sheet_state != "visible":
-            msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
+        if workbook[resolved].sheet_state != "visible":
+            msg = f"Sheet '{resolved}' is hidden and cannot be the active sheet."
             raise ValueError(msg)
-        _activate(workbook, name)
-        logger.debug("Set active sheet to '%s'", name)
+        _activate(workbook, resolved)
+        logger.debug("Set active sheet to '%s'", resolved)
 
     def save(self, path: Path) -> None:
         """Save the workbook to *path*.

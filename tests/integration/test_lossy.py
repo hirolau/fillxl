@@ -140,9 +140,9 @@ def test_the_openpyxl_backend_excuses_the_sheets_it_deleted(
 ) -> None:
     """A deleted sheet's pictures are its own, so ``on_lossy`` must not count them."""
     from fillxl._backends import _openpyxl
+    from fillxl._lossy import check_lossy as real_check
 
     recorded: dict[str, object] = {}
-    real_check = _openpyxl.check_lossy
 
     def spy(
         template: Path,

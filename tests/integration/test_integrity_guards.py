@@ -13,7 +13,8 @@ The win32com cases skip themselves when Excel is not available.
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING
+import warnings
+from typing import TYPE_CHECKING, Any
 
 import openpyxl
 import pytest
@@ -22,10 +23,11 @@ from openpyxl.styles import PatternFill
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
-from fillxl import CellValueError, FillXLWarning, fill
+from fillxl import CellValueError, FillXLWarning, UntrackedRangeWarning, fill
 from tests._engines import ENGINES, _fill_output, _win32com_available
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator
     from pathlib import Path
 
     from fillxl import Engine
@@ -245,6 +247,7 @@ def _summary_template(path: Path) -> None:
     ws["G3"] = "=B4*2"  # a single cell is not a range
     ws["H3"] = "=SUM(Z1:Z1)"  # nothing to do with the table
     ws["I3"] = '=IF(A1>0,"B4:B4",SUM(B4:B4))'  # a string that looks like a range
+    wb.defined_names.add(DefinedName("BodyName", attr_text="Data!$A$4:$B$4"))
     ws.add_table(
         Table(
             displayName="T",
@@ -264,6 +267,7 @@ def _formulas(path: Path, cells: tuple[str, ...]) -> dict[str, object]:
         sheet = wb["Data"]
         found = {cell: sheet[cell].value for cell in cells}
         found["Other!A1"] = wb["Other"]["A1"].value
+        found["name=BodyName"] = wb.defined_names["BodyName"].attr_text
     finally:
         wb.close()
     return found
@@ -274,16 +278,22 @@ def test_a_formula_that_tracks_the_table_grows_with_it(
     tmp_path: Path,
     engine: Engine,
 ) -> None:
-    """Excel rewrites the range on resize; the openpyxl engine has to match."""
+    """Excel rewrites the range on resize; the openpyxl engine has to match.
+
+    A defined name over the body is rewritten by Excel too, and the engines
+    that write into empty cells cannot rewrite it: they warn instead, so the
+    stale name is never silent.
+    """
     template = tmp_path / "template.xlsx"
     _summary_template(template)
 
-    output = _fill_output(
-        template,
-        tmp_path / "out.xlsx",
-        engine,
-        tables={"T": [{"Name": f"n{index}", "Value": index} for index in range(1, 5)]},
-    )
+    with _engine_warnings(engine) as caught:
+        output = _fill_output(
+            template,
+            tmp_path / "out.xlsx",
+            engine,
+            tables={"T": [{"Name": f"n{index}", "Value": index} for index in range(1, 5)]},
+        )
 
     assert _formulas(output, ("D3", "E3", "F3", "G3", "H3", "I3")) == {
         "D3": "=SUM(B4:B7)",
@@ -293,7 +303,9 @@ def test_a_formula_that_tracks_the_table_grows_with_it(
         "H3": "=SUM(Z1:Z1)",
         "I3": '=IF(A1>0,"B4:B4",SUM(B4:B7))',
         "Other!A1": "=SUM(Data!B4:B7)",
+        "name=BodyName": "Data!$A$4:$B$7" if engine == "win32com" else "Data!$A$4:$B$4",
     }
+    assert _named_range_warnings(caught) == (engine != "win32com")
 
 
 @pytest.mark.parametrize("engine", ENGINES)
@@ -304,19 +316,20 @@ def test_a_formula_that_tracks_the_table_shrinks_with_it(
     """The same rule in reverse: the range goes back to the remaining body rows."""
     template = tmp_path / "template.xlsx"
     _summary_template(template)
-    grown = _fill_output(
-        template,
-        tmp_path / "grown.xlsx",
-        engine,
-        tables={"T": [{"Name": f"n{index}", "Value": index} for index in range(1, 5)]},
-    )
+    with _engine_warnings(engine):
+        grown = _fill_output(
+            template,
+            tmp_path / "grown.xlsx",
+            engine,
+            tables={"T": [{"Name": f"n{index}", "Value": index} for index in range(1, 5)]},
+        )
 
-    shrunk = _fill_output(
-        grown,
-        tmp_path / "shrunk.xlsx",
-        engine,
-        tables={"T": [{"Name": "only", "Value": 1}]},
-    )
+        shrunk = _fill_output(
+            grown,
+            tmp_path / "shrunk.xlsx",
+            engine,
+            tables={"T": [{"Name": "only", "Value": 1}]},
+        )
 
     assert _formulas(shrunk, ("D3", "E3", "F3", "G3", "H3")) == {
         "D3": "=SUM(B4:B4)",
@@ -325,7 +338,116 @@ def test_a_formula_that_tracks_the_table_shrinks_with_it(
         "G3": "=B4*2",
         "H3": "=SUM(Z1:Z1)",
         "Other!A1": "=SUM(Data!B4:B4)",
+        "name=BodyName": "Data!$A$4:$B$4",
     }
+
+
+@contextlib.contextmanager
+def _engine_warnings(engine: Engine) -> Generator[list[warnings.WarningMessage]]:
+    """Record the warnings of a fill; Excel-based cases are not inspected."""
+    if engine == "win32com" and not _win32com_available():
+        pytest.skip("win32com backend requires Windows and Excel")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        yield caught
+
+
+def _named_range_warnings(caught: list[warnings.WarningMessage]) -> bool:
+    """Whether *caught* holds the "a name still covers the old rows" warning."""
+    return any(record.category is UntrackedRangeWarning for record in caught)
+
+
+_XL_SRC_RANGE = 1
+_XL_YES = 1
+_XL_OPENXML_WORKBOOK = 51
+
+
+@pytest.fixture(scope="module")
+def excel() -> Iterator[Any]:
+    """A hidden Excel instance, so COM is set up once for this module.
+
+    Creating and quitting Excel inside a test fights the backend, which
+    initialises and releases COM on the same thread.
+    """
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    app = win32com.client.DispatchEx("Excel.Application")
+    app.Visible = False
+    app.DisplayAlerts = False
+    try:
+        yield app
+    finally:
+        app.Quit()
+        pythoncom.CoUninitialize()
+
+
+@pytest.mark.win32com
+def test_excel_extends_an_a1_pivot_source_with_the_table(
+    tmp_path: Path,
+    excel: Any,  # noqa: ANN401
+) -> None:
+    """An A1 pivot cache source follows a ``ListObject`` resize in Excel.
+
+    That is why the Excel engine needs no warning here, and why the other two
+    do: they cannot rewrite a pivot source at all.
+    """
+    if not _win32com_available():
+        pytest.skip("win32com backend requires Windows and Excel")
+
+    template = tmp_path / "template.xlsx"
+    _build_pivot_source_template(excel, template)
+
+    output = _fill_output(
+        template,
+        tmp_path / "out.xlsx",
+        "win32com",
+        tables={"Sales": [{"Name": "a", "Value": 1}, {"Name": "b", "Value": 2}]},
+    )
+
+    assert _pivot_sources(excel, output) == ["Data!R1C1:R3C2"]
+
+
+def _build_pivot_source_template(excel: Any, path: Path) -> None:  # noqa: ANN401
+    """A table over ``A1:B2`` with a pivot whose cache source is that A1 range."""
+    workbook = excel.Workbooks.Add()
+    try:
+        sheet = workbook.Worksheets(1)
+        sheet.Name = "Data"
+        sheet.Range("A1").Value = "Name"
+        sheet.Range("B1").Value = "Value"
+        sheet.Range("A2").Value = "one"
+        sheet.Range("B2").Value = 1
+        table = sheet.ListObjects.Add(_XL_SRC_RANGE, sheet.Range("A1:B2"), None, _XL_YES)
+        table.Name = "Sales"
+        pivot_sheet = workbook.Worksheets.Add()
+        pivot_sheet.Name = "Pivot"
+        cache = workbook.PivotCaches().Create(
+            SourceType=_XL_SRC_RANGE,
+            SourceData="Data!R1C1:R2C2",
+            Version=6,
+        )
+        pivot = cache.CreatePivotTable(TableDestination="Pivot!R3C1", TableName="PT1")
+        pivot.PivotFields("Name").Orientation = 1
+        workbook.SaveAs(str(path), FileFormat=_XL_OPENXML_WORKBOOK)
+    finally:
+        workbook.Close(False)
+
+
+def _pivot_sources(excel: Any, path: Path) -> list[str]:  # noqa: ANN401
+    """The R1C1 source of every pivot cache in *path*, read through Excel."""
+    workbook = excel.Workbooks.Open(
+        str(path),
+        UpdateLinks=0,
+        ReadOnly=True,
+        IgnoreReadOnlyRecommended=True,
+        AddToMru=False,
+    )
+    try:
+        return [str(cache.SourceData) for cache in workbook.PivotCaches()]
+    finally:
+        workbook.Close(False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

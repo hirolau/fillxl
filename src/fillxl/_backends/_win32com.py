@@ -106,6 +106,9 @@ class Win32ComBackend:
         self._definitions_loaded = False
         self._com_initialized = False
         self._com_thread: int | None = None
+        # Whether the workbook being saved had a VBA project, read before SaveAs
+        # because a BIFF8 template's parts cannot be inspected afterwards.
+        self._saved_with_vba: bool | None = None
         # Excel's calculation mode before this fill; restored before SaveAs.
         self._previous_calculation: int | None = None
 
@@ -392,10 +395,11 @@ class Win32ComBackend:
                 last_data_row=plan.new_body_last_row,
             )
 
-        # References that track the body -- summary formulas, defined names,
-        # pivot sources -- need no help here: ``ListObject.Resize`` inserts
-        # rows, so Excel adjusts every one of them itself.  The engines that
-        # write into empty cells cannot, and warn instead.
+        # References that track the body -- summary formulas on any sheet,
+        # defined names, pivot sources -- need no help here: resizing a
+        # ListObject rewrites them itself.  Verified: Excel does not insert
+        # rows (content below stays put), it moves the references.  The
+        # engines that write into empty cells cannot, and warn instead.
         return plan.change_spec(str(worksheet.Name))
 
     def update_charts(self, spec: TableChangeSpecs) -> None:
@@ -571,6 +575,9 @@ class Win32ComBackend:
             # Excel's compatibility checker is silenced during a fill, so it
             # would drop the overflow without a word.
             _refuse_truncation_to_xls(self._workbook, abs_path)
+        # Read before SaveAs: a BIFF8 file cannot be inspected afterwards, and
+        # check_output() runs after close().
+        self._saved_with_vba = _com_has_vba(self._workbook)
         logger.debug("Saving workbook to %s (format %d)", abs_path, file_format)
         self._workbook.SaveAs(str(abs_path), FileFormat=file_format)
         logger.debug("[win32com] save took %.3fs", time.perf_counter() - t0)
@@ -603,10 +610,16 @@ class Win32ComBackend:
 
         Excel writes back every feature it read, so a save to the template's
         own format loses nothing.  A save to another format can: the VBA
-        project never survives an ``.xlsx`` or ``.xls`` output, and ``.xls``
-        cannot hold dynamic arrays or most of the newer feature set.
+        project never survives an ``.xlsx`` output, and ``.xls`` cannot hold
+        dynamic arrays or most of the newer feature set.
         """
-        check_conversion_losses(template, output, policy, engine="win32com")
+        check_conversion_losses(
+            template,
+            output,
+            policy,
+            engine="win32com",
+            has_vba=self._saved_with_vba,
+        )
 
     def _release_com(self) -> None:
         if not self._com_initialized:
@@ -697,6 +710,14 @@ def _com_has_totals_row(list_obj: Any) -> bool:  # noqa: ANN401
 # is disabled for the fill.
 _XLS_MAX_ROWS = 65_536
 _XLS_MAX_COLUMNS = 256
+
+
+def _com_has_vba(workbook: Any) -> bool | None:  # noqa: ANN401
+    """Whether *workbook* carries a VBA project, or ``None`` when it cannot say."""
+    try:
+        return bool(workbook.HasVBProject)
+    except Exception:  # pragma: no cover - a workbook always has the property
+        return None
 
 
 def _refuse_truncation_to_xls(workbook: Any, output: Path) -> None:  # noqa: ANN401

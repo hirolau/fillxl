@@ -45,7 +45,7 @@ differently and the difference is described below.
 | Pivot caches marked for refresh on open | yes | yes | yes |
 | Pivot tables refreshed immediately | differs — open-to-refresh | differs — open-to-refresh | yes |
 | Formula results recalculated before saving | differs — recalc on open | differs — recalc on open | yes |
-| Cached results on the sheet a fill writes | dropped | dropped | computed |
+| Cached results on a fill | dropped | dropped (every formula sheet) | computed |
 | Summary formulas and A1 totals formulas follow a resize | yes | yes | yes (Excel does it) |
 | Pivot sources, defined names, validation lists follow a resize | warns — `UntrackedRangeWarning` | warns — `UntrackedRangeWarning` | yes (Excel does it) |
 | Hidden rows shown and table filters cleared by a fill | yes | yes | yes |
@@ -125,8 +125,8 @@ dynamic arrays and their `xl/metadata.xml`, `cm`/`vm` cell metadata, slicers,
   `.xls`, encrypted workbooks and format conversion stay on `win32com`
 - Modern charts (`chartEx`) are left untouched, so they do not follow a table
   resize
-- Writes no cached formula results, and drops the ones the template stored on
-  the sheet a fill writes; the output asks Excel to recalculate on open, like
+- Writes no cached formula results, and removes the ones the template stored on
+  every sheet with formulas; the output asks Excel to recalculate on open, like
   the openpyxl engine
 - Pivot sources, defined names and validation lists that cover a table body are
   not resized — it warns with `UntrackedRangeWarning` instead

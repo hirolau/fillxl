@@ -205,20 +205,24 @@ def clear_cached_value(xml: str) -> str:
 
 
 def strip_value(xml: str) -> str:
-    """*xml* without its ``<v>`` element or its ``t`` type attribute.
+    """*xml* without a ``<v>`` element that holds a result, and without its type.
+
+    An *empty* ``<v/>`` is not a result — openpyxl writes one on every formula
+    cell — so a cell that only carries one is returned unchanged, which keeps
+    untouched formula sheets byte-identical.
 
     Examples:
         >>> strip_value('<c r="F9" t="str"><v>2</v></c>')
         '<c r="F9"></c>'
-        >>> strip_value('<c r="F9"></c>')
-        '<c r="F9"></c>'
+        >>> strip_value('<c r="F9"><f>1+1</f><v/></c>')
+        '<c r="F9"><f>1+1</f><v/></c>'
         >>> strip_value('<c r="F9" t="inlineStr"><is><t>x</t></is></c>')
         '<c r="F9" t="inlineStr"><is><t>x</t></is></c>'
 
     """
-    stripped = _VALUE_ELEMENT.sub("", xml)
-    if stripped == xml:
+    if not any((match.group("text") or "").strip() for match in _VALUE_ELEMENT.finditer(xml)):
         return xml
+    stripped = _VALUE_ELEMENT.sub("", xml)
     opening_end = stripped.find(">")
     if opening_end < 0:  # pragma: no cover - a <c> element always has a start tag
         return stripped
@@ -553,7 +557,7 @@ class SheetPart:
             clear_cached_value(xmltext.replace_element_text(xml, "f", text)),
         )
 
-    def clear_stale_results(self) -> None:
+    def clear_stale_results(self) -> int:
         """Drop every cached formula result of the sheet, spills included.
 
         The engine cannot calculate, so a cached value on this sheet would be
@@ -564,16 +568,24 @@ class SheetPart:
         A spilled array keeps its anchor formula and its ``ref``; only the
         results below the anchor (cells that hold nothing but a ``<v>``) are
         cleared, and Excel refills them when it recalculates.
+
+        Returns:
+            How many cells were changed.
+
         """
+        cleared = 0
         for row, column, xml in list(self.iter_cells()):
             stripped = clear_cached_value(xml)
             if stripped != xml:
                 self.write_cell(row, column, stripped)
+                cleared += 1
         for cell_range in self.array_ranges():
-            self._clear_spill_results(cell_range)
+            cleared += self._clear_spill_results(cell_range)
+        return cleared
 
-    def _clear_spill_results(self, cell_range: CellRange) -> None:
+    def _clear_spill_results(self, cell_range: CellRange) -> int:
         """Clear the non-anchor cells of one spilled array range."""
+        cleared = 0
         for row in range(cell_range.min_row, cell_range.max_row + 1):
             for column in range(cell_range.min_col, cell_range.max_col + 1):
                 xml = self.cell(row, column)
@@ -584,6 +596,8 @@ class SheetPart:
                 stripped = strip_value(xml)
                 if stripped != xml:
                     self.write_cell(row, column, stripped)
+                    cleared += 1
+        return cleared
 
     def extend_conditional_formatting(
         self,

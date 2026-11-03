@@ -31,6 +31,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- A table resize crashed for any workbook holding a data validation that reads
+  its list from the sheet it sits on (the usual case: the source is stored
+  unqualified as `$H$2:$H$10`). The untracked-range warning parsed it as a
+  defined name, which assumes a `Sheet!` prefix. References are now tokenised
+  and read directly: an unqualified one belongs to the validation's sheet, a
+  custom rule such as `A1>0` is not a range at all, and an `extLst` (x14)
+  validation's `<xm:f>` source is understood too.
+- The untracked-range warning missed sheet-scoped names, never matched a sheet
+  name containing an apostrophe (`Bob''s Data` vs `Bob's Data`), and turned a
+  whole-row `Print_Titles` name (`$1:$1`) into a `TypeError` inside the fill.
+  It also now survives a hand-written, unparsable name instead of raising.
+- `engine="fillxl"` no longer keeps plausible stale numbers on sheets the fill
+  does not touch: every cached formula result in the workbook is removed before
+  saving (a reader without a calculation engine sees blanks, as with the
+  openpyxl engine), not only on the table's sheet. Sheets without formulas stay
+  byte-for-byte, and a named-cell fill clears the shipped-file caches too.
+- `win32com` no longer reports a VBA loss for conversions that keep macros
+  (`.xlsm`/`.xlsb` to `.xls`, `.xlsb` to `.xlsm`): only an `.xlsx` output cannot
+  hold a VBA project. The flag now comes from `Workbook.HasVBProject` before
+  `SaveAs`, so an `.xls` template's macros are covered too, and an `.xls` output
+  reports the features BIFF8 really drops (dynamic arrays, slicers, `chartEx`).
 - `engine="fillxl"` failed on shapes a surgical editor has to understand but
   openpyxl cannot write: shared formulas (`<f t="shared">`, which made a
   calculated column stored the way Excel stores it look like data and could

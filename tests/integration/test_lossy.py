@@ -6,7 +6,7 @@ import shutil
 import warnings
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import openpyxl
 import pytest
@@ -17,7 +17,7 @@ from tests._assets import ASSETS
 MACRO_TEMPLATE = ASSETS / "test_template_1_slsm.xlsm"
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from fillxl._lossy import OnLossy
 
@@ -207,3 +207,108 @@ def test_converting_a_macro_template_to_xlsx_can_fail_the_fill(tmp_path: Path) -
             "win32com",
             config=FillXLConfig(on_lossy="raise"),
         )
+
+
+@pytest.fixture(scope="module")
+def excel() -> Iterator[Any]:
+    """A hidden Excel instance, for the conversions only Excel can perform."""
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    app = win32com.client.DispatchEx("Excel.Application")
+    app.Visible = False
+    app.DisplayAlerts = False
+    app.AutomationSecurity = 3
+    try:
+        yield app
+    finally:
+        app.Quit()
+        pythoncom.CoUninitialize()
+
+
+def _converted(template: Path, *, suffix: str, file_format: int, excel: Any) -> Path:  # noqa: ANN401
+    """*template* saved again in another format by Excel, macros included."""
+    target = template.with_name(f"{template.stem}{suffix}")
+    workbook = excel.Workbooks.Open(
+        str(template),
+        UpdateLinks=0,
+        ReadOnly=False,
+        IgnoreReadOnlyRecommended=True,
+        AddToMru=False,
+    )
+    try:
+        workbook.SaveAs(str(target), FileFormat=file_format)
+    finally:
+        workbook.Close(False)
+    return target
+
+
+def _conversion_warnings(caught: list[warnings.WarningMessage]) -> list[str]:
+    return [
+        str(record.message) for record in caught if isinstance(record.message, LossyTemplateWarning)
+    ]
+
+
+@pytest.mark.win32com
+def test_a_macro_template_saved_as_xls_reports_what_biff8_drops(
+    tmp_path: Path,
+) -> None:
+    """.xls keeps macros, so VBA is not a loss -- but dynamic arrays are.
+
+    The message must name the features the format really cannot hold, and must
+    not claim a VBA loss the file does not have.
+    """
+    from tests._engines import _fill_output
+
+    template = _vba_template(tmp_path)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _fill_output(template, tmp_path / "out.xls", "win32com")
+
+    messages = _conversion_warnings(caught)
+    assert messages, "an .xls output should report what it cannot hold"
+    assert any("cell metadata" in message for message in messages)
+    assert not any("VBA" in message for message in messages)
+
+
+@pytest.mark.win32com
+def test_an_xlsb_template_saved_as_xlsm_loses_nothing(
+    tmp_path: Path,
+    excel: Any,  # noqa: ANN401
+) -> None:
+    """Binary OOXML holds the same feature set; nothing may be reported."""
+    from tests._engines import _fill_output
+
+    template = _converted(
+        _vba_template(tmp_path),
+        suffix=".xlsb",
+        file_format=50,
+        excel=excel,
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _fill_output(template, tmp_path / "out.xlsm", "win32com")
+
+    assert _conversion_warnings(caught) == []
+
+
+@pytest.mark.win32com
+def test_an_xls_template_can_still_lose_its_macros_to_xlsx(
+    tmp_path: Path,
+    excel: Any,  # noqa: ANN401
+) -> None:
+    """A BIFF8 template cannot be read part by part, so COM has to say it has VBA."""
+    from tests._engines import _fill_output
+
+    template = _converted(
+        _vba_template(tmp_path),
+        suffix=".xls",
+        file_format=56,
+        excel=excel,
+    )
+
+    with pytest.warns(LossyTemplateWarning, match="VBA project"):
+        _fill_output(template, tmp_path / "out.xlsx", "win32com")

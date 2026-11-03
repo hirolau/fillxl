@@ -136,20 +136,22 @@ has the tables, the method and the script to reproduce them.
 ### Cached values
 
 No engine that writes without Excel can calculate. The fillxl engine writes
-formulas with no cached result at all, and the sheet a table fill changes keeps
-no cached results either: the numbers the template stored there belong to the
-template's data, not to the filled report. Spills are kept, but their stored
-results are cleared the same way. Everything else — every untouched sheet — is
-copied byte for byte and keeps the template's cached numbers until Excel opens
-and recalculates the file; the workbook is flagged `fullCalcOnLoad` so that
-happens on open. A spill whose size depends on the table therefore grows only
-when Excel recalculates.
+formulas with no cached result at all, and a fill removes every cached result
+already in the workbook: the numbers the template stored belong to the
+template's data, not to the filled report, and without a dependency graph there
+is no telling which of them are still valid. Spills are kept, but their stored
+results are cleared the same way. Sheets without formulas are still copied byte
+for byte. Excel recalculates the whole file when it opens it — the workbook is
+flagged `fullCalcOnLoad` — and a spill whose size depends on the table grows
+then.
 
 Tools that read cached values (`pandas`, `openpyxl` with `data_only=True`, file
-previews, search indexers) see blanks or old numbers in a fillxl output — a
-blank is deliberate, because a stale number reads like the report's own.
-Dynamic arrays survive on Linux, but they are not computed there either. Use
-`engine="win32com"` when the saved file must contain computed values.
+previews, search indexers) see blanks in a fillxl output — a blank is
+deliberate, because a stale number reads like the report's own. Chart *data*
+caches (`numCache`/`strCache` points) are the one exception: they keep the
+template's points until Excel redraws the chart on open. Dynamic arrays survive
+on Linux, but they are not computed there either. Use `engine="win32com"` when
+the saved file must contain computed values.
 
 ## Know the edge cases
 
@@ -169,11 +171,9 @@ Dynamic arrays survive on Linux, but they are not computed there either. Use
   Use `engine="fillxl"` when the template has spilled dynamic arrays or other
   parts openpyxl cannot write: it keeps them.
 - `engine="fillxl"` (experimental) keeps spilled arrays and everything else
-  unchanged, but it computes nothing: Excel fills the spill and recalculates
-  every formula when it opens the file, so cached values stay stale until then.
-  The sheet a table fill writes to keeps no cached results at all, so a reader
-  without a calculation engine sees blanks there instead of the template's
-  numbers.
+  unchanged, but it computes nothing: every cached formula result is removed
+  (a reader without a calculation engine sees blanks instead of the template's
+  numbers), and Excel recalculates the file when it opens it.
 - `delete_sheets` matches sheet names the way Excel does, ignoring case:
   `delete_sheets=["rawdata"]` deletes `RawData`. A name that matches nothing
   warns rather than being ignored.

@@ -277,8 +277,27 @@ class FillxlBackend:
         # rebuilds the chain on load anyway.
         workbook.set_full_calc_on_load()
         workbook.remove_calc_chain()
+        self._clear_every_cached_result(workbook)
         logger.debug("Saving workbook to %s", path)
         package.save(path)
+
+    def _clear_every_cached_result(self, workbook: WorkbookPart) -> None:
+        """Drop the cached results of every formula in the workbook.
+
+        A named-cell fill changes the inputs the report's formulas read, and a
+        table fill changes the data they aggregate — either way the template's
+        cached results become numbers a reader would take for this report's
+        numbers, and there is no dependency graph here to tell which of them
+        are still valid.  Sheets without formulas are left untouched.
+        """
+        _, _, sheets, _ = self._require_session()
+        parts = [entry.part for entry in workbook.worksheet_parts()]
+        cleared = 0
+        for sheet in sheets.formula_parts(parts):
+            cleared += sheet.clear_stale_results()
+        if cleared:
+            logger.debug("Cleared cached results of %d cells", cleared)
+        self._save_parts()
 
     def close(self) -> None:
         """Release the in-memory package."""

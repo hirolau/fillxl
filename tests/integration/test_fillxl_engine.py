@@ -517,7 +517,8 @@ def test_a_real_macro_template_keeps_its_spill_metadata_and_vba(tmp_path: Path) 
 
     The spilled array sits on another sheet, so it is not even touched ? but
     ``xl/metadata.xml`` is what makes it a spill after the fill, and it has to
-    come through byte for byte.
+    come through byte for byte.  The spill's *results* go, like every other
+    cached result: they were computed from the template's data.
     """
     output = fill(
         XLSM_TEMPLATE,
@@ -531,8 +532,10 @@ def test_a_real_macro_template_keeps_its_spill_metadata_and_vba(tmp_path: Path) 
     after = read_package(output)
     assert after["xl/metadata.xml"] == before["xl/metadata.xml"]
     assert after["xl/vbaProject.bin"] == before["xl/vbaProject.bin"]
-    assert after["xl/worksheets/sheet3.xml"] == before["xl/worksheets/sheet3.xml"]
-    assert 't="array" ref="B2:B5"' in after["xl/worksheets/sheet3.xml"].decode()
+    spill = after["xl/worksheets/sheet3.xml"].decode()
+    assert '<f t="array" ref="B2:B5">TableTest[Col1]</f>' in spill
+    assert 'cm="1"' in spill
+    assert "<v>" not in spill
     assert "xl/calcChain.xml" not in after
 
     changed = {name for name in before if name in after and before[name] != after[name]}
@@ -541,6 +544,7 @@ def test_a_real_macro_template_keeps_its_spill_metadata_and_vba(tmp_path: Path) 
         "xl/workbook.xml",
         "xl/_rels/workbook.xml.rels",
         "xl/worksheets/sheet2.xml",
+        "xl/worksheets/sheet3.xml",
         "xl/tables/table1.xml",
     }
 

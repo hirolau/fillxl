@@ -74,21 +74,23 @@ copied, not rebuilt.
 
 ## Cached values
 
-The engine does not calculate. Formulas it writes have no cached result, and the
-sheet a table fill changes keeps none either: the numbers the template cached
-there describe the template's data, and a reader that cannot recalculate would
-show them as the filled report's. Spills survive, but their stored results are
-cleared the same way. Every other part is copied byte for byte, so an untouched
-sheet keeps the template's cached numbers until Excel opens and recalculates the
-file; the workbook is flagged `fullCalcOnLoad` so that happens on open. A spill
-whose size depends on the table therefore grows only when Excel recalculates.
+The engine does not calculate. Formulas it writes have no cached result, and a
+fill removes every cached result already in the workbook: the numbers the
+template cached describe the template's data, and a reader that cannot
+recalculate would show them as the filled report's. Spills survive, but their
+stored results are cleared the same way. Without a dependency graph there is no
+telling which cached result is still valid, so all of them go; a sheet with no
+formulas is still copied byte for byte. Excel recalculates the file when it
+opens it — the workbook is flagged `fullCalcOnLoad` — and a spill whose size
+depends on the table grows then.
 
 Tools that read cached values (`pandas`, `openpyxl` with `data_only=True`, file
-previews, search indexers) see blanks or old numbers in a fillxl output. A blank
-is the deliberate answer — a stale number is indistinguishable from a correct
-one. Dynamic arrays survive on Linux, but they are not computed there either.
-Use `engine="win32com"` when the saved file must already contain computed
-values.
+previews, search indexers) see blanks in a fillxl output. A blank is the
+deliberate answer — a stale number is indistinguishable from a correct one.
+Chart *data* caches (`numCache`/`strCache` points) are the exception: they keep
+the template's points until Excel redraws the chart on open. Dynamic arrays
+survive on Linux, but they are not computed there either. Use
+`engine="win32com"` when the saved file must already contain computed values.
 
 ## When to use it
 

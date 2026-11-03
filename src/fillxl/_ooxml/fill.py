@@ -30,6 +30,7 @@ from fillxl._formulas import (
     extend_table_ranges,
     resolve_formula,
     shift_relative_rows,
+    sole_reference,
     warn_about_ignored_formula_data,
 )
 from fillxl._normalize import (
@@ -51,7 +52,7 @@ from fillxl._ooxml.worksheet import (
     split_reference,
 )
 from fillxl._plan import BlockedRegion, blocked_area, plan_table_fill
-from fillxl._references import RangeSource, warn_about_untracked_ranges
+from fillxl._references import RangeSource, destination_references, warn_about_untracked_ranges
 from fillxl._validation import validate_columns
 
 if TYPE_CHECKING:
@@ -333,9 +334,6 @@ def fill_table(
             logger.debug("Extended conditional formatting: %s -> %s", old_sqref, new_sqref)
 
     sheet.expand_dimension(plan.new_last_row)
-    # The fill rewrote this sheet's data; keeping its cached formula results
-    # would present the template's numbers as the filled report's numbers.
-    sheet.clear_stale_results()
     logger.debug("Table '%s' resized: %s -> %s", name, table.ref, plan.new_ref)
     return plan.change_spec(table.sheet.name)
 
@@ -761,30 +759,55 @@ def _untracked_range_sources(
     sources: list[RangeSource] = [
         RangeSource(f"the defined name {entry.name!r}", sheet_title, reference)
         for entry in workbook.defined_names()
-        for sheet_title, reference in name_destinations(entry.text)
+        for sheet_title, reference in destination_references(entry.text)
     ]
     sources.extend(
         RangeSource("a pivot cache source", sheet_title, reference)
         for sheet_title, reference in pivot_worksheet_sources(package)
     )
     for entry in workbook.worksheet_parts():
-        sources.extend(_validation_sources(package, entry.part))
+        sources.extend(_validation_sources(package, entry.part, entry.name))
     return sources
 
 
-def _validation_sources(package: OoxmlPackage, part: str) -> list[RangeSource]:
-    """The ranges a sheet's data validations read their lists from."""
+def _validation_sources(package: OoxmlPackage, part: str, sheet_title: str) -> list[RangeSource]:
+    """The range a sheet's data validations read their lists from.
+
+    An unqualified list source means the sheet the validation sits on.
+    """
     sources: list[RangeSource] = []
     for match in _DATA_VALIDATION.finditer(package.text(part)):
         element = match.group(0)
         sqref = xmltext.attribute(element, "sqref")
         description = f"the data validation over {sqref}" if sqref else "a data validation"
-        for name in ("formula1", "formula2"):
-            formula = xmltext.element_text(element, name)
-            if formula is None:
+        for formula in _validation_formulas(element):
+            parsed = sole_reference(formula)
+            if parsed is None:
                 continue
-            sources.extend(
-                RangeSource(description, sheet_title, reference)
-                for sheet_title, reference in name_destinations(formula)
-            )
+            target_sheet, reference = parsed
+            sources.append(RangeSource(description, target_sheet or sheet_title, reference))
     return sources
+
+
+def _validation_formulas(element: str) -> list[str]:
+    """The formulas of one ``<dataValidation>``, including the x14 spelling.
+
+    Excel stores a cross-sheet list source added by the newer UI as
+    ``<x14:formula1><xm:f>…</xm:f></x14:formula1>`` inside an ``extLst``;
+    the classic part keeps the reference as the element's own text.
+    """
+    formulas: list[str] = []
+    for name in ("formula1", "formula2"):
+        match = xmltext.element_re(name).search(element)
+        if match is None:
+            continue
+        raw = match.group(0)
+        child = xmltext.element_re("f").search(raw)
+        text = (
+            xmltext.element_text(child.group(0), "f")
+            if child is not None
+            else xmltext.element_text(raw, name)
+        )
+        if text is not None:
+            formulas.append(text)
+    return formulas

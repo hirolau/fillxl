@@ -20,6 +20,7 @@ import sys
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from openpyxl.formula import Tokenizer
+from openpyxl.formula.tokenizer import TokenizerError
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
 
@@ -93,6 +94,80 @@ def _endpoint_in_bounds(reference: str) -> bool:
         1 <= _column_index(match.group("col")) <= _MAX_COLUMN
         and 1 <= int(match.group("row").lstrip("$")) <= _MAX_ROW
     )
+
+
+def a1_reference(operand: str) -> tuple[str | None, str] | None:
+    """``(sheet_title, reference)`` when *operand* is one A1 reference.
+
+    The sheet title is unquoted (Excel doubles a quote inside a quoted name),
+    and ``None`` when the reference is unqualified — it then means the sheet the
+    reference sits on.
+
+    Whole-row and whole-column references (``$1:$1``, ``$A:$A``) are not
+    rectangles this package can compare, so they return ``None``.
+
+    Examples:
+        >>> a1_reference("Data!$B$4:$C$9")
+        ('Data', '$B$4:$C$9')
+        >>> a1_reference("'Bob''s Data'!$A$1")
+        ("Bob's Data", '$A$1')
+        >>> a1_reference("$A$2:$B$2")
+        (None, '$A$2:$B$2')
+        >>> a1_reference("$1:$1") is None
+        True
+        >>> a1_reference("$A:$A") is None
+        True
+        >>> a1_reference("YTD2024") is None
+        True
+
+    """
+    if not _is_a1_operand(operand):
+        return None
+    prefix, refs = _split_sheet(operand)
+    if not prefix:
+        return None, refs
+    title = prefix[:-1]
+    if title.startswith("'") and title.endswith("'"):
+        title = title[1:-1].replace("''", "'")
+    return title, refs
+
+
+def sole_reference(text: str) -> tuple[str | None, str] | None:
+    """``(sheet_title, reference)`` when *text* is nothing but one A1 reference.
+
+    A data-validation list source and a defined name are written as a bare
+    reference; a custom validation rule (``A1>0``), a literal list
+    (``"a,b,c"``) and a formula (``OFFSET(…)``) are not, and are refused here
+    rather than being parsed into a range that means something else.
+
+    Examples:
+        >>> sole_reference("$H$2:$H$10")
+        (None, '$H$2:$H$10')
+        >>> sole_reference("=Data!$A$2:$A$5")
+        ('Data', '$A$2:$A$5')
+        >>> sole_reference("A1>0") is None
+        True
+        >>> sole_reference('"a,b,c"') is None
+        True
+        >>> sole_reference("OFFSET(Data!$A$1,0,0)") is None
+        True
+        >>> sole_reference("Data!$A$2:$A$5,Other!$B$1:$B$3") is None
+        True
+
+    """
+    stripped = text.strip().removeprefix("=").strip()
+    if not stripped or stripped.startswith('"'):
+        return None
+    try:
+        tokens = Tokenizer(f"={stripped}").items
+    except TokenizerError:
+        # A hand-written or damaged definition is not a reference this can use;
+        # it must not turn a fill into a crash.
+        return None
+    operands = [token.value for token in tokens if token.value.strip()]
+    if len(operands) != 1:
+        return None
+    return a1_reference(operands[0])
 
 
 def _split_sheet(operand: str) -> tuple[str, str]:

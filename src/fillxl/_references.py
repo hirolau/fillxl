@@ -10,15 +10,16 @@ that quietly leaves the filled rows out.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from openpyxl.worksheet.cell_range import CellRange
 
-from ._cells import name_destinations
+from ._charts import split_formula_arguments
+from ._formulas import sole_reference
 from ._warnings import UntrackedRangeWarning, warn_user
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from openpyxl.workbook.workbook import Workbook
     from openpyxl.worksheet.worksheet import Worksheet
@@ -79,10 +80,10 @@ def warn_about_untracked_ranges(
             continue
         warn_user(
             f"Table {table_name!r} was resized, but {source.description} still covers "
-            f"{source.sheet_title}!{source.reference} — the table's old rows. The rows "
-            "the fill wrote are missing from it, so a pivot that refreshes on load or a "
-            "name that is read back will use the old range. Resize that reference in the "
-            "template to match the table.",
+            f"{_display_sheet(source.sheet_title)}!{source.reference} — the table's old "
+            "rows. The rows the fill wrote are missing from it, so a pivot that refreshes "
+            "on load or a name that is read back will use the old range. Resize that "
+            "reference in the template to match the table.",
             UntrackedRangeWarning,
         )
 
@@ -96,11 +97,13 @@ def _covers(
     last_col: int,
 ) -> bool:
     """Whether *source* is a rectangle over one of *rows* inside the table columns."""
-    if source.sheet_title.casefold() != expected_sheet.casefold():
+    if _sheet_key(source.sheet_title) != _sheet_key(expected_sheet):
         return False
     try:
         bounds = CellRange(source.reference.replace("$", ""))
-    except ValueError:  # pragma: no cover - callers pass ranges from the file
+    except (ValueError, TypeError):
+        # A whole-row (``$1:$1``) or whole-column (``$A:$A``) reference, which
+        # openpyxl refuses to turn into a rectangle.  It cannot track a body.
         return False
     return (
         (bounds.min_row, bounds.max_row) in rows
@@ -109,31 +112,90 @@ def _covers(
     )
 
 
+def _sheet_key(title: str) -> str:
+    """*title* in the form two sheet names can be compared by.
+
+    ``DefinedName.destinations`` leaves an apostrophe inside a quoted name
+    doubled (``Bob''s Data``), while the workbook's own title is ``Bob's Data``.
+    """
+    return title.replace("''", "'").casefold()
+
+
+def _display_sheet(title: str) -> str:
+    """*title* with the doubled apostrophes of a quoted name unfolded."""
+    return title.replace("''", "'")
+
+
+def destination_references(refers_to: str) -> list[tuple[str, str]]:
+    """``(sheet, reference)`` for each range a defined name points at.
+
+    A name can be a constant (``"text"``), a number, a formula or a whole-row
+    reference; only plain, sheet-qualified rectangles are returned, because
+    they are the only ones a table resize can leave stale.
+
+    Examples:
+        >>> destination_references("Data!$A$2:$B$2")
+        [('Data', '$A$2:$B$2')]
+        >>> destination_references("Data!$A$1,Other!$B$2:$C$3")
+        [('Data', '$A$1'), ('Other', '$B$2:$C$3')]
+        >>> destination_references("'Bob''s Data'!$A$1")
+        [("Bob's Data", '$A$1')]
+        >>> destination_references('"a constant"')
+        []
+        >>> destination_references("OFFSET(Data!$A$1,0,0)")
+        []
+        >>> destination_references("Data!$1:$1")
+        []
+
+    """
+    references: list[tuple[str, str]] = []
+    for part in split_formula_arguments(refers_to.removeprefix("=")):
+        parsed = sole_reference(part)
+        if parsed is None or parsed[0] is None:
+            continue
+        references.append((parsed[0], parsed[1]))
+    return references
+
+
 def openpyxl_range_sources(workbook: Workbook, worksheet: Worksheet) -> list[RangeSource]:
     """Every defined name, pivot source and validation list that holds a range.
 
     Args:
         workbook: The workbook being filled.
-        worksheet: The sheet holding the table (its own validations are read
-            first, but every sheet is scanned: a validation may sit elsewhere
-            and still point at this table).
+        worksheet: The sheet holding the table (its own names and validations
+            are read first, but every sheet is scanned: a validation may sit
+            elsewhere and still point at this table).
 
     """
-    sources: list[RangeSource] = []
-    for name in workbook.defined_names.values():
-        for sheet_title, reference in name.destinations:
-            sources.append(RangeSource(f"the defined name {name.name!r}", sheet_title, reference))
+    sources = _name_sources(workbook.defined_names)
     sheets = [worksheet]
     sheets.extend(other for other in workbook.worksheets if other is not worksheet)
     for sheet in sheets:
+        # A name scoped to a sheet lives in the sheet's own collection, not in
+        # the workbook's.
+        sources.extend(_name_sources(sheet.defined_names))
         sources.extend(_validation_sources(sheet))
         sources.extend(_pivot_sources(sheet))
     return sources
 
 
+def _name_sources(names: Mapping[str, Any]) -> list[RangeSource]:
+    """The ranges held by the defined names in *names*."""
+    return [
+        RangeSource(f"the defined name {name.name!r}", sheet_title, reference)
+        for name in names.values()
+        for sheet_title, reference in destination_references(str(name.attr_text or ""))
+    ]
+
+
 def _validation_sources(worksheet: Worksheet) -> list[RangeSource]:
-    """The ranges a data-validation list is read from, per validation."""
+    """The range a data-validation list is read from, per validation.
+
+    A list source is stored as a bare reference, and an unqualified one means
+    the sheet the validation sits on.
+    """
     sources: list[RangeSource] = []
+    own_sheet = str(worksheet.title)
     for validation in worksheet.data_validations.dataValidation:
         description = (
             f"the data validation over {validation.sqref}"
@@ -143,8 +205,11 @@ def _validation_sources(worksheet: Worksheet) -> list[RangeSource]:
         for formula in (validation.formula1, validation.formula2):
             if not isinstance(formula, str):
                 continue
-            for sheet_title, reference in name_destinations(formula):
-                sources.append(RangeSource(description, sheet_title, reference))
+            parsed = sole_reference(formula)
+            if parsed is None:
+                continue
+            sheet_title, reference = parsed
+            sources.append(RangeSource(description, sheet_title or own_sheet, reference))
     return sources
 
 

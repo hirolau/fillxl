@@ -1024,7 +1024,11 @@ def _merged_regions_com(
     first_col: int,
     last_col: int,
 ) -> list[BlockedRegion]:
-    """Merged ranges touching the rows a table wants to grow into."""
+    """Merged ranges touching the rows a table wants to grow into.
+
+    Only the first blocking merge is reported: it is enough to refuse the
+    fill, and reading every cell of the area through COM is expensive.
+    """
     area = worksheet.Range(
         worksheet.Cells(first_row, first_col),
         worksheet.Cells(last_row, last_col),
@@ -1044,27 +1048,21 @@ def _merged_regions_com(
             )
         ]
 
-    regions: list[BlockedRegion] = []
-    seen: set[str] = set()
     for row in range(first_row, last_row + 1):
         for col in range(first_col, last_col + 1):
             merged = worksheet.Cells(row, col).MergeArea
             if int(merged.Cells.Count) <= 1:
                 continue
-            address = _clean_address(merged)
-            if address in seen:
-                continue
-            seen.add(address)
-            regions.append(
+            return [
                 BlockedRegion(
-                    description=f"the merged range {address}",
+                    description=f"the merged range {_clean_address(merged)}",
                     first_row=int(merged.Row),
                     last_row=int(merged.Row + merged.Rows.Count - 1),
                     first_col=int(merged.Column),
                     last_col=int(merged.Column + merged.Columns.Count - 1),
                 )
-            )
-    return regions
+            ]
+    return []
 
 
 def _check_overflow_regions_com(

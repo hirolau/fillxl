@@ -386,7 +386,8 @@ class OoxmlPackage:
                 parser.Parse(self._parts[name], True)
             except expat.ExpatError as exc:
                 msg = (
-                    f"fillxl produced malformed XML in {name}: {exc}. "
-                    "This is a fillxl bug; please report it with the template."
+                    f"The template part {name} could not be edited safely: the result is "
+                    f"not well-formed XML ({exc}). Save the template in Excel again, or use "
+                    "engine='win32com'. Please report this with the template."
                 )
                 raise RuntimeError(msg) from exc

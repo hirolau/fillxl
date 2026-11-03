@@ -64,15 +64,18 @@ def escape_text(text: str) -> str:
     )
 
 
-def escape_attribute(text: str) -> str:
-    """*text* escaped for use as an XML attribute value.
+def escape_attribute(text: str, quote: str = '"') -> str:
+    """*text* escaped for use as an XML attribute value delimited by *quote*.
 
     Examples:
         >>> escape_attribute('say "hi" & bye')
         'say &quot;hi&quot; &amp; bye'
+        >>> escape_attribute("it's", quote="'")
+        'it&apos;s'
 
     """
-    return escape_text(text).replace('"', "&quot;")
+    escaped = escape_text(text).replace('"', "&quot;")
+    return escaped.replace("'", "&apos;") if quote == "'" else escaped
 
 
 def any_prefix(name: str) -> str:
@@ -122,7 +125,15 @@ def start_tag(xml: str, name: str) -> str | None:
 
 
 def _attribute_re(name: str) -> re.Pattern[str]:
-    return re.compile(rf'(\s{re.escape(name)}=")[^"]*(")')
+    """A pattern matching attribute *name* with either quote style.
+
+    Groups: 1 is the whitespace and name up to the opening quote, ``quote`` is
+    the quote character, and ``value`` is the raw (still escaped) value.
+    """
+    return re.compile(
+        rf"""(\s{re.escape(name)}\s*=\s*)(?P<quote>["'])(?P<value>(?:(?!(?P=quote)).)*)(?P=quote)""",
+        re.S,
+    )
 
 
 def attribute(tag: str, name: str) -> str | None:
@@ -138,13 +149,15 @@ def attribute(tag: str, name: str) -> str | None:
         True
         >>> attribute('<c r="A1"><f t="array">X</f></c>', "t") is None
         True
+        >>> attribute("<c s='2'/>", "s")
+        '2'
 
     """
     opening = tag[: tag.find(">") + 1]
     match = _attribute_re(name).search(opening)
     if match is None:
         return None
-    return unescape(match.group(0).split('"', 1)[1][:-1])
+    return unescape(match.group("value"))
 
 
 def set_attribute(tag: str, name: str, value: str) -> str:
@@ -155,12 +168,18 @@ def set_attribute(tag: str, name: str, value: str) -> str:
         '<c r="B5" s="2"/>'
         >>> set_attribute('<c r="B5" s="2"/>', "s", "3")
         '<c r="B5" s="3"/>'
+        >>> set_attribute("<c s='2'/>", "s", "3")
+        "<c s='3'/>"
 
     """
-    escaped = escape_attribute(value)
     pattern = _attribute_re(name)
-    if pattern.search(tag):
-        return pattern.sub(lambda match: f"{match.group(1)}{escaped}{match.group(2)}", tag, count=1)
+    existing = pattern.search(tag)
+    if existing is not None:
+        quote = existing.group("quote")
+        escaped = escape_attribute(value, quote)
+        replacement = f"{existing.group(1)}{quote}{escaped}{quote}"
+        return f"{tag[: existing.start()]}{replacement}{tag[existing.end() :]}"
+    escaped = escape_attribute(value)
     split = len(tag) - (2 if tag.endswith("/>") else 1)
     prefix = tag[:split].rstrip()
     return f'{prefix} {name}="{escaped}"{tag[split:]}'
@@ -172,6 +191,8 @@ def remove_attribute(tag: str, name: str) -> str:
     Examples:
         >>> remove_attribute('<c r="B5" t="s"/>', "t")
         '<c r="B5"/>'
+        >>> remove_attribute("<c r='B5' t='s'/>", "t")
+        "<c r='B5'/>"
 
     """
     return _attribute_re(name).sub("", tag, count=1)

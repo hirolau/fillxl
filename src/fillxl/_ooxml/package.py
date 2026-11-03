@@ -257,7 +257,9 @@ class OoxmlPackage:
     def remove_relationship(self, owner: str, rel_id: str) -> None:
         """Delete the relationship *rel_id* from *owner*'s ``.rels`` part."""
         part = rels_part(owner)
-        if part not in self._parts:
+        # ``_parts`` is a lazy read cache: the rels part may exist and simply
+        # not have been read yet.
+        if not self.has(part):
             return
         text = self.text(part)
 

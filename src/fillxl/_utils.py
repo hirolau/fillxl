@@ -56,6 +56,20 @@ def col_to_excel(col: int) -> str:
     return result
 
 
+def workbook_uses_1904(workbook: Workbook) -> bool:
+    """Whether *workbook* counts days from 1904-01-01 (the Mac date system).
+
+    Examples:
+        >>> from openpyxl import Workbook
+        >>> workbook_uses_1904(Workbook())
+        False
+
+    """
+    from openpyxl.utils.datetime import MAC_EPOCH
+
+    return bool(workbook.epoch == MAC_EPOCH)
+
+
 def find_worksheet_and_table(workbook: Workbook, table_name: str) -> tuple[Worksheet, Table]:
     """Find a worksheet and table by table name.
 

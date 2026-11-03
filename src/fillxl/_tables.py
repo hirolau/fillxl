@@ -31,7 +31,7 @@ from ._plan import (
     plan_table_fill,
 )
 from ._references import openpyxl_range_sources, warn_about_untracked_ranges
-from ._utils import find_worksheet_and_table, table_column_name
+from ._utils import find_worksheet_and_table, table_column_name, workbook_uses_1904
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -323,6 +323,7 @@ def populate_table(
 
     data_column_map = {str(name): idx for idx, name in enumerate(columns)}
     warned: set[tuple[str | None, str | None]] = set()
+    date1904 = workbook_uses_1904(workbook)
 
     for col_ix, column in enumerate(table.tableColumns):
         first_row_style = table_first_cell.offset(column=col_ix, row=header_rows)._style
@@ -350,6 +351,7 @@ def populate_table(
                     row=row_ix + 1,
                     column=column_name,
                     warned=warned,
+                    date1904=date1904,
                 )
                 # Style first: a date format must be in place before the value
                 # arrives, or openpyxl replaces it with its default date format.

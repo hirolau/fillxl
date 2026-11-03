@@ -74,6 +74,8 @@ _MAX_DOUBLE = 1e308
 # numbers as doubles anyway, so wider integers are handed over as floats.
 _MAX_COM_INT = 2**31
 _FIRST_EXCEL_DATE = dt.date(1900, 3, 1)
+# A 1904 workbook counts from 1904-01-01, so earlier dates are negative serials.
+_FIRST_EXCEL_DATE_1904 = dt.date(1904, 1, 1)
 # XML 1.0 Char excludes these two, although Python strings can hold them:
 # openpyxl writes them raw and the workbook then fails to parse (and Excel
 # refuses it).  The other noncharacters (U+FDD0, U+FDEF, U+1FFFE, …) are
@@ -125,8 +127,17 @@ def describe_cell(
     return f"Table {table!r}, data row {row}, column {column!r}"
 
 
-def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN401
+def cell_value_problem(
+    value: Any,  # noqa: ANN401
+    *,
+    date1904: bool = False,
+) -> tuple[Severity, str] | None:
     """Why Excel cannot store a normalised *value* faithfully, or ``None``.
+
+    Args:
+        value: The normalised value.
+        date1904: Whether the workbook counts days from 1904-01-01 instead of
+            the 1900 system, which moves the first valid day.
 
     Examples:
         >>> cell_value_problem("ok") is None
@@ -148,6 +159,14 @@ def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN4
         >>> cell_value_problem("ok\\ufdd0\\U00010ffff") is None
         True
         >>> cell_value_problem(dt.datetime(1899, 12, 31))[0]
+        'error'
+        >>> cell_value_problem(dt.datetime(1903, 12, 31), date1904=True)[0]
+        'error'
+        >>> cell_value_problem(dt.datetime(1904, 1, 1), date1904=True) is None
+        True
+        >>> cell_value_problem(dt.datetime(1900, 1, 1))[0]
+        'error'
+        >>> cell_value_problem(dt.datetime(1900, 1, 1), date1904=True)[0]
         'error'
 
     """
@@ -199,7 +218,14 @@ def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN4
         return None
     if isinstance(value, dt.date):
         day = value.date() if isinstance(value, dt.datetime) else value
-        if day < _FIRST_EXCEL_DATE:
+        if date1904:
+            if day < _FIRST_EXCEL_DATE_1904:
+                return "error", (
+                    f"date {value.isoformat()} is before 1904-01-01; this workbook uses the "
+                    "1904 date system, where earlier days are negative serials that Excel "
+                    "shows as ####"
+                )
+        elif day < _FIRST_EXCEL_DATE:
             return "error", (
                 f"date {value.isoformat()} is before 1900-03-01; Excel's calendar is wrong "
                 "before that day (it counts a 29 February 1900), so it cannot be written "
@@ -216,9 +242,10 @@ def check_cell_value(
     column: str | None = None,
     name: str | None = None,
     warned: set[tuple[str | None, str | None]] | None = None,
+    date1904: bool = False,
 ) -> None:
     """Raise :class:`CellValueError`, or warn once per column, for values Excel cannot store."""
-    problem = cell_value_problem(value)
+    problem = cell_value_problem(value, date1904=date1904)
     if problem is None:
         return
     severity, text = problem
@@ -782,6 +809,7 @@ def prepare_table_cell(
     row: int,
     column: str,
     warned: set[tuple[str | None, str | None]] | None = None,
+    date1904: bool = False,
 ) -> Any:  # noqa: ANN401
     """Validate and normalise one table cell value, the same way in every engine.
 
@@ -791,6 +819,7 @@ def prepare_table_cell(
         row: 1-based data row, for messages.
         column: Column name, for messages.
         warned: Columns already warned about, so a warning is not repeated.
+        date1904: Whether the workbook counts days from 1904-01-01.
 
     Returns:
         The value to write.
@@ -808,7 +837,14 @@ def prepare_table_cell(
     check_table_cell_scalar(raw, table=table, row=row, column=column)
     check_nonfinite_value(raw, table=table, row=row, column=column, warned=warned)
     value = prepare_cell_value(raw)
-    check_cell_value(value, table=table, row=row, column=column, warned=warned)
+    check_cell_value(
+        value,
+        table=table,
+        row=row,
+        column=column,
+        warned=warned,
+        date1904=date1904,
+    )
     return value
 
 

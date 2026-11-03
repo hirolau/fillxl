@@ -11,8 +11,9 @@ import datetime as dt
 from typing import TYPE_CHECKING
 
 import openpyxl
+import pytest
 
-from fillxl import fill
+from fillxl import CellValueError, fill
 from tests.ooxml._build import body_rows, date1904_template
 
 if TYPE_CHECKING:
@@ -41,5 +42,64 @@ def test_dates_written_into_a_1904_workbook_read_back_as_the_same_dates(
             dt.datetime(2024, 1, 2),
         ]
         assert sheet["G1"].value == dt.datetime(2025, 5, 5)
+    finally:
+        workbook.close()
+
+
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_a_named_date_before_the_1904_epoch_is_refused_by_both_engines(
+    engine: str,
+    tmp_path: Path,
+) -> None:
+    """Excel shows a date before day zero as ####, so neither engine may write one."""
+    template = date1904_template(tmp_path / "template.xlsx")
+
+    with pytest.raises(CellValueError, match=r"1904-01-01.*1904 date system") as caught:
+        fill(
+            template,
+            tmp_path / f"{engine}.xlsx",
+            engine=engine,
+            values={"a_date": dt.date(1903, 12, 31)},
+        )
+
+    assert "1903-12-31" in str(caught.value)
+    assert not (tmp_path / f"{engine}.xlsx").exists()
+
+
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_a_table_date_before_the_1904_epoch_is_refused_by_both_engines(
+    engine: str,
+    tmp_path: Path,
+) -> None:
+    """A table cell is validated by the same rule as a named cell."""
+    template = date1904_template(tmp_path / "template.xlsx")
+
+    with pytest.raises(CellValueError, match=r"1904-01-01.*1904 date system"):
+        fill(
+            template,
+            tmp_path / f"{engine}.xlsx",
+            engine=engine,
+            tables={"Data": body_rows(2, first_day=dt.date(1903, 12, 31))},
+        )
+
+    assert not (tmp_path / f"{engine}.xlsx").exists()
+
+
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_a_date_on_the_1904_epoch_is_written(engine: str, tmp_path: Path) -> None:
+    """Day zero of the 1904 system is a serial Excel can show."""
+    template = date1904_template(tmp_path / "template.xlsx")
+
+    output = fill(
+        template,
+        tmp_path / f"{engine}.xlsx",
+        engine=engine,
+        values={"a_date": dt.date(1904, 1, 1)},
+    )
+
+    workbook = openpyxl.load_workbook(output)
+    try:
+        # 1904-01-01 is serial 0, which openpyxl reads back as a time of day.
+        assert workbook["Data"]["G1"].value == dt.time(0, 0)
     finally:
         workbook.close()

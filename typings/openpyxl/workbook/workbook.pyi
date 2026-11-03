@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import IO, Any
 
@@ -49,6 +50,7 @@ class Workbook:
     def defined_names(self, value: DefinedNameDict | DefinedNameList) -> None: ...
     @property
     def excel_base_date(self) -> float: ...
+    epoch: datetime
     def get_named_ranges(self) -> list[DefinedName]: ...
     def index(self, worksheet: Worksheet) -> int: ...
     @property

@@ -106,7 +106,7 @@ def fill_named_cell(
     check_named_cell_scalar(name, value)
     check_nonfinite_value(value, name=name)
     normalised = prepare_cell_value(value)
-    check_cell_value(normalised, name=name)
+    check_cell_value(normalised, name=name, date1904=workbook.date1904)
 
     target = named_cell_target(name, name_destinations(entry.text))
     if target is None:
@@ -298,6 +298,7 @@ def fill_table(
         config=config,
         table_name=name,
         epoch=_epoch(workbook),
+        date1904=workbook.date1904,
     )
 
     if totals_row is not None:
@@ -636,6 +637,7 @@ def _write_body(
     config: FillXLConfig,
     table_name: str,
     epoch: dt.datetime,
+    date1904: bool,
 ) -> None:
     """Write the data body: calculated columns, data columns, cleared leftovers."""
     data_column_map = {str(name): index for index, name in enumerate(data_columns)}
@@ -674,6 +676,7 @@ def _write_body(
                     row=row_index + 1,
                     column=column_name,
                     warned=warned,
+                    date1904=date1904,
                 )
                 row = geometry.first_data_row + row_index
                 _write(

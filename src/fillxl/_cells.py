@@ -15,6 +15,7 @@ from fillxl._normalize import (
     is_text_cell_value,
     prepare_cell_value,
 )
+from fillxl._utils import workbook_uses_1904
 from fillxl._warnings import warn_user
 
 if TYPE_CHECKING:
@@ -233,7 +234,7 @@ def populate_named_cells(
 
         # Normalise value for Excel compatibility
         normalised_value = prepare_cell_value(value)
-        check_cell_value(normalised_value, name=name)
+        check_cell_value(normalised_value, name=name, date1904=workbook_uses_1904(workbook))
 
         target = named_cell_target(name, list(defined_name.destinations))
         if target is None:

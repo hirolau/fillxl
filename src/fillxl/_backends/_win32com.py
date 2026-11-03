@@ -226,7 +226,7 @@ class Win32ComBackend:
         check_named_cell_scalar(name, value)
         check_nonfinite_value(value, name=name)
         normalized = prepare_cell_value(value)
-        check_cell_value(normalized, name=name)
+        check_cell_value(normalized, name=name, date1904=self._workbook_date1904())
         prepared = com_value_from_normalized(normalized, escape_formulas=config.escape_formulas)
         try:
             target_range = self._workbook.Worksheets(sheet_name).Range(address)
@@ -250,6 +250,10 @@ class Win32ComBackend:
         except Exception as exc:
             msg = f"Could not write named cell '{name}' ({sheet_name}!{address}): {exc}"
             raise RuntimeError(msg) from exc
+
+    def _workbook_date1904(self) -> bool:
+        """Whether this workbook counts days from 1904-01-01."""
+        return bool(self._workbook.Date1904)
 
     def _existing_number_format(self, target: Any) -> Any:  # noqa: ANN401
         """The range's format, with Excel's name for General spelled ``General``.
@@ -381,6 +385,7 @@ class Win32ComBackend:
                 headerless=geometry.header_rows == 0,
                 config=config,
                 general_format=_general_format_name(self._app),
+                date1904=self._workbook_date1904(),
             )
 
         if config.extend_conditional_formatting:
@@ -1115,6 +1120,7 @@ def _write_rows_com(
     headerless: bool,
     config: FillXLConfig,
     general_format: str,
+    date1904: bool,
 ) -> None:
     """Write *rows* into the (already resized) table body."""
     body = list_obj.DataBodyRange
@@ -1141,6 +1147,7 @@ def _write_rows_com(
                     row=row_number,
                     column=table_columns[col_idx],
                     warned=warned,
+                    date1904=date1904,
                 )
                 row_values[col_idx] = com_value_from_normalized(
                     normalized, escape_formulas=config.escape_formulas

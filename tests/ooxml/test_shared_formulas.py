@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 import openpyxl
 import pytest
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.table import Table, TableColumn
 
 from fillxl import FillXLConfig, fill
@@ -167,6 +168,70 @@ def test_a_dependent_is_read_as_the_master_moved_to_its_own_cell(tmp_path: Path)
 
     assert sheet.formula(20, 2) == "=SUM(B2:B2)"
     assert sheet.formula(20, 3) == "=SUM(C2:C2)"
+
+
+def test_a_named_cell_written_over_a_shared_master_keeps_the_group_readable(
+    tmp_path: Path,
+) -> None:
+    """Writing the master must not leave its dependents without a formula."""
+    template = _named_shared_template(tmp_path / "template.xlsx", "over_master")
+
+    output = fill(template, tmp_path / "out.xlsx", engine="fillxl", values={"over_master": 99})
+
+    assert_well_formed(output)
+    sheet_xml = part_text(output, SHEET_PART)
+    assert 't="shared"' not in sheet_xml
+    workbook = openpyxl.load_workbook(output)
+    try:
+        sheet = workbook["Data"]
+        assert sheet["B2"].value == 99
+        assert sheet["B3"].value == "=A3*2"
+        assert sheet["B4"].value == "=A4*2"
+    finally:
+        workbook.close()
+
+
+def test_a_named_cell_written_over_a_shared_dependent_keeps_the_group_readable(
+    tmp_path: Path,
+) -> None:
+    """Writing a dependent must not leave the others pointing at a stale group."""
+    template = _named_shared_template(tmp_path / "template.xlsx", "over_dependent")
+
+    output = fill(
+        template,
+        tmp_path / "out.xlsx",
+        engine="fillxl",
+        values={"over_dependent": 99},
+    )
+
+    assert_well_formed(output)
+    sheet_xml = part_text(output, SHEET_PART)
+    assert 't="shared"' not in sheet_xml
+    workbook = openpyxl.load_workbook(output)
+    try:
+        sheet = workbook["Data"]
+        assert sheet["B2"].value == "=A2*2"
+        assert sheet["B3"].value == 99
+        assert sheet["B4"].value == "=A4*2"
+    finally:
+        workbook.close()
+
+
+def _named_shared_template(path: Path, name: str) -> Path:
+    """``B2:B4`` is one shared group; *name* points at ``B3``."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    for row in (2, 3, 4):
+        sheet.cell(row=row, column=1, value=row)
+        sheet.cell(row=row, column=2, value=f"=A{row}*2")
+    target = "B3" if name == "over_dependent" else "B2"
+    workbook.defined_names.add(DefinedName(name, attr_text=f"Data!${target[0]}${target[1]}"))
+    workbook.save(path)
+    workbook.close()
+
+    patch_part(path, SHEET_PART, lambda xml: share_formulas(xml, "B2", "B4"))
+    return path
 
 
 def _template_with_shared_reference(path: Path) -> Path:

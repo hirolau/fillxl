@@ -352,6 +352,7 @@ class SheetPart:
 
     def write_cell(self, row: int, column: int, xml: str) -> None:
         """Store the ``<c>`` element *xml* at *row*, *column*."""
+        self._unshare_around(row, column)
         entry = self._rows.get(row)
         if entry is None:
             entry = _Row(attributes="", prefix=self._prefix)
@@ -367,6 +368,7 @@ class SheetPart:
 
     def delete_cell(self, row: int, column: int) -> None:
         """Remove the cell at *row*, *column* from the sheet."""
+        self._unshare_around(row, column)
         entry = self._rows.get(row)
         if entry is None or column not in entry.cells:
             return
@@ -374,6 +376,19 @@ class SheetPart:
             self._array_cache = None
         entry.raw = None
         self._dirty()
+
+    def _unshare_around(self, row: int, column: int) -> None:
+        """Expand the shared-formula group of the cell about to be overwritten.
+
+        A shared group has one master and empty dependents, so replacing any
+        member in place would leave the others either without a master or
+        pointing at a ``ref`` that no longer covers them.  ``unshare`` drops
+        the group from the index before it rewrites the members, so the
+        ``write_cell`` calls it makes do not come back here.
+        """
+        si = self._cell_group.get((row, column))
+        if si is not None:
+            self.unshare(si)
 
     def set_style(self, row: int, column: int, style: str) -> None:
         """Give the cell at *row*, *column* the style index *style*."""
@@ -516,11 +531,11 @@ class SheetPart:
             if xml is None:  # pragma: no cover - members always exist
                 continue
             moved = shift_relative(
-                text,
+                f"={text}",
                 rows=row - master_row,
                 columns=column - master_column,
             )
-            self.write_cell(row, column, _plain_formula(xml, moved))
+            self.write_cell(row, column, _plain_formula(xml, moved.removeprefix("=")))
 
     def unshare_range(
         self,

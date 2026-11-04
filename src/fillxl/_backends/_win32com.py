@@ -43,9 +43,9 @@ from fillxl._normalize import (
 )
 from fillxl._plan import BlockedRegion, TableGeometry, TablePlan, blocked_area, plan_table_fill
 from fillxl._sheets import (
-    first_remaining,
-    require_a_visible_sheet,
-    resolve_sheet_name,
+    plan_activate,
+    plan_delete,
+    plan_hide,
     warn_sheet_not_found,
 )
 from fillxl._utils import col_to_excel
@@ -486,19 +486,14 @@ class Win32ComBackend:
     def hide_sheets(self, prefix: str) -> None:
         """Hide visible sheets whose names start with *prefix*."""
         self._ensure_workbook()
-        visible = self._visible_sheet_names()
-        to_hide = [name for name in visible if name.startswith(prefix)]
-        if not to_hide:
-            return
-        require_a_visible_sheet(
-            visible,
-            to_hide,
-            "Hiding",
-            hint="Set hide_underscore_sheets=False to keep it visible.",
+        plan = plan_hide(
+            prefix,
+            self._visible_sheet_names(),
+            str(self._workbook.ActiveSheet.Name),
         )
-        if str(self._workbook.ActiveSheet.Name) in to_hide:
-            self._workbook.Sheets(first_remaining(visible, to_hide)).Activate()
-        for name in to_hide:
+        if plan.activate is not None:
+            self._workbook.Sheets(plan.activate).Activate()
+        for name in plan.to_hide:
             try:
                 self._workbook.Sheets(name).Visible = _XL_SHEET_HIDDEN
             except Exception as exc:
@@ -509,31 +504,32 @@ class Win32ComBackend:
     def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the sheets named in *names*."""
         self._ensure_workbook()
-        titles = self._sheet_names()
-        present: list[str] = []
-        for name in names:
-            resolved = resolve_sheet_name(name, titles)
-            if resolved is None:
-                warn_sheet_not_found(name, "nothing was deleted")
-            elif resolved not in present:
-                present.append(resolved)
-        if not present:
+        active = str(self._workbook.ActiveSheet.Name)
+        plan = plan_delete(
+            names,
+            self._sheet_names(),
+            self._visible_sheet_names(),
+            active,
+        )
+        for name in plan.not_found:
+            warn_sheet_not_found(name, "nothing was deleted")
+        if not plan.present:
             return
-        visible = self._visible_sheet_names()
-        require_a_visible_sheet(visible, present, "Deleting")
         # Excel rewrites the references to #REF! as it deletes, so the
         # locations have to be collected while they still read the sheet.
-        locations = self._dangling_locations(present)
-        if str(self._workbook.ActiveSheet.Name) in present:
-            self._workbook.Sheets(first_remaining(visible, present)).Activate()
-        for name in present:
+        locations = self._dangling_locations(list(plan.present))
+        # Excel keeps the same tab active unless it is going away, so the
+        # selection only has to be re-applied in that case.
+        if plan.activate is not None and plan.activate != active:
+            self._workbook.Sheets(plan.activate).Activate()
+        for name in plan.present:
             try:
                 self._workbook.Sheets(name).Delete()
             except Exception as exc:
                 msg = f"Could not delete sheet '{name}': {exc}"
                 raise RuntimeError(msg) from exc
             logger.debug("Deleted sheet '%s'", name)
-        warn_dangling_references(present, locations)
+        warn_dangling_references(list(plan.present), locations)
 
     def _dangling_locations(self, deleted: Sequence[str]) -> list[str]:
         """Locations on the remaining sheets that still name a sheet in *deleted*."""
@@ -566,15 +562,15 @@ class Win32ComBackend:
     def set_active_sheet(self, name: str) -> None:
         """Set the active (displayed) sheet."""
         self._ensure_workbook()
-        resolved = resolve_sheet_name(name, self._sheet_names())
+        resolved = plan_activate(
+            name,
+            self._sheet_names(),
+            lambda title: _com_is_visible(self._workbook.Sheets(title)),
+        )
         if resolved is None:
             warn_sheet_not_found(name, "the workbook keeps its active sheet")
             return
-        sheet = self._workbook.Sheets(resolved)
-        if not _com_is_visible(sheet):
-            msg = f"Sheet '{resolved}' is hidden and cannot be the active sheet."
-            raise ValueError(msg)
-        sheet.Activate()
+        self._workbook.Sheets(resolved).Activate()
         logger.debug("Set active sheet to '%s'", resolved)
 
     def save(self, path: Path) -> None:

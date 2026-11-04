@@ -21,7 +21,7 @@ from fillxl._ooxml.pivots import set_refresh_on_load
 from fillxl._ooxml.styles import StylesPart
 from fillxl._ooxml.workbook import WorkbookPart
 from fillxl._ooxml.worksheet import SheetStore
-from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
+from fillxl._sheets import plan_activate, plan_delete, plan_hide, warn_sheet_not_found
 from fillxl._types import FILLXL_SUFFIXES
 
 if TYPE_CHECKING:
@@ -171,21 +171,12 @@ class FillxlBackend:
         """
         _, workbook = self._require_workbook()
         visible = [entry.name for entry in workbook.sheets() if entry.visible]
-        to_hide = [name for name in visible if name.startswith(prefix)]
-        if not to_hide:
-            return
-        require_a_visible_sheet(
-            visible,
-            to_hide,
-            "Hiding",
-            hint="Set hide_underscore_sheets=False to keep it visible.",
-        )
-        active = workbook.active_sheet_name()
-        for name in to_hide:
+        plan = plan_hide(prefix, visible, workbook.active_sheet_name())
+        for name in plan.to_hide:
             workbook.set_sheet_state(name, "hidden")
             logger.debug("Hidden sheet '%s'", name)
-        if active is None or active in to_hide:
-            self._select_only(first_remaining(visible, to_hide))
+        if plan.activate is not None:
+            self._select_only(plan.activate)
 
     def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the sheets named in *names*.
@@ -195,36 +186,32 @@ class FillxlBackend:
 
         """
         package, workbook = self._require_workbook()
-        # Excel resolves sheet names without regard to case, so a requested
-        # name has to be resolved to the sheet's own spelling before it is used
-        # for removal, for the visible-sheet check and for the lossy check.
-        present: list[str] = []
-        for name in names:
-            entry = workbook.sheet(name)
-            if entry is None:
-                warn_sheet_not_found(name, "nothing was deleted")
-            elif entry.name not in present:
-                present.append(entry.name)
-        if not present:
+        entries = workbook.sheets()
+        plan = plan_delete(
+            names,
+            [entry.name for entry in entries],
+            [entry.name for entry in entries if entry.visible],
+            workbook.active_sheet_name(),
+        )
+        for name in plan.not_found:
+            warn_sheet_not_found(name, "nothing was deleted")
+        if not plan.present:
             return
-        visible = [entry.name for entry in workbook.sheets() if entry.visible]
-        require_a_visible_sheet(visible, present, "Deleting")
-        active = workbook.active_sheet_name()
         _, _, sheets, _ = self._require_session()
         present_parts = {
-            entry.part for entry in workbook.sheets() if entry.name in set(present) and entry.part
+            entry.part for entry in entries if entry.name in set(plan.present) and entry.part
         }
-        workbook.remove_sheets(present)
+        workbook.remove_sheets(list(plan.present))
         for part in present_parts:
             sheets.discard(part)
-        for name in present:
+        for name in plan.present:
             logger.debug("Deleted sheet '%s'", name)
-        if active is not None and active not in present:
-            self._select_only(active)
-        else:
-            self._select_only(first_remaining(visible, present))
-        self._deleted_sheets.extend(present)
-        warn_about_deleted_sheets(package, workbook, present, sheets)
+        # Deleting shifts every later tab index, so the selection is re-applied
+        # even when the active sheet survives.
+        if plan.activate is not None:
+            self._select_only(plan.activate)
+        self._deleted_sheets.extend(plan.present)
+        warn_about_deleted_sheets(package, workbook, list(plan.present), sheets)
 
     def set_active_sheet(self, name: str) -> None:
         """Set the active (displayed) sheet.
@@ -237,14 +224,16 @@ class FillxlBackend:
 
         """
         _, workbook = self._require_workbook()
-        entry = workbook.sheet(name)
-        if entry is None:
+        entries = workbook.sheets()
+        resolved = plan_activate(
+            name,
+            [entry.name for entry in entries],
+            lambda title: next(entry.visible for entry in entries if entry.name == title),
+        )
+        if resolved is None:
             warn_sheet_not_found(name, "the workbook keeps its active sheet")
             return
-        if not entry.visible:
-            msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
-            raise ValueError(msg)
-        self._select_only(entry.name)
+        self._select_only(resolved)
         logger.debug("Set active sheet to '%s'", name)
 
     def save(self, path: Path) -> None:

@@ -16,9 +16,9 @@ from fillxl._charts import (
 from fillxl._dangling import find_dangling_references, warn_dangling_references
 from fillxl._lossy import check_lossy
 from fillxl._sheets import (
-    first_remaining,
-    require_a_visible_sheet,
-    resolve_sheet_name,
+    plan_activate,
+    plan_delete,
+    plan_hide,
     warn_sheet_not_found,
 )
 from fillxl._tables import populate_table
@@ -157,22 +157,12 @@ class OpenpyxlBackend:
 
         """
         workbook = self._require_workbook()
-        visible = _visible_titles(workbook)
-        to_hide = [title for title in visible if title.startswith(prefix)]
-        if not to_hide:
-            return
-        require_a_visible_sheet(
-            visible,
-            to_hide,
-            "Hiding",
-            hint="Set hide_underscore_sheets=False to keep it visible.",
-        )
-        active = _active_title(workbook)
-        for title in to_hide:
+        plan = plan_hide(prefix, _visible_titles(workbook), _active_title(workbook))
+        for title in plan.to_hide:
             workbook[title].sheet_state = "hidden"
             logger.debug("Hidden sheet '%s'", title)
-        if active is None or active in to_hide:
-            _activate(workbook, first_remaining(visible, to_hide))
+        if plan.activate is not None:
+            _activate(workbook, plan.activate)
 
     def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the sheets named in *names*.
@@ -182,29 +172,28 @@ class OpenpyxlBackend:
 
         """
         workbook = self._require_workbook()
-        titles = workbook.sheetnames
-        present: list[str] = []
-        for name in names:
-            resolved = resolve_sheet_name(name, titles)
-            if resolved is None:
-                warn_sheet_not_found(name, "nothing was deleted")
-            elif resolved not in present:
-                present.append(resolved)
-        if not present:
+        plan = plan_delete(
+            names,
+            workbook.sheetnames,
+            _visible_titles(workbook),
+            _active_title(workbook),
+        )
+        for name in plan.not_found:
+            warn_sheet_not_found(name, "nothing was deleted")
+        if not plan.present:
             return
-        visible = _visible_titles(workbook)
-        require_a_visible_sheet(visible, present, "Deleting")
-        active = _active_title(workbook)
-        for name in present:
+        for name in plan.present:
             workbook.remove(workbook[name])
             logger.debug("Deleted sheet '%s'", name)
-        # openpyxl keeps the active *index*, which now points at another sheet.
-        if active is not None and active not in present:
-            _activate(workbook, active)
-        else:
-            _activate(workbook, first_remaining(visible, present))
-        self._deleted_sheets.extend(present)
-        warn_dangling_references(present, find_dangling_references(workbook, present))
+        # openpyxl keeps the active *index*, which now points at another
+        # sheet, so the tab has to be re-applied even when it survived.
+        if plan.activate is not None:
+            _activate(workbook, plan.activate)
+        self._deleted_sheets.extend(plan.present)
+        warn_dangling_references(
+            list(plan.present),
+            find_dangling_references(workbook, list(plan.present)),
+        )
 
     def set_active_sheet(self, name: str) -> None:
         """Set the active (displayed) sheet.
@@ -217,13 +206,14 @@ class OpenpyxlBackend:
 
         """
         workbook = self._require_workbook()
-        resolved = resolve_sheet_name(name, list(workbook.sheetnames))
+        resolved = plan_activate(
+            name,
+            list(workbook.sheetnames),
+            lambda title: workbook[title].sheet_state == "visible",
+        )
         if resolved is None:
             warn_sheet_not_found(name, "the workbook keeps its active sheet")
             return
-        if workbook[resolved].sheet_state != "visible":
-            msg = f"Sheet '{resolved}' is hidden and cannot be the active sheet."
-            raise ValueError(msg)
         _activate(workbook, resolved)
         logger.debug("Set active sheet to '%s'", resolved)
 

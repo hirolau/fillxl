@@ -50,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the three engines timed on the same fill, plus `scripts/benchmark.py` now
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
+### Changed
+- Hiding, deleting and activating a sheet now share one set of planners in
+  `fillxl._sheets` (`plan_hide`, `plan_delete`, `plan_activate`), so the three
+  engines cannot drift apart on which sheet is refused, which one becomes
+  active and which requested name matched nothing. The engines only apply the
+  plan; behaviour is unchanged.
+
 ### Fixed
 - `engine="win32com"` reads the tables' calculated-column definitions straight
   out of the package instead of loading the whole template into openpyxl while

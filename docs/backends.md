@@ -1,30 +1,35 @@
 # Backends
 
-fillxl supports two backend engines for writing Excel files. Choose based on your platform and fidelity requirements.
+fillxl supports three backend engines for writing Excel files. Choose based on your platform and fidelity requirements.
 
-Both engines write **the same values** for the same template and data: the same
+All engines write **the same values** for the same template and data: the same
 cell values, number formats, chart references and sheet states. The differences
-that remain — cached formula results, chart styles, parts openpyxl cannot
-write — are listed under *Feature support* below.
+that remain — cached formula results, parts an engine cannot write — are listed
+under *Feature support* below.
 
 `engine="auto"` (the default) uses `openpyxl` for `.xlsx`/`.xlsm` templates
 saved in the same format, and `win32com` when openpyxl cannot do the job
-(`.xlsb`/`.xls` templates, format conversion) and Excel is available. A format
+(`.xlsb` templates, format conversion) and Excel is available. A format
 the selected engine cannot write is refused **before the template is loaded**,
 not after the fill has run:
 
-| Template → output | `auto` | `openpyxl` | `win32com` |
-|---|---|---|---|
-| `.xlsx` → `.xlsx` | openpyxl | yes | yes |
-| `.xlsm` → `.xlsm` | openpyxl (VBA kept) | yes | yes |
-| `.xlsx` → `.xlsm` / `.xlsb` / `.xls` | Excel if available, else an error | refused | yes |
-| `.xlsb` / `.xls` → anything | Excel if available, else an error | refused | yes |
+| Template → output | `auto` | `openpyxl` | `fillxl` | `win32com` |
+|---|---|---|---|---|
+| `.xlsx` → `.xlsx` | openpyxl | yes | yes | yes |
+| `.xlsm` → `.xlsm` | openpyxl (VBA kept) | yes | yes (VBA kept) | yes |
+| `.xlsx` → `.xlsm` / `.xlsb` | Excel if available, else an error | refused | refused | yes |
+| `.xlsb` → anything | Excel if available, else an error | refused | refused | yes |
+
+Legacy `.xls` (BIFF8) is refused by every engine, before the template is
+opened: BIFF8 cannot hold the features fillxl exists to preserve, and reading
+it needs Excel anyway.
 
 ## Comparison
 
 | Engine | Cross-platform | Requires Excel | Best for |
 |--------|:---:|:---:|---|
 | `openpyxl` | :material-check: | :material-close: | Most use cases, Linux/macOS |
+| `fillxl` | :material-check: | :material-close: | Templates with spilled arrays, slicers, data types or other parts openpyxl cannot write |
 | `win32com` | :material-close: Windows only | :material-check: | `.xlsm`/`.xlsb`, modern charts, full fidelity |
 
 ## Feature support
@@ -32,26 +37,33 @@ not after the fill has run:
 `yes` means fillxl handles the feature; `differs` means the engines behave
 differently and the difference is described below.
 
-| Feature | openpyxl | win32com |
-|---|---|---|
-| Named cells, global and sheet-scoped | yes | yes |
-| Tables that grow and shrink, totals rows included | yes | yes |
-| Calculated (formula) columns | yes | yes |
-| Table styles copied to new rows | yes | yes |
-| Conditional formatting extended to the table | yes | yes |
-| Charts: categories, values, X/Y, bubble sizes, multi-level categories, custom error bars | yes | yes |
-| Chart sheets | yes | yes |
-| Pivot caches marked for refresh on open | yes | yes |
-| Pivot tables refreshed immediately | differs — open-to-refresh | yes |
-| Formula results recalculated before saving | differs — recalc on open | yes |
-| Sheet hiding, deletion and activation | yes | yes |
-| Lossy-template report (`on_lossy`) | yes | not needed |
+| Feature | openpyxl | fillxl | win32com |
+|---|---|---|---|
+| Named cells, global and sheet-scoped | yes | yes | yes |
+| Tables that grow and shrink, totals rows included | yes | yes | yes |
+| Calculated (formula) columns | yes | yes | yes |
+| Table styles copied to new rows | yes | yes | yes |
+| Conditional formatting extended to the table | yes | yes | yes |
+| Charts: categories, values, X/Y, bubble sizes, multi-level categories, custom error bars | yes | yes | yes |
+| Chart sheets | yes | yes | yes |
+| Pivot caches marked for refresh on open | yes | yes | yes |
+| Pivot tables refreshed immediately | differs — open-to-refresh | differs — open-to-refresh | yes |
+| Formula results recalculated before saving | differs — recalc on open | differs — recalc on open | yes |
+| Cached results on a fill | dropped | dropped (every formula sheet) | computed |
+| Summary formulas and A1 totals formulas follow a resize | yes | yes | yes (Excel does it) |
+| Pivot sources, defined names, validation lists follow a resize | yes | yes | yes (Excel does it) |
+| Hidden rows shown and table filters cleared by a fill | yes | yes | yes |
+| Sheet hiding, deletion and activation | yes | yes | yes |
+| Spilled dynamic arrays (`SEQUENCE`, `FILTER`, `SORT`, …) and cell metadata | differs — lost | yes | yes |
+| Slicers, timelines, `chartEx`, rich data, VBA, embedded objects | differs — lost | yes | yes |
+| Lossy-template report (`on_lossy`) | yes | not needed | not needed |
 
-How the differences are checked: the parity suite fills one template with both
-engines and compares a snapshot of the result — cell values, data types,
+How the differences are checked: the parity suite fills one template with every
+engine and compares a snapshot of the result — cell values, data types,
 number formats, table refs, sort state, chart references, conditional
 formatting ranges, sheet states and defined names. See
-[Development](development.md) for how to run it.
+[Development](development.md) for how to run it, and [Benchmarks](benchmarks.md)
+for how the three engines compare on the same fill.
 
 ---
 
@@ -72,16 +84,73 @@ fill(template="tpl.xlsx", output="out.xlsx", ..., engine="openpyxl")
 
 ### Limitations
 
-- Does **not** support `.xlsb` or legacy `.xls`
+- Does **not** support `.xlsb` or legacy `.xls` (no engine supports `.xls`)
 - Drops some modern chart types (e.g., sunburst, treemap), slicers and other
   parts; `on_lossy` reports what was lost as `LossyTemplateWarning`
-- No dynamic array formula support
+- No dynamic array formula support: a template with spilled ranges loses both
+  the spill markup and `xl/metadata.xml`. Use `engine="fillxl"` to keep them
 - Writes no cached formula results: the output sets `fullCalcOnLoad` so Excel
   recalculates on open. Use `engine="win32com"` when the saved file must
   already contain computed values.
+- Pivot sources, defined names and validation lists that cover a table body are
+  resized with the table. Built-in names (`_xlnm.Print_Area`,
+  `_xlnm._FilterDatabase`, …) belong to Excel and are left alone, with an
+  `UntrackedRangeWarning` so the stale range is never silent.
 - Deleting a sheet leaves formulas, charts, names and pivots that refer to it
   pointing at a sheet that no longer exists, and warns
   (`DanglingReferenceWarning`) rather than rewriting them.
+
+---
+
+## fillxl
+
+Edits the OOXML package itself: pure Python, no Excel installation, and no
+object model to lose features in.
+
+```python
+fill(template="tpl.xlsx", output="out.xlsx", ..., engine="fillxl")
+```
+
+The template is a ZIP of XML parts. Only the parts a fill has to change are
+parsed and rewritten — the worksheet, the table definition, chart references,
+pivot cache flags and `xl/workbook.xml`. Every other part is copied byte for
+byte, so a feature the engine does not model cannot disappear: spilled
+dynamic arrays and their `xl/metadata.xml`, `cm`/`vm` cell metadata, slicers,
+`chartEx`, rich data, embedded objects and VBA all survive.
+
+### Pros
+
+- Works on **Linux, macOS, and Windows**; nothing to install beyond fillxl
+- Keeps every template feature, including spilled arrays — `on_lossy` stays
+  silent because nothing is lost
+- Fills `.xlsx` and macro-enabled `.xlsm` templates (VBA is preserved)
+
+### Limitations
+
+- Reads and writes `.xlsx`/`.xlsm` only, and only in the same format: `.xlsb`,
+  encrypted workbooks and format conversion stay on `win32com`
+- Modern charts (`chartEx`) follow a table resize: their `<cx:f>` sources and
+  the cached `ptCount` of their levels are rewritten. Sparklines are rewritten
+  the same way, on every sheet.
+- Writes no cached formula results, and removes the ones the template stored on
+  every sheet with formulas; the output asks Excel to recalculate on open, like
+  the openpyxl engine
+- Pivot sources, defined names and validation lists that cover a table body are
+  resized with the table; a built-in name (`_xlnm.`) is left alone and reported
+  with `UntrackedRangeWarning`
+- Deleting a sheet leaves formulas, charts, names and pivots that refer to it
+  pointing at a sheet that no longer exists, and warns
+  (`DanglingReferenceWarning`) rather than rewriting them
+
+### How it stays safe
+
+Rows are never inserted or removed — a growing table writes into cells verified
+empty — and an array (spill) range counts as occupied even when its cells look
+empty. A save parses every part the fill rewrote before the output file is
+opened, so a bad edit raises `RuntimeError` instead of producing a workbook no
+reader can open. `on_lossy` acts as an assertion here: if anything at all were
+missing from the output, the fill would say so. [The fillxl
+engine](fillxl-engine.md) explains how it works and where its limits are.
 
 ---
 
@@ -106,6 +175,11 @@ fill(template="tpl.xlsm", output="out.xlsm", ..., engine="win32com")
 - Windows only
 - Requires a licensed Excel installation
 - Slower per-call overhead (Excel COM startup)
+- Strings are written with a leading `'`, Excel's marker for "keep this as
+  text".  The quote is not part of the value, but Excel records the cell as
+  quote-prefixed: a user who later types a number into that cell gets text.
+  Clear the cell first (or write the column with `openpyxl`/`fillxl`, which
+  store text without the prefix) if that matters.
 
 ### Security
 
@@ -126,7 +200,6 @@ The save format is inferred from the output suffix, so macros survive:
 | `.xlsx` | macro-free workbook |
 | `.xlsm` | macro-enabled workbook (keeps `vbaProject.bin`) |
 | `.xlsb` | binary workbook |
-| `.xls` | legacy workbook |
 
 Any other suffix raises `ValueError` instead of silently writing a different
 format.
@@ -135,14 +208,13 @@ format.
 
 ## Engine-specific behaviour worth knowing
 
-Both engines write non-empty strings as text, even when Excel would otherwise
+Every engine writes non-empty strings as text, even when Excel would otherwise
 re-parse them (`"00123"` stays `"00123"`, `"1/2"` stays a string). This is
 handled by prefixing strings with Excel's text marker when they are written
 through COM; the openpyxl engine uses the text cell type, including for
-error-like strings such as `"#N/A"`. Empty strings become empty cells in both
-engines.
+error-like strings such as `"#N/A"`. Empty strings become empty cells.
 
-Strings starting with `=` stay literal in both engines by default, so
+Strings starting with `=` stay literal in every engine by default, so
 untrusted data cannot inject formulas. Pass
 `FillXLConfig(escape_formulas=False)` when the input is trusted and a leading
 `=` is meant to create a formula.
@@ -150,7 +222,7 @@ untrusted data cannot inject formulas. Pass
 Excel tables always end up with **at least one body row**: filling zero rows
 clears and keeps a single row, because Excel rejects a table without a body.
 
-Pivot caches are refreshed by both engines: openpyxl marks them
+Pivot caches are refreshed by every engine: openpyxl and fillxl mark them
 (`refreshOnLoad`) so Excel recalculates on open, and win32com recalculates them
 during the fill as well.
 
@@ -171,7 +243,7 @@ intentional.
 
 ### Formulas the fill rewrites
 
-Excel edits formulas when a table changes height; both engines now reproduce
+Excel edits formulas when a table changes height; every engine reproduces
 that, so the same template and data give the same numbers:
 
 - **Calculated columns.** A column whose `calculatedColumnFormula` uses A1
@@ -209,8 +281,8 @@ embedded objects, rich data, VBA, external links and worksheet extensions.
 [Warnings](warnings.md) lists this and every other category fillxl raises.
 
 The detector compares **part and element counts**. It catches dropped parts,
-shapes and worksheet extensions, but it cannot prove that a preserved part is
-byte-for-byte unchanged. Parts that only a sheet removed by `delete_sheets`
+shapes, worksheet extensions and `xl/metadata.xml` (spilled arrays and data
+types), but it cannot prove that a preserved part is byte-for-byte unchanged. Parts that only a sheet removed by `delete_sheets`
 referenced are ignored: their disappearance is the caller's doing, not the
 engine's.
 

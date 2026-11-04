@@ -15,7 +15,11 @@ if TYPE_CHECKING:
 
     from fillxl import Engine
 
-ENGINES = [pytest.param("openpyxl", id="openpyxl"), pytest.param("win32com", id="win32com")]
+ENGINES = [
+    pytest.param("openpyxl", id="openpyxl"),
+    pytest.param("win32com", id="win32com"),
+    pytest.param("fillxl", id="fillxl"),
+]
 
 
 @cache
@@ -53,4 +57,10 @@ def _fill_output(
         pytest.skip("win32com backend requires Windows and Excel")
     output = output_path.with_name(f"{output_path.stem}_{engine}{output_path.suffix}")
     fill(template=template, output=output, engine=engine, **kwargs)
+    if engine == "fillxl":
+        # A text-level edit that breaks the XML would only show up when a user
+        # opens the file; every fillxl output has to parse.
+        from tests._spills import assert_well_formed
+
+        assert_well_formed(output)
     return output

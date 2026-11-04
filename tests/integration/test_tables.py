@@ -12,10 +12,16 @@ import openpyxl
 import pytest
 
 from fillxl import FillXLConfig, fill
+from fillxl._ooxml import xmltext
 from tests._assets import TEMPLATE
+from tests._engines import ENGINES, _fill_output
+from tests.ooxml._patch import patch_part
+from tests.parity.builders import table_template
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from fillxl import Engine
 
 
 def _data_rows(count: int) -> list[dict[str, object]]:
@@ -30,6 +36,57 @@ def _data_rows(count: int) -> list[dict[str, object]]:
         }
         for i in range(1, count + 1)
     ]
+
+
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_a_column_mismatch_is_reported_before_the_table_is_checked_for_room_to_grow(
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """A mismatch names the columns; the blocked cell is the lesser problem."""
+    template = table_template(tmp_path / "template.xlsx", body=(("A", 1),), name="Sales")
+    workbook = openpyxl.load_workbook(template)
+    worksheet = workbook["Data"]
+    worksheet["A3"] = "in the way"
+    workbook.save(template)
+    workbook.close()
+
+    rows = [{"fund": "A", "nav": 1, "extra": "x"}] * 4
+    with pytest.raises(ValueError, match="Column mismatch"):
+        _fill_output(
+            template,
+            tmp_path / "out.xlsx",
+            engine,
+            tables={"Sales": rows},
+            config=FillXLConfig(column_validation_strategy="strict"),
+        )
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_table_whose_name_and_display_name_differ_is_found_by_every_engine(
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """COM and the fillxl engine know the table by its ``displayName``."""
+    template = table_template(tmp_path / "template.xlsx", body=(("A", 1),), name="Sales")
+    patch_part(
+        template,
+        "xl/tables/table1.xml",
+        lambda xml: xmltext.set_tag_attribute(xml, "name", "Table1"),
+    )
+
+    output = _fill_output(
+        template,
+        tmp_path / "out.xlsx",
+        engine,
+        tables={"Sales": [{"fund": "A", "nav": 1}, {"fund": "B", "nav": 2}]},
+    )
+
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert workbook["Data"]["B3"].value == 2
+    finally:
+        workbook.close()
 
 
 def test_new_rows_inherit_font_and_fill_from_first_data_row(output_path: Path) -> None:
@@ -399,24 +456,6 @@ def test_a_column_mismatch_names_the_table_it_happened_in(tmp_path: Path) -> Non
             tables={"Sales": [{"fund": "A"}]},
             config=FillXLConfig(column_validation_strategy="strict"),
         )
-
-
-def test_dropping_columns_logs_which_table_they_came_from(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """The drop strategy says which table lost which columns."""
-    template = _sales_template(tmp_path / "template.xlsx")
-
-    with caplog.at_level("INFO", logger="fillxl._validation"):
-        fill(
-            template=template,
-            output=tmp_path / "out.xlsx",
-            engine="openpyxl",
-            tables={"Sales": [{"fund": "A", "region": "EU"}]},
-            config=FillXLConfig(column_validation_strategy="drop"),
-        )
-
-    assert "Table 'Sales'" in caplog.text
 
 
 def test_a_header_with_a_line_break_matches_the_data_column_of_the_same_name(

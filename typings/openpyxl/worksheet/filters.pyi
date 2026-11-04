@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 class AutoFilter:
@@ -47,3 +47,44 @@ class SortState:
         sortMethod: str | None = ...,
         sortCondition: Any = ...,
     ) -> None: ...
+
+class Filters:
+    blank: bool | None
+    calendarType: str | None
+    filter: Sequence[str]
+    dateGroupItem: Sequence[Any]
+    def __init__(
+        self,
+        blank: bool | None = ...,
+        calendarType: str | None = ...,
+        filter: Sequence[str] = ...,
+        dateGroupItem: Sequence[Any] = ...,
+    ) -> None: ...
+    def __iter__(self) -> Iterator[Any]: ...
+
+class FilterColumn:
+    colId: int | None
+    hiddenButton: bool | None
+    showButton: bool | None
+    filters: Filters | None
+    top10: Any
+    customFilters: Any
+    dynamicFilter: Any
+    colorFilter: Any
+    iconFilter: Any
+    def __init__(
+        self,
+        colId: int | None = ...,
+        hiddenButton: bool | None = ...,
+        showButton: bool | None = ...,
+        filters: Filters | None = ...,
+        top10: Any = ...,
+        customFilters: Any = ...,
+        dynamicFilter: Any = ...,
+        colorFilter: Any = ...,
+        iconFilter: Any = ...,
+        extLst: Any = ...,
+        blank: bool | None = ...,
+        vals: Any = ...,
+    ) -> None: ...
+    def __iter__(self) -> Iterator[Any]: ...

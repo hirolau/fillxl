@@ -11,7 +11,13 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Any, Protocol, get_args, runtime_checkable
 
-from fillxl._types import ConcreteEngine, Engine
+from fillxl._types import (
+    FILLXL_SUFFIXES,
+    OPENPYXL_SUFFIXES,
+    WIN32COM_SUFFIXES,
+    ConcreteEngine,
+    Engine,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -26,9 +32,12 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class Backend(Protocol):
-    """Protocol that all Excel backends must implement.
+    """What a fill needs from an engine.
 
-    This is the seam where future backends (com32, xlwings, etc.) will plug in.
+    Three engines implement it: ``openpyxl`` (an object model, lossy),
+    ``fillxl`` (surgical edits of the OOXML package) and ``win32com`` (drives
+    Microsoft Excel).  Each one turns :func:`fillxl.fill`'s steps into that
+    engine's own operations; the fill itself decides what to write.
     """
 
     def load(self, path: Path) -> None:
@@ -66,16 +75,8 @@ class Backend(Protocol):
 
         Returns:
             A :class:`TableChangeSpecs` describing the table's old and new
-            dimensions (so chart references can be updated).
-
-        """
-        ...
-
-    def update_charts(self, spec: TableChangeSpecs) -> None:
-        """Update chart data ranges after a table resize.
-
-        Args:
-            spec: The table dimension change to reflect in charts.
+            dimensions.  The charts that follow the table have already been
+            updated by the time this returns.
 
         """
         ...
@@ -130,12 +131,55 @@ class Backend(Protocol):
 
 
 _KNOWN_ENGINES: frozenset[str] = frozenset(get_args(Engine))
-_OPENPYXL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
-_WIN32COM_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xlsb", ".xls"})
+_CONCRETE_ENGINES: frozenset[str] = frozenset(get_args(ConcreteEngine))
 
 
 def _win32com_available() -> bool:
     return sys.platform == "win32" and importlib.util.find_spec("win32com") is not None
+
+
+_XLS_MESSAGE = (
+    "fillxl does not support .xls (Excel 97-2003) files. Open the file in Excel and "
+    "save it as .xlsx, .xlsm or .xlsb."
+)
+
+
+def _require_known_engine(engine: str) -> None:
+    """Raise unless *engine* is one of the names :data:`Engine` allows.
+
+    Examples:
+        >>> _require_known_engine("openpyxl")
+        >>> _require_known_engine("bogus")
+        Traceback (most recent call last):
+            ...
+        ValueError: Unknown engine 'bogus'. Known engines: auto, fillxl, openpyxl, win32com.
+
+    """
+    if engine in _KNOWN_ENGINES:
+        return
+    known = ", ".join(sorted(_KNOWN_ENGINES))
+    msg = f"Unknown engine {engine!r}. Known engines: {known}."
+    raise ValueError(msg)
+
+
+def reject_xls_paths(*paths: Path) -> None:
+    """Raise when any of *paths* is a ``.xls`` file.
+
+    BIFF8 cannot hold the features fillxl exists to preserve, and Excel is
+    needed to read it, so the request is refused before anything is opened.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> reject_xls_paths(Path("t.xlsx"), Path("o.xlsx"))
+        >>> reject_xls_paths(Path("t.xls"))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: fillxl does not support .xls (Excel 97-2003) files. ... t.xls.
+
+    """
+    for path in paths:
+        if path.suffix.lower() == ".xls":
+            raise ValueError(f"{_XLS_MESSAGE} Offending path: {path}.")
 
 
 def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngine:
@@ -143,9 +187,12 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
 
     ``"auto"`` picks openpyxl when it can do the job: an ``.xlsx``/``.xlsm``
     template saved in the same format.  Otherwise it picks win32com when Excel
-    automation is available (``.xlsb``/``.xls`` templates, format conversion).
+    automation is available (``.xlsb`` templates, format conversion).
 
-    A format openpyxl cannot write raises here, before the template is loaded,
+    ``"fillxl"`` edits the OOXML package itself: no Excel, and no feature loss.
+    It reads and writes ``.xlsx``/``.xlsm`` only, in the same format.
+
+    A format an engine cannot write raises here, before the template is loaded,
     instead of at ``save()`` after all the filling work is done.
 
     Examples:
@@ -154,18 +201,25 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
         'openpyxl'
         >>> resolve_engine("win32com", Path("t.xlsx"), Path("o.xlsx"))
         'win32com'
+        >>> resolve_engine("fillxl", Path("t.xlsx"), Path("o.xlsx"))
+        'fillxl'
+        >>> resolve_engine("fillxl", Path("t.xlsx"), Path("o.xlsb"))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: The fillxl engine cannot write a '.xlsb' file ...
         >>> resolve_engine("openpyxl", Path("t.xlsx"), Path("o.xlsb"))  # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
         ValueError: The openpyxl engine cannot write a '.xlsb' file ...
 
     """
-    if engine not in _KNOWN_ENGINES:
-        known = ", ".join(sorted(_KNOWN_ENGINES))
-        msg = f"Unknown engine {engine!r}. Known engines: {known}."
-        raise ValueError(msg)
+    _require_known_engine(engine)
+    reject_xls_paths(template, output)
     if engine == "win32com":
         _require_excel_output(output)
+        return engine
+    if engine == "fillxl":
+        _require_fillxl_output(template, output)
         return engine
     if engine == "auto" and _needs_excel(template, output) and _win32com_available():
         # The suffix is checked here too: "auto" must not start Excel for a
@@ -197,23 +251,58 @@ def _require_excel_output(output: Path, *, engine: str = "win32com") -> None:
 
     """
     suffix = output.suffix.lower()
-    if suffix in _WIN32COM_SUFFIXES:
+    if suffix in WIN32COM_SUFFIXES:
         return
     what = f"a '{suffix}' file" if suffix else "a file without an extension"
     if engine == "auto":
         msg = (
             f"engine='auto' chose win32com, which cannot write {what}. Use one of: "
-            ".xlsx, .xlsm, .xlsb or .xls, or name an .xlsx output to stay on openpyxl."
+            ".xlsx, .xlsm or .xlsb, or name an .xlsx output to stay on openpyxl."
         )
     else:
-        msg = f"The win32com engine cannot write {what}. Use one of: .xlsx, .xlsm, .xlsb or .xls."
+        msg = f"The win32com engine cannot write {what}. Use one of: .xlsx, .xlsm or .xlsb."
     raise ValueError(msg)
+
+
+def _require_fillxl_output(template: Path, output: Path) -> None:
+    """Raise unless the fillxl engine can turn *template* into *output*.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> _require_fillxl_output(Path("t.xlsx"), Path("o.xlsx"))
+        >>> _require_fillxl_output(Path("t.xlsx"), Path("o.xlsb"))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: The fillxl engine cannot write a '.xlsb' file...
+        >>> _require_fillxl_output(Path("t.xlsb"), Path("o.xlsb"))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: The fillxl engine cannot read a '.xlsb' template...
+
+    """
+    template_suffix = template.suffix.lower()
+    output_suffix = output.suffix.lower()
+    if template_suffix not in FILLXL_SUFFIXES:
+        msg = (
+            f"The fillxl engine cannot read a '{template_suffix}' template "
+            "(it reads .xlsx and .xlsm). Use engine='win32com' for .xlsb, "
+            "or save the template as .xlsx."
+        )
+        raise ValueError(msg)
+    if output_suffix != template_suffix:
+        what = f"a '{output_suffix}' file" if output_suffix else "a file without an extension"
+        msg = (
+            f"The fillxl engine cannot write {what} from a '{template_suffix}' "
+            f"template. Save to a '{template_suffix}' path, or use engine='win32com' "
+            "to convert between formats."
+        )
+        raise ValueError(msg)
 
 
 def _needs_excel(template: Path, output: Path) -> bool:
     """Whether openpyxl cannot turn *template* into *output*."""
     suffix = template.suffix.lower()
-    return suffix not in _OPENPYXL_SUFFIXES or output.suffix.lower() != suffix
+    return suffix not in OPENPYXL_SUFFIXES or output.suffix.lower() != suffix
 
 
 def _reject_impossible_output(template: Path, output: Path) -> None:
@@ -221,7 +310,7 @@ def _reject_impossible_output(template: Path, output: Path) -> None:
     if not _needs_excel(template, output):
         return
     suffix = template.suffix.lower()
-    if suffix not in _OPENPYXL_SUFFIXES:
+    if suffix not in OPENPYXL_SUFFIXES:
         msg = (
             f"The openpyxl engine cannot read a '{suffix}' template "
             "(it reads .xlsx and .xlsm). Use engine='win32com', which needs Windows "
@@ -236,26 +325,30 @@ def _reject_impossible_output(template: Path, output: Path) -> None:
     raise ValueError(msg)
 
 
-def get_backend(engine: Engine) -> Backend:
-    """Return a :class:`Backend` implementation for *engine*.
+def get_backend(engine: ConcreteEngine) -> Backend:
+    """Return the :class:`Backend` implementation for *engine*.
 
     Args:
-        engine: Engine name (``"auto"``, ``"openpyxl"``, or ``"win32com"``).
+        engine: A concrete engine name: ``"openpyxl"``, ``"fillxl"`` or
+            ``"win32com"``.  ``"auto"`` is turned into one of these by
+            :func:`resolve_engine` before a fill builds a backend.
 
     Returns:
         A backend instance ready to load workbooks.
 
     Raises:
-        NotImplementedError: If the engine is not implemented yet.
-        ValueError: If the engine name is unknown.
+        ValueError: If the engine name is unknown, or is ``"auto"``.
 
     """
-    if engine not in _KNOWN_ENGINES:
-        known = ", ".join(sorted(_KNOWN_ENGINES))
-        msg = f"Unknown engine {engine!r}. Known engines: {known}."
+    _require_known_engine(engine)
+    if engine not in _CONCRETE_ENGINES:
+        msg = (
+            "get_backend() needs a concrete engine; 'auto' is resolved by "
+            "resolve_engine() before a backend is created."
+        )
         raise ValueError(msg)
 
-    if engine in ("auto", "openpyxl"):
+    if engine == "openpyxl":
         from fillxl._backends._openpyxl import OpenpyxlBackend
 
         return OpenpyxlBackend()
@@ -265,6 +358,11 @@ def get_backend(engine: Engine) -> Backend:
 
         return Win32ComBackend()
 
-    # All known engine names are handled above — this line is unreachable.
+    if engine == "fillxl":
+        from fillxl._backends._fillxl import FillxlBackend
+
+        return FillxlBackend()
+
+    # All concrete engine names are handled above — this line is unreachable.
     msg = f"Unhandled engine {engine!r}"
     raise AssertionError(msg)  # pragma: no cover

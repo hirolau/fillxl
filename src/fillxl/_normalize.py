@@ -74,6 +74,8 @@ _MAX_DOUBLE = 1e308
 # numbers as doubles anyway, so wider integers are handed over as floats.
 _MAX_COM_INT = 2**31
 _FIRST_EXCEL_DATE = dt.date(1900, 3, 1)
+# A 1904 workbook counts from 1904-01-01, so earlier dates are negative serials.
+_FIRST_EXCEL_DATE_1904 = dt.date(1904, 1, 1)
 # XML 1.0 Char excludes these two, although Python strings can hold them:
 # openpyxl writes them raw and the workbook then fails to parse (and Excel
 # refuses it).  The other noncharacters (U+FDD0, U+FDEF, U+1FFFE, …) are
@@ -125,8 +127,17 @@ def describe_cell(
     return f"Table {table!r}, data row {row}, column {column!r}"
 
 
-def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN401
+def cell_value_problem(
+    value: Any,  # noqa: ANN401
+    *,
+    date1904: bool = False,
+) -> tuple[Severity, str] | None:
     """Why Excel cannot store a normalised *value* faithfully, or ``None``.
+
+    Args:
+        value: The normalised value.
+        date1904: Whether the workbook counts days from 1904-01-01 instead of
+            the 1900 system, which moves the first valid day.
 
     Examples:
         >>> cell_value_problem("ok") is None
@@ -148,6 +159,14 @@ def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN4
         >>> cell_value_problem("ok\\ufdd0\\U00010ffff") is None
         True
         >>> cell_value_problem(dt.datetime(1899, 12, 31))[0]
+        'error'
+        >>> cell_value_problem(dt.datetime(1903, 12, 31), date1904=True)[0]
+        'error'
+        >>> cell_value_problem(dt.datetime(1904, 1, 1), date1904=True) is None
+        True
+        >>> cell_value_problem(dt.datetime(1900, 1, 1))[0]
+        'error'
+        >>> cell_value_problem(dt.datetime(1900, 1, 1), date1904=True)[0]
         'error'
 
     """
@@ -199,7 +218,14 @@ def cell_value_problem(value: Any) -> tuple[Severity, str] | None:  # noqa: ANN4
         return None
     if isinstance(value, dt.date):
         day = value.date() if isinstance(value, dt.datetime) else value
-        if day < _FIRST_EXCEL_DATE:
+        if date1904:
+            if day < _FIRST_EXCEL_DATE_1904:
+                return "error", (
+                    f"date {value.isoformat()} is before 1904-01-01; this workbook uses the "
+                    "1904 date system, where earlier days are negative serials that Excel "
+                    "shows as ####"
+                )
+        elif day < _FIRST_EXCEL_DATE:
             return "error", (
                 f"date {value.isoformat()} is before 1900-03-01; Excel's calendar is wrong "
                 "before that day (it counts a 29 February 1900), so it cannot be written "
@@ -216,9 +242,10 @@ def check_cell_value(
     column: str | None = None,
     name: str | None = None,
     warned: set[tuple[str | None, str | None]] | None = None,
+    date1904: bool = False,
 ) -> None:
     """Raise :class:`CellValueError`, or warn once per column, for values Excel cannot store."""
-    problem = cell_value_problem(value)
+    problem = cell_value_problem(value, date1904=date1904)
     if problem is None:
         return
     severity, text = problem
@@ -592,10 +619,10 @@ def _numpy_scalar_to_python(value: Any) -> Any:  # noqa: ANN401
 # ==============================================================================
 # Backend-facing helpers
 #
-# ``prepare_cell_value`` and ``prepare_com_value`` are the two entry points the
-# backends use.  Keeping them here guarantees that both backends see exactly
-# the same value for the same input — including the win32com quirk that COM
-# applies the local timezone offset to naive datetimes.
+# ``prepare_cell_value`` and ``com_value_from_normalized`` are the two entry
+# points the backends use.  Keeping them here guarantees that both backends see
+# exactly the same value for the same input — including the win32com quirk that
+# COM applies the local timezone offset to naive datetimes.
 # ==============================================================================
 
 
@@ -775,11 +802,56 @@ def prepare_cell_value(value: Any) -> Any:  # noqa: ANN401
     return normalize_value(_to_python_datetime(value))
 
 
-def prepare_com_value(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
-    """Prepare *value* for writing through the win32com backend.
+def prepare_table_cell(
+    raw: Any,  # noqa: ANN401
+    *,
+    table: str,
+    row: int,
+    column: str,
+    warned: set[tuple[str | None, str | None]] | None = None,
+    date1904: bool = False,
+) -> Any:  # noqa: ANN401
+    """Validate and normalise one table cell value, the same way in every engine.
 
-    Applies the same normalisation as :func:`prepare_cell_value`, then takes
-    care of two COM-specific behaviours:
+    Args:
+        raw: The value the caller supplied.
+        table: Table name, for error and warning messages.
+        row: 1-based data row, for messages.
+        column: Column name, for messages.
+        warned: Columns already warned about, so a warning is not repeated.
+        date1904: Whether the workbook counts days from 1904-01-01.
+
+    Returns:
+        The value to write.
+
+    Raises:
+        CellValueError: If *raw* is not a single Excel value, or the value
+            cannot be stored.
+
+    Examples:
+        >>> import datetime as dt
+        >>> prepare_table_cell(dt.date(2025, 1, 2), table="T", row=1, column="A")
+        datetime.date(2025, 1, 2)
+
+    """
+    check_table_cell_scalar(raw, table=table, row=row, column=column)
+    check_nonfinite_value(raw, table=table, row=row, column=column, warned=warned)
+    value = prepare_cell_value(raw)
+    check_cell_value(
+        value,
+        table=table,
+        row=row,
+        column=column,
+        warned=warned,
+        date1904=date1904,
+    )
+    return value
+
+
+def com_value_from_normalized(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
+    """Prepare an already normalised *value* for writing through the win32com backend.
+
+    Two COM-specific behaviours are handled here:
 
     * Datetimes are marked as UTC.  COM converts naive datetimes using the
       local timezone, which shifts the serial number Excel stores; marking
@@ -791,39 +863,17 @@ def prepare_com_value(value: Any, *, escape_formulas: bool = False) -> Any:  # n
       openpyxl keeps them as text.  Strings starting with ``=`` are left alone
       so they stay formulas, unless *escape_formulas* is set.
 
-    Args:
-        value: Raw value from user data.
-        escape_formulas: If True, strings starting with ``=`` are stored as
-            literal text instead of becoming formulas.
-
-    Returns:
-        A value suitable for assigning to a COM ``Range``.
-
-    Examples:
-        >>> import datetime as dt
-        >>> prepare_com_value(3.14)
-        3.14
-        >>> prepare_com_value("00123")
-        "'00123"
-        >>> prepare_com_value("=1+1")
-        '=1+1'
-        >>> prepare_com_value("=1+1", escape_formulas=True)
-        "'=1+1"
-        >>> prepare_com_value(dt.datetime(2025, 6, 15, 14, 30)).isoformat()
-        '2025-06-15T14:30:00+00:00'
-
-    """
-    return com_value_from_normalized(prepare_cell_value(value), escape_formulas=escape_formulas)
-
-
-def com_value_from_normalized(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
-    """The COM-specific part of :func:`prepare_com_value` for an already normalised value.
-
     Integers outside the 32-bit range are handed over as floats: pywin32
     marshals a wider Python int as VT_I8 or fails outright, while Excel holds
     every number as a double anyway.
 
     Examples:
+        >>> com_value_from_normalized("00123")
+        "'00123"
+        >>> com_value_from_normalized("=1+1")
+        '=1+1'
+        >>> com_value_from_normalized("=1+1", escape_formulas=True)
+        "'=1+1"
         >>> com_value_from_normalized(dt.date(2025, 6, 15)).isoformat()
         '2025-06-15T00:00:00+00:00'
         >>> com_value_from_normalized(2**31)

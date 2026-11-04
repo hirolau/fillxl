@@ -80,20 +80,103 @@ matter, and every format produces the same workbook.
 
 ## Choosing an engine
 
-`engine="auto"` (the default) picks the engine that can do the job:
+Three engines are available. `engine="auto"` (the default) picks one; pass
+`engine=` to choose explicitly.
 
-| Template → output | Engine used |
-|-------------------|-------------|
-| `.xlsx` → `.xlsx`, `.xlsm` → `.xlsm` | `openpyxl` (no Excel needed) |
-| `.xlsb`/`.xls` template, or a format conversion | `win32com` when Excel is available |
-| anything else, without Excel | `openpyxl`, whose error says what is missing |
+| | `openpyxl` | `fillxl` | `win32com` |
+|---|---|---|---|
+| Runs on | Any OS | Any OS | Windows with Excel |
+| Needs Excel | No | No | Yes |
+| Keeps modern features (dynamic arrays, slicers, chartEx, rich data…) | No; losses are reported via `on_lossy` | Yes | Yes |
+| Formula results in the saved file | None; Excel recalculates on open | None; cached results are cleared and Excel recalculates on open | Yes, calculated by Excel |
+| Pivot tables | Marked to refresh on open | Marked to refresh on open | Refreshed now |
+| Formats | `.xlsx` → `.xlsx`, `.xlsm` → `.xlsm` | Same as openpyxl | `.xlsx`, `.xlsm`, `.xlsb`, with conversion between them |
+| Status | Stable | Experimental, opt-in | Stable |
+
+- On Linux or in CI with a simple template: use `"auto"` (it picks `openpyxl`).
+- On Linux with modern features in the template: use `engine="fillxl"`. The
+  file opens correctly in Excel. Tools that cannot calculate (pandas reading
+  the output, previewers) see blank formula results.
+- When the saved file must contain calculated values, or for `.xlsb` or format
+  conversion: use `engine="win32com"`.
+- What `"auto"` does, exactly: `openpyxl`, unless Excel is required and
+  available. It never picks `fillxl`.
+
+### How the `win32com` engine writes text
+
+Excel has one way to force a value to stay text — the cell's **quote prefix** —
+so the `win32com` engine writes every string with a leading `'`, which keeps
+values such as `00123` or `1/2` as text instead of letting Excel turn them into
+a number or a date. The quote itself is not part of the value, but Excel records
+the cell as "prefixed with an apostrophe". A user who later types a number into
+one of those filled cells therefore gets text, not a number: either clear the
+cell first (the prefix stays until the cell is cleared or reformatted), or
+write such columns with `engine="openpyxl"` or `engine="fillxl"`, which store
+strings as text without setting the prefix.
 
 `openpyxl` runs anywhere; `win32com` drives Microsoft Excel on Windows (pywin32
 installs with fillxl there) and keeps what openpyxl drops (modern charts,
-slicers, macro-heavy workbooks). Both engines write the same values for the same
-template and data; the
+slicers, macro-heavy workbooks). `engine="fillxl"` is the third way: it needs
+no Excel, works on any platform, and keeps spilled dynamic arrays
+(`SEQUENCE`, `FILTER`, `SORT`, …), cell metadata, slicers and VBA by writing
+only the parts a fill has to change. All engines write the same values for the
+same template and data; the
 [Backends](https://hirolau.github.io/fillxl/backends/) page lists what still
 differs.
+
+> **`.xls` (Excel 97-2003) is no longer supported.** No engine reads or writes
+> it: BIFF8 cannot hold the features fillxl exists to preserve, and reading it
+> needs Excel anyway. A fill whose template or output ends in `.xls` is refused
+> before anything is opened. Open the file in Excel and save it as `.xlsx`,
+> `.xlsm` or `.xlsb`.
+
+> **`engine="fillxl"` is experimental and opt-in.** `engine="auto"` never
+> selects it, so a fill only uses it when you ask for it. It keeps spilled
+> dynamic arrays, but **it does not calculate them**: the spill is written as
+> the template had it, and Excel grows and computes it when it opens the file.
+> Until then, anything that reads cached values — `pandas`, `openpyxl` with
+> `data_only=True`, previews, search indexers — sees the old numbers or nothing.
+
+**Its limits:**
+
+- `.xlsx` and `.xlsm` only, with no format conversion (use `win32com` for
+  `.xlsb` and converting between formats).
+- Encrypted workbooks cannot be opened.
+- Pivot tables are only flagged for refresh on open; fillxl cannot pivot.
+- `chartEx` charts and sparklines that read a table's rows are updated with
+  the table, like their classic counterparts.
+- Pivot sources, defined names and data validations that cover a table body
+  follow a resize, as they do in Excel. A built-in name (`_xlnm.Print_Area`, …)
+  belongs to Excel and is reported with `UntrackedRangeWarning` instead of being
+  rewritten.
+
+### Speed
+
+Speed is not why it exists, but it is the fastest of the three: on the same
+2,000-row fill it takes about **0.7 s**, against 1.5 s for `openpyxl` and 2.6 s
+for `win32com` — it writes the same values without building or re-serialising a
+workbook model. [Benchmarks](https://hirolau.github.io/fillxl/benchmarks/)
+has the tables, the method and the script to reproduce them.
+
+### Cached values
+
+No engine that writes without Excel can calculate. The fillxl engine writes
+formulas with no cached result at all, and a fill removes every cached result
+already in the workbook: the numbers the template stored belong to the
+template's data, not to the filled report, and without a dependency graph there
+is no telling which of them are still valid. Spills are kept, but their stored
+results are cleared the same way. Sheets without formulas are still copied byte
+for byte. Excel recalculates the whole file when it opens it — the workbook is
+flagged `fullCalcOnLoad` — and a spill whose size depends on the table grows
+then.
+
+Tools that read cached values (`pandas`, `openpyxl` with `data_only=True`, file
+previews, search indexers) see blanks in a fillxl output — a blank is
+deliberate, because a stale number reads like the report's own. Chart *data*
+caches (`numCache`/`strCache` points) are the one exception: they keep the
+template's points until Excel redraws the chart on open. Dynamic arrays survive
+on Linux, but they are not computed there either. Use `engine="win32com"` when
+the saved file must contain computed values.
 
 ## Know the edge cases
 
@@ -103,16 +186,30 @@ differs.
 - `None` and `NaN` are missing values and become empty cells. ±Infinity cannot
   be stored either, but it warns rather than disappearing quietly.
 - Every warning is a `fillxl.FillXLWarning` subclass (`TimezoneWarning`,
-  `DanglingReferenceWarning`, `LossyTemplateWarning`), so
-  `warnings.simplefilter("error", fillxl.FillXLWarning)` makes data problems
+  `DanglingReferenceWarning`, `UntrackedRangeWarning`, `LossyTemplateWarning`),
+  so `warnings.simplefilter("error", fillxl.FillXLWarning)` makes data problems
   fail fast instead of quietly changing the output.
 - `openpyxl` writes no cached formula results; the output asks Excel to
   recalculate on open (`engine="win32com"` saves computed values).
 - `openpyxl` drops some modern chart types, slicers and similar parts, and says
   so: `on_lossy="warn"` (default) warns, `on_lossy="raise"` fails the fill.
+  Use `engine="fillxl"` when the template has spilled dynamic arrays or other
+  parts openpyxl cannot write: it keeps them.
+- `engine="fillxl"` (experimental) keeps spilled arrays and everything else
+  unchanged, but it computes nothing: every cached formula result is removed
+  (a reader without a calculation engine sees blanks instead of the template's
+  numbers), and Excel recalculates the file when it opens it.
+- `delete_sheets` matches sheet names the way Excel does, ignoring case:
+  `delete_sheets=["rawdata"]` deletes `RawData`. A name that matches nothing
+  warns rather than being ignored.
+- A table fill shows the rows it writes: a template saved with a filter applied
+  or with rows hidden by hand is filtered back to "all rows" and unhidden, so no
+  filled row stays invisible and no `SUBTOTAL(109, …)` total leaves it out.
+- A totals row that holds an A1 formula (`=SUM(B2:B2)`) is resized with the
+  body, like a formula anywhere else that tracked the table.
 - `delete_sheets` does not rewrite formulas, charts, names or pivots that point
-  at the deleted sheet; fillxl warns with `DanglingReferenceWarning` because
-  Excel shows `#REF!` there.
+  at the deleted sheet; every engine warns with `DanglingReferenceWarning`
+  because Excel shows `#REF!` there.
 - `hide_underscore_sheets` is **on** by default, so a sheet named `_data` is
   hidden unless you opt out. Hiding or deleting every sheet raises, because
   Excel requires one visible sheet — set `hide_underscore_sheets=False` for a

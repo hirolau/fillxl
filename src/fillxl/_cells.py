@@ -15,6 +15,8 @@ from fillxl._normalize import (
     is_text_cell_value,
     prepare_cell_value,
 )
+from fillxl._ooxml.xmltext import escape_ooxml_escapes
+from fillxl._utils import workbook_uses_1904
 from fillxl._warnings import warn_user
 
 if TYPE_CHECKING:
@@ -25,6 +27,33 @@ if TYPE_CHECKING:
     from openpyxl.worksheet.table import Table
 
 logger = logging.getLogger(__name__)
+
+
+def name_destinations(refers_to: str) -> list[tuple[str, str]]:
+    """Destinations of a defined name, parsed exactly as openpyxl parses them.
+
+    Every engine shares this parser: win32com hands it ``Name.RefersTo`` and
+    the fillxl engine hands it the text of ``<definedName>``, so all three
+    agree on where a name points — including quoted sheet names, names with
+    several destinations and names defined by a formula.
+
+    Examples:
+        >>> name_destinations("Data!$A$1")
+        [('Data', '$A$1')]
+        >>> name_destinations("'Bob''s Data'!$A$1")
+        [("Bob''s Data", '$A$1')]
+        >>> name_destinations("Data!$A$1,Other!$B$2:$C$3")
+        [('Data', '$A$1'), ('Other', '$B$2:$C$3')]
+        >>> name_destinations("'My, Sheet'!A1")
+        [('My, Sheet', 'A1')]
+        >>> name_destinations("OFFSET(Data!$A$1,0,0)")
+        []
+
+    """
+    from openpyxl.workbook.defined_name import DefinedName
+
+    probe = DefinedName("fillxl_probe", attr_text=refers_to.removeprefix("="))
+    return list(probe.destinations)
 
 
 def named_cell_target(
@@ -171,7 +200,6 @@ def populate_named_cells(
     workbook: Workbook,
     cells: dict[str, Any],
     *,
-    allow_missing: bool = False,
     escape_formulas: bool = False,
 ) -> None:
     """Populate named cells with scalar values.
@@ -179,12 +207,11 @@ def populate_named_cells(
     Args:
         workbook: openpyxl Workbook instance
         cells: Dictionary mapping named cell names to values
-        allow_missing: If False, raise error if named cell is not found
         escape_formulas: If True, strings starting with ``=`` are written as
             literal text instead of becoming formulas.
 
     Raises:
-        KeyError: If a named cell is not found and allow_missing is False
+        KeyError: If a named cell is not found
         ValueError: If the name points at a table header row, which cannot be
             renamed without desynchronising the table's column.
 
@@ -192,9 +219,6 @@ def populate_named_cells(
     for name, value in cells.items():
         defined_name = find_defined_name(workbook, name)
         if defined_name is None:
-            if allow_missing:
-                warn_user(f"Named cell {name!r} not found in workbook, nothing was written")
-                continue
             msg = f"Named cell '{name}' not found in workbook"
             raise KeyError(msg)
 
@@ -206,7 +230,7 @@ def populate_named_cells(
 
         # Normalise value for Excel compatibility
         normalised_value = prepare_cell_value(value)
-        check_cell_value(normalised_value, name=name)
+        check_cell_value(normalised_value, name=name, date1904=workbook_uses_1904(workbook))
 
         target = named_cell_target(name, list(defined_name.destinations))
         if target is None:
@@ -223,11 +247,16 @@ def populate_named_cells(
             raise header_write_error(worksheet_name, cell_address, str(conflict.name))
 
         cell = worksheet[cell_address]
+        # Excel decodes ``_xHHHH_`` in a cell string, so literal text is escaped
+        # the way Excel's own writer escapes it — never a formula.
+        as_text = is_text_cell_value(normalised_value, escape_formulas=escape_formulas)
+        if as_text:
+            normalised_value = escape_ooxml_escapes(str(normalised_value))
         cell.value = normalised_value
 
         # Force text for strings openpyxl would reinterpret: error values
         # such as "#N/A", and formulas when escaping is enabled.
-        if is_text_cell_value(normalised_value, escape_formulas=escape_formulas):
+        if as_text:
             cell.data_type = "s"
 
         logger.debug(

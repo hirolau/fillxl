@@ -17,13 +17,17 @@ if TYPE_CHECKING:
 
 OnLossy = Literal["ignore", "warn", "raise"]
 
+# The formats whose parts this module can compare part by part.
+_XML_SUFFIXES = (".xlsx", ".xlsm")
+_VBA_LABEL = "VBA project"
+
 
 class LossyTemplateError(RuntimeError):
     """The output lost template features and ``on_lossy="raise"`` was set."""
 
 
 class LossyTemplateWarning(FillXLWarning):
-    """The openpyxl engine dropped template features."""
+    """An engine dropped template features the fill could not write back."""
 
 
 _MEDIA_PREFIX = "xl/media/"
@@ -44,6 +48,7 @@ _PART_FEATURES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^xl/connections\.xml$"), "data connections"),
     (re.compile(r"^xl/queryTables/[^/]+\.xml$"), "query tables"),
     (re.compile(r"^xl/richData/[^/]+$"), "rich data (pictures in cells, data types)"),
+    (re.compile(r"^xl/metadata\.xml$"), "cell metadata (dynamic arrays, data types)"),
     (re.compile(r"^xl/externalLinks/externalLink\d+\.xml$"), "external links"),
     (re.compile(r"^xl/webextensions/[^/]+$"), "Office add-ins"),
     # openpyxl writes no embeddings at all, so an embedded Word document, PDF
@@ -235,6 +240,7 @@ def check_lossy(
     policy: OnLossy,
     *,
     deleted_sheets: Collection[str] = (),
+    engine: str = "openpyxl",
 ) -> None:
     """Apply the ``on_lossy`` policy to a filled *output*."""
     if policy == "ignore":
@@ -242,11 +248,85 @@ def check_lossy(
     lost = find_lost_features(template, output, deleted_sheets=deleted_sheets)
     if not lost:
         return
+    features = "; ".join(lost)
+    if engine == "fillxl":
+        msg = (
+            f"The fillxl engine did not preserve these template features: {features}. "
+            "This is a fillxl engine bug; please report it with the template. "
+            "engine='win32com' preserves them meanwhile, or set on_lossy='ignore'."
+        )
+    else:
+        msg = (
+            f"The {engine} engine did not preserve these template features: {features}. "
+            "Use engine='fillxl' to keep them without Excel, or engine='win32com' if "
+            "calculated values are also needed; set on_lossy='ignore' to stop this report."
+        )
+    _apply_lossy_policy(msg, policy)
+
+
+def check_conversion_losses(
+    template: Path,
+    output: Path,
+    policy: OnLossy,
+    *,
+    engine: str = "win32com",
+    has_vba: bool | None = None,
+) -> None:
+    """Report template features that writing *output* in another format dropped.
+
+    Excel writes back everything it read, but the format it wrote to may have
+    no room for it: an ``.xlsm`` template saved as ``.xlsx`` loses its VBA
+    project.  Nothing warns about that on its own -- Excel's compatibility
+    checker is silenced along with the other alerts during a fill.
+
+    Args:
+        template: The template the workbook was filled from.
+        output: The file the backend wrote.
+        policy: The ``on_lossy`` policy.
+        engine: Engine name for the message.
+        has_vba: Whether the filled workbook has a VBA project, when the
+            backend can say so.
+
+    """
+    if policy == "ignore" or template.suffix.lower() == output.suffix.lower():
+        return
+    output_suffix = output.suffix.lower()
+    lost: list[str] = []
+    if output_suffix in _XML_SUFFIXES:
+        # Both sides are XML packages, so their parts can be compared.  Only
+        # things the output cannot hold are reported: a part that is gone from
+        # the output but was never there either is not a loss.
+        lost = find_lost_features(template, output)
+    # A binary OOXML output (``.xlsb``) holds the same feature set as the XML
+    # formats; comparing parts by name would report every XML part as lost.
+    vba = _vba_loss(template, output_suffix, has_vba=has_vba)
+    if vba is not None and not any(item.startswith(_VBA_LABEL) for item in lost):
+        lost.append(vba)
+    if not lost:
+        return
     msg = (
-        "The openpyxl engine did not preserve these template features: "
-        + "; ".join(lost)
-        + ". Use engine='win32com' to keep them, or set on_lossy='ignore'."
+        f"The {engine} engine saved a '{template.suffix}' template as "
+        f"'{output.suffix}', which cannot hold everything it had: {'; '.join(lost)}. "
+        "Save to a format that keeps them, or set on_lossy='ignore'."
     )
+    _apply_lossy_policy(msg, policy)
+
+
+def _vba_loss(template: Path, output_suffix: str, *, has_vba: bool | None) -> str | None:
+    """The VBA loss for *output_suffix*, or ``None`` when the format keeps macros.
+
+    Only ``.xlsx`` cannot hold a VBA project: ``.xlsm`` and ``.xlsb`` both can.
+    """
+    if output_suffix != ".xlsx":
+        return None
+    count = feature_counts(template).get(_VBA_LABEL, 0)
+    if not count and has_vba:
+        count = 1
+    return f"{_VBA_LABEL} ({count} lost)" if count else None
+
+
+def _apply_lossy_policy(message: str, policy: OnLossy) -> None:
+    """Raise or warn about *message*, depending on *policy*."""
     if policy == "raise":
-        raise LossyTemplateError(msg)
-    warn_user(msg, LossyTemplateWarning)
+        raise LossyTemplateError(message)
+    warn_user(message, LossyTemplateWarning)

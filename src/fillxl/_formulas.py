@@ -20,9 +20,12 @@ import sys
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from openpyxl.formula import Tokenizer
+from openpyxl.formula.tokenizer import TokenizerError
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
 
-from fillxl._utils import table_column_name
+from fillxl._types import MAX_COLUMN, MAX_ROW
+from fillxl._utils import table_column_name, unquote_sheet_name
 from fillxl._warnings import warn_user
 
 if TYPE_CHECKING:
@@ -36,10 +39,12 @@ logger = logging.getLogger(__name__)
 BodyState = Literal["formula", "mixed", "empty", "values"]
 CellKind = Literal["formula", "empty", "value"]
 
-_MAX_ROW = 1_048_576
 # A single A1 reference, optionally qualified by a sheet name.  A defined name
 # such as ``Rate`` has no digits and a structured reference contains ``[``, so
 # neither matches; ``LOG10(`` is a function token, never an operand.
+# The shape alone is not enough: ``YTD2024`` looks like column ``YTD`` and row
+# 2024, but that column is past ``XFD``, so Excel reads it as a defined name.
+# Every match therefore has to pass :func:`_is_a1_operand`.
 _A1_OPERAND = re.compile(
     r"^(?:(?:'(?:[^']|'')+'|[A-Za-z_][\w.]*)!)?\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?$"
 )
@@ -48,6 +53,117 @@ _TWO_CELL_RANGE = re.compile(
     r"(?P<first>\$?[A-Za-z]{1,3}\$?\d+):(?P<last>\$?[A-Za-z]{1,3}\$?\d+)$"
 )
 _COLUMN_ROW = re.compile(r"(?P<col>\$?[A-Za-z]{1,3})(?P<row>\$?\d+)")
+
+
+def _is_a1_operand(operand: str) -> bool:
+    """Whether *operand* is an A1 reference inside Excel's grid.
+
+    A defined name whose letters look like a column past ``XFD`` is spelled the
+    same way as a reference (``YTD2024``, ``ZAR1``), and Excel never shifts it
+    when a formula is copied.  Treating it as a reference would silently point
+    the copied formula at another name — or at nothing.
+
+    Examples:
+        >>> _is_a1_operand("B4")
+        True
+        >>> _is_a1_operand("Data!$B$4:$C$9")
+        True
+        >>> _is_a1_operand("XFD1048576")
+        True
+        >>> _is_a1_operand("YTD2024")
+        False
+        >>> _is_a1_operand("ZAR1")
+        False
+        >>> _is_a1_operand("Rate")
+        False
+
+    """
+    if _A1_OPERAND.match(operand) is None:
+        return False
+    _, refs = _split_sheet(operand)
+    return all(_endpoint_in_bounds(reference) for reference in refs.split(":"))
+
+
+def _endpoint_in_bounds(reference: str) -> bool:
+    """Whether one ``$?COL$?ROW`` reference lands inside the sheet."""
+    match = _COLUMN_ROW.fullmatch(reference)
+    if match is None:  # pragma: no cover - _A1_OPERAND guarantees the shape
+        return False
+    return (
+        1 <= _column_index(match.group("col")) <= MAX_COLUMN
+        and 1 <= int(match.group("row").lstrip("$")) <= MAX_ROW
+    )
+
+
+def a1_reference(operand: str) -> tuple[str | None, str] | None:
+    """``(sheet_title, reference)`` when *operand* is one A1 reference.
+
+    The sheet title is unquoted (Excel doubles a quote inside a quoted name),
+    and ``None`` when the reference is unqualified — it then means the sheet the
+    reference sits on.
+
+    Whole-row and whole-column references (``$1:$1``, ``$A:$A``) are not
+    rectangles this package can compare, so they return ``None``.
+
+    Examples:
+        >>> a1_reference("Data!$B$4:$C$9")
+        ('Data', '$B$4:$C$9')
+        >>> a1_reference("'Bob''s Data'!$A$1")
+        ("Bob's Data", '$A$1')
+        >>> a1_reference("$A$2:$B$2")
+        (None, '$A$2:$B$2')
+        >>> a1_reference("$1:$1") is None
+        True
+        >>> a1_reference("$A:$A") is None
+        True
+        >>> a1_reference("YTD2024") is None
+        True
+
+    """
+    if not _is_a1_operand(operand):
+        return None
+    prefix, refs = _split_sheet(operand)
+    if not prefix:
+        return None, refs
+    return unquote_sheet_name(prefix[:-1]), refs
+
+
+def sole_reference(text: str) -> tuple[str | None, str] | None:
+    """``(sheet_title, reference)`` when *text* is nothing but one A1 reference.
+
+    A data-validation list source and a defined name are written as a bare
+    reference; a custom validation rule (``A1>0``), a literal list
+    (``"a,b,c"``) and a formula (``OFFSET(…)``) are not, and are refused here
+    rather than being parsed into a range that means something else.
+
+    Examples:
+        >>> sole_reference("$H$2:$H$10")
+        (None, '$H$2:$H$10')
+        >>> sole_reference("=Data!$A$2:$A$5")
+        ('Data', '$A$2:$A$5')
+        >>> sole_reference("A1>0") is None
+        True
+        >>> sole_reference('"a,b,c"') is None
+        True
+        >>> sole_reference("OFFSET(Data!$A$1,0,0)") is None
+        True
+        >>> sole_reference("Data!$A$2:$A$5,Other!$B$1:$B$3") is None
+        True
+
+    """
+    stripped = text.strip().removeprefix("=").strip()
+    if not stripped or stripped.startswith('"'):
+        return None
+    try:
+        tokens = Tokenizer(f"={stripped}").items
+    except TokenizerError:
+        # A hand-written or damaged definition is not a reference this can use;
+        # it must not turn a fill into a crash.
+        return None
+    operands = [token.value for token in tokens if token.value.strip()]
+    if len(operands) != 1:
+        return None
+    return a1_reference(operands[0])
 
 
 def _split_sheet(operand: str) -> tuple[str, str]:
@@ -84,10 +200,7 @@ def _sheet_matches(prefix: str, sheet_title: str) -> bool:
     """
     if not prefix:
         return False
-    name = prefix[:-1]
-    if name.startswith("'") and name.endswith("'"):
-        name = name[1:-1].replace("''", "'")
-    return name.casefold() == sheet_title.casefold()
+    return unquote_sheet_name(prefix[:-1]).casefold() == sheet_title.casefold()
 
 
 def _replace_rows(refs: str, first_row: int, last_row: int) -> str:
@@ -120,24 +233,74 @@ def _with_row(reference: str, row: int) -> str:
     return f"{match.group('col')}{dollar}{row}"
 
 
-def _shift_operand(operand: str, offset: int) -> str:
-    """Move every relative row of *operand* down by *offset* rows."""
+def _shift_operand(operand: str, row_offset: int, column_offset: int) -> str:
+    """Move every relative reference of *operand* by the given offsets."""
     prefix, refs = _split_sheet(operand)
 
     def replace(match: re.Match[str]) -> str:
+        column_text = match.group("col")
         row_text = match.group("row")
-        if row_text.startswith("$"):
-            return match.group(0)
-        new_row = int(row_text) + offset
-        if not 1 <= new_row <= _MAX_ROW:
-            msg = (
-                f"Filling this table would move the reference {operand!r} to row "
-                f"{new_row}, outside the sheet"
-            )
-            raise ValueError(msg)
-        return f"{match.group('col')}{new_row}"
+        column = column_text.lstrip("$")
+        row = row_text.lstrip("$")
+        if row_offset and not row_text.startswith("$"):
+            new_row = int(row) + row_offset
+            if not 1 <= new_row <= MAX_ROW:
+                msg = (
+                    f"Filling this table would move the reference {operand!r} to row "
+                    f"{new_row}, outside the sheet"
+                )
+                raise ValueError(msg)
+            row = str(new_row)
+        if column_offset and not column_text.startswith("$"):
+            new_column = _column_index(column) + column_offset
+            if not 1 <= new_column <= MAX_COLUMN:
+                msg = (
+                    f"Filling this table would move the reference {operand!r} to "
+                    f"column {new_column}, outside the sheet"
+                )
+                raise ValueError(msg)
+            column = get_column_letter(new_column)
+        dollar_column = "$" if column_text.startswith("$") else ""
+        dollar_row = "$" if row_text.startswith("$") else ""
+        return f"{dollar_column}{column}{dollar_row}{row}"
 
     return prefix + _COLUMN_ROW.sub(replace, refs)
+
+
+def shift_relative(formula: str, *, rows: int = 0, columns: int = 0) -> str:
+    """*formula* with its relative A1 references moved by *rows* and *columns*.
+
+    Excel moves relative references when a formula is copied, including the
+    column part when it is filled right — which is how a shared formula group
+    is stored: one text, many positions.
+
+    Examples:
+        >>> shift_relative("=B5*C5", rows=2)
+        '=B7*C7'
+        >>> shift_relative("=SUM(B5:B5)", columns=2)
+        '=SUM(D5:D5)'
+        >>> shift_relative("=B5*$C5", rows=1, columns=1)
+        '=C6*$C6'
+        >>> shift_relative("=[@Qty]*2", rows=3, columns=1)
+        '=[@Qty]*2'
+
+    """
+    if rows == 0 and columns == 0:
+        return formula
+    tokenizer = Tokenizer(formula)
+    parts: list[str] = []
+    changed = False
+    for token in tokenizer.items:
+        if token.type == "OPERAND" and token.subtype == "RANGE" and _is_a1_operand(token.value):
+            shifted = _shift_operand(token.value, rows, columns)
+            changed = changed or shifted != token.value
+            parts.append(shifted)
+        else:
+            parts.append(token.value)
+    if not changed:
+        return formula
+    joined = "".join(parts)
+    return f"={joined}" if formula.startswith("=") else joined
 
 
 def shift_relative_rows(formula: str, offset: int) -> str:
@@ -165,24 +328,47 @@ def shift_relative_rows(formula: str, offset: int) -> str:
         '=Data!B6*2'
         >>> shift_relative_rows("=LOG10(B5)", 1)
         '=LOG10(B6)'
+        >>> shift_relative_rows("=YTD2024*2", 1)
+        '=YTD2024*2'
+        >>> shift_relative_rows("=ZAR1*2", 1)
+        '=ZAR1*2'
 
     """
-    if offset == 0:
-        return formula
-    tokenizer = Tokenizer(formula)
-    parts: list[str] = []
-    changed = False
-    for token in tokenizer.items:
-        if token.type == "OPERAND" and token.subtype == "RANGE" and _A1_OPERAND.match(token.value):
-            shifted = _shift_operand(token.value, offset)
-            changed = changed or shifted != token.value
-            parts.append(shifted)
-        else:
-            parts.append(token.value)
-    if not changed:
-        return formula
-    joined = "".join(parts)
-    return f"={joined}" if formula.startswith("=") else joined
+    return shift_relative(formula, rows=offset)
+
+
+def may_track_table(formula: str, *, table_sheet: str, formula_sheet: str) -> bool:
+    """Whether *formula* could hold a range that tracks the table on *table_sheet*.
+
+    Tokenising every formula of a workbook is both slow and brittle — one
+    formula openpyxl cannot read would stop a fill that has nothing to do with
+    it.  A formula that cannot possibly track the table is skipped before the
+    tokenizer sees it: it needs a ``:`` to hold a range, and a formula on
+    another sheet has to mention that sheet.
+
+    A sheet name with an apostrophe is written quoted, with the apostrophe
+    doubled (``'Bob''s Data'``), which is what the ``replace`` produces.
+
+    Examples:
+        >>> may_track_table("=A1*2", table_sheet="Data", formula_sheet="Data")
+        False
+        >>> may_track_table("=SUM(B4:B4)", table_sheet="Data", formula_sheet="Other")
+        False
+        >>> may_track_table("=SUM(B4:B4)", table_sheet="Data", formula_sheet="data")
+        True
+        >>> may_track_table(
+        ...     "=SUM('Bob''s Data'!B4:B4)",
+        ...     table_sheet="Bob's Data",
+        ...     formula_sheet="Other",
+        ... )
+        True
+
+    """
+    if ":" not in formula:
+        return False
+    if formula_sheet.casefold() == table_sheet.casefold():
+        return True
+    return table_sheet.replace("'", "''").casefold() in formula.casefold()
 
 
 def extend_table_ranges(
@@ -224,6 +410,8 @@ def extend_table_ranges(
         True
         >>> extend_table_ranges("=SUM(Z1:Z1)", **kw) is None
         True
+        >>> extend_table_ranges("=SUM(YTD2024:YTD2024)", **kw) is None
+        True
         >>> extend_table_ranges("=B4*2", **kw) is None
         True
         >>> extend_table_ranges('=IF(A1>0,"B4:B4",SUM(B4:B4))', **kw)
@@ -235,7 +423,12 @@ def extend_table_ranges(
     changed = False
     for token in tokenizer.items:
         value = token.value
-        if token.type == "OPERAND" and token.subtype == "RANGE" and _TWO_CELL_RANGE.match(value):
+        if (
+            token.type == "OPERAND"
+            and token.subtype == "RANGE"
+            and _TWO_CELL_RANGE.match(value)
+            and _is_a1_operand(value)
+        ):
             prefix, refs = _split_sheet(value)
             points_at_table = (
                 _sheet_matches(prefix, sheet_title)
@@ -269,6 +462,8 @@ def _tracks_body(
     new_body: tuple[int, int],
 ) -> bool:
     """Whether the range ``refs`` covers a table column run over the whole body."""
+    if not _is_a1_operand(refs):
+        return False
     match = _TWO_CELL_RANGE.match(refs)
     if match is None:
         return False
@@ -315,7 +510,7 @@ class ColumnFormulaEvidence(NamedTuple):
         name: Column name.
         definition: ``calculatedColumnFormula`` text without ``=``, or ``None``.
         definitions_known: ``False`` when the file format hides definitions
-            (``.xlsb``/``.xls`` read through COM).
+            (``.xlsb`` read through COM).
         body_state: What the template body cells of this column hold.
         body_formula: Formula of the first body cell including ``=`` (COM only;
             openpyxl passes ``None`` and writes the definition instead).

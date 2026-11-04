@@ -7,6 +7,7 @@ from copy import copy
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from openpyxl.cell.cell import Cell
+from openpyxl.formula.tokenizer import TokenizerError
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
 
@@ -14,17 +15,16 @@ from ._adapters import TabularAdapter
 from ._charts import TableChangeSpecs
 from ._formulas import (
     extend_table_ranges,
+    may_track_table,
     openpyxl_formula_columns,
     shift_relative_rows,
     warn_about_ignored_formula_data,
 )
 from ._normalize import (
-    check_cell_value,
-    check_nonfinite_value,
-    check_table_cell_scalar,
     is_text_cell_value,
-    prepare_cell_value,
+    prepare_table_cell,
 )
+from ._ooxml.xmltext import escape_ooxml_escapes
 from ._plan import (
     BlockedRegion,
     RowSpan,
@@ -33,7 +33,16 @@ from ._plan import (
     blocked_area,
     plan_table_fill,
 )
-from ._utils import find_worksheet_and_table, table_column_name
+from ._references import (
+    BUILT_IN_NAME_PREFIX,
+    openpyxl_range_sources,
+    resize_reference_text,
+    resized_reference,
+    same_sheet,
+    warn_about_untracked_ranges,
+)
+from ._utils import find_worksheet_and_table, table_column_name, workbook_uses_1904
+from ._validation import ColumnValidationStrategy, validate_columns
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -43,29 +52,6 @@ if TYPE_CHECKING:
     from openpyxl.worksheet.worksheet import Worksheet
 
 logger = logging.getLogger(__name__)
-
-
-def is_single_cell(cell: object) -> bool:
-    """Check if an object is a single Cell instance (not a MergedCell).
-
-    Args:
-        cell: Object to check
-
-    Returns:
-        True if *cell* is a :class:`~openpyxl.cell.cell.Cell` instance.
-
-    Examples:
-        >>> from openpyxl.cell.cell import Cell
-        >>> is_single_cell(Cell(None, None, None, None))
-        True
-        >>> is_single_cell("not a cell")
-        False
-        >>> from openpyxl.worksheet.cell_range import CellRange
-        >>> is_single_cell(CellRange("A1:B2"))
-        False
-
-    """
-    return isinstance(cell, Cell)
 
 
 def openpyxl_table_geometry(table: Table) -> TableGeometry:
@@ -101,8 +87,39 @@ def _clear_rows(
             if col in skipped:
                 continue
             cell = worksheet._cells.get((row, col))
-            if cell is not None and is_single_cell(cell):
+            if isinstance(cell, Cell):
                 cell.value = None
+
+
+def _show_rows_and_drop_filters(
+    worksheet: Worksheet,
+    table: Table,
+    plan: TablePlan,
+    original_autofilter_ref: str | None,
+) -> None:
+    """Show the rows a fill writes and drop the table's filter criteria.
+
+    Excel does not reapply a filter when a table is resized, and a row hidden
+    by the author stays hidden.  Both hide data a fill has just written, and a
+    ``SUBTOTAL(109, …)`` totals row silently leaves hidden rows out.  The
+    worksheet-level filter is cleared only when it covered the table itself.
+    """
+    for row in range(plan.first_data_row, plan.new_last_row + 1):
+        dimension = worksheet.row_dimensions.get(row)
+        if dimension is not None and dimension.hidden:
+            dimension.hidden = False
+    cleared: list[Any] = []
+    table_filter = table.autoFilter
+    if table_filter is not None and table_filter.filterColumn:
+        table_filter.filterColumn = cleared
+    sheet_filter = worksheet.auto_filter
+    if (
+        sheet_filter is not None
+        and sheet_filter.filterColumn
+        and original_autofilter_ref is not None
+        and sheet_filter.ref == original_autofilter_ref
+    ):
+        sheet_filter.filterColumn = cleared
 
 
 def _check_overflow_region(
@@ -140,7 +157,7 @@ def _occupied_regions(worksheet: Worksheet, table: Table) -> list[BlockedRegion]
     """Everything on *worksheet* that a table must not grow into."""
     regions = [
         BlockedRegion(
-            description=f"table {other.name!r} at {other.ref}",
+            description=f"table {other.displayName or other.name!r} at {other.ref}",
             first_row=CellRange(other.ref).min_row,
             last_row=CellRange(other.ref).max_row,
             first_col=CellRange(other.ref).min_col,
@@ -194,7 +211,9 @@ def populate_table(
     *,
     copy_style_in_tables: bool = True,
     extend_conditional_formatting: bool = True,
+    extend_data_validation: bool = True,
     escape_formulas: bool = False,
+    column_validation_strategy: ColumnValidationStrategy = "all_but_formulas",
 ) -> TableChangeSpecs:
     """Populate an Excel table with tabular data.
 
@@ -207,8 +226,12 @@ def populate_table(
         copy_style_in_tables: If True, copy cell styles from first data row to new rows
         extend_conditional_formatting: If True, extend conditional formatting
             rules to cover new rows
+        extend_data_validation: If True, extend data-validation ranges to
+            cover new rows
         escape_formulas: If True, strings starting with ``=`` are written as
             literal text instead of becoming formulas.
+        column_validation_strategy: How to react when the data's columns do
+            not match the table's (see :func:`fillxl._validation.validate_columns`).
 
     Returns:
         TableChangeSpecs describing the old and new table dimensions
@@ -223,13 +246,23 @@ def populate_table(
 
     worksheet, table = find_worksheet_and_table(workbook, table_name)
     geometry = openpyxl_table_geometry(table)
-    plan = plan_table_fill(geometry, len(rows))
+    plan = plan_table_fill(geometry, len(rows), table_name=table_name)
     first_col, last_col = geometry.first_col, geometry.last_col
     header_rows = geometry.header_rows
 
     # Calculated columns must be detected before any body cell is cleared.
     formula_columns = openpyxl_formula_columns(
         worksheet, table, geometry.first_data_row, geometry.body_last_row
+    )
+    # Before the room-to-grow checks, so a column mismatch is reported the way
+    # the fillxl engine reports it.
+    validate_columns(
+        table_columns=[table_column_name(column) for column in table.tableColumns],
+        data_columns=columns,
+        strategy=column_validation_strategy,
+        formula_columns=list(formula_columns),
+        table_name=table_name,
+        data_rows=len(rows),
     )
     warn_about_ignored_formula_data(table_name, columns, rows, formula_columns)
 
@@ -255,13 +288,18 @@ def populate_table(
 
     # The autoFilter must stay in step with the table, or Excel repairs the file.
     original_ref = table.ref
+    original_autofilter_ref = table.autoFilter.ref if table.autoFilter is not None else None
     table.ref = plan.new_ref
     if table.autoFilter is not None:
         table.autoFilter.ref = plan.new_autofilter_ref
+    # A template saved with a filter applied (or with rows hidden by hand)
+    # would keep some of the filled rows out of sight -- and out of a
+    # SUBTOTAL(109, …) totals row.  The fill shows everything it writes.
+    _show_rows_and_drop_filters(worksheet, table, plan, original_autofilter_ref)
     logger.debug("Table '%s' resized: %s -> %s", table_name, original_ref, plan.new_ref)
 
     table_first_cell = worksheet.cell(row=geometry.top_row, column=first_col)
-    if not is_single_cell(table_first_cell):
+    if not isinstance(table_first_cell, Cell):
         msg = "Expected a single cell! This should never happen in a table."
         raise ValueError(msg)
 
@@ -289,6 +327,7 @@ def populate_table(
 
     data_column_map = {str(name): idx for idx, name in enumerate(columns)}
     warned: set[tuple[str | None, str | None]] = set()
+    date1904 = workbook_uses_1904(workbook)
 
     for col_ix, column in enumerate(table.tableColumns):
         first_row_style = table_first_cell.offset(column=col_ix, row=header_rows)._style
@@ -310,24 +349,27 @@ def populate_table(
             for row_ix, row_values in enumerate(rows):
                 cell = table_first_cell.offset(column=col_ix, row=header_rows + row_ix)
                 raw_value = row_values[data_col_idx]
-                check_table_cell_scalar(
-                    raw_value, table=table_name, row=row_ix + 1, column=column_name
-                )
-                check_nonfinite_value(
-                    raw_value, table=table_name, row=row_ix + 1, column=column_name, warned=warned
+                value = prepare_table_cell(
+                    raw_value,
+                    table=table_name,
+                    row=row_ix + 1,
+                    column=column_name,
+                    warned=warned,
+                    date1904=date1904,
                 )
                 # Style first: a date format must be in place before the value
                 # arrives, or openpyxl replaces it with its default date format.
                 if copy_style_in_tables:
                     cell._style = copy(first_row_style)
-                value = prepare_cell_value(raw_value)
-                check_cell_value(
-                    value, table=table_name, row=row_ix + 1, column=column_name, warned=warned
-                )
-                cell.value = value
                 # Force text for strings openpyxl would reinterpret: error
                 # values such as "#N/A", and formulas when escaping is on.
-                if is_text_cell_value(value, escape_formulas=escape_formulas):
+                # Excel decodes ``_xHHHH_`` in a cell string, so literal text is
+                # escaped the way Excel's own writer escapes it.
+                as_text = is_text_cell_value(value, escape_formulas=escape_formulas)
+                if as_text:
+                    value = escape_ooxml_escapes(str(value))
+                cell.value = value
+                if as_text:
                     cell.data_type = "s"
 
         else:
@@ -354,7 +396,15 @@ def populate_table(
             )
 
     if plan.new_body_last_row != geometry.body_last_row:
-        _resize_adjacent_formulas(workbook, worksheet, table, plan)
+        _resize_adjacent_formulas(workbook, worksheet, plan)
+        _resize_tracked_references(workbook, worksheet, plan)
+        warn_about_untracked_ranges(
+            openpyxl_range_sources(workbook, worksheet),
+            table_name=table_name,
+            sheet_title=str(worksheet.title),
+            geometry=geometry,
+            new_body_last_row=plan.new_body_last_row,
+        )
 
     if extend_conditional_formatting:
         _extend_conditional_formatting(
@@ -367,13 +417,78 @@ def populate_table(
             table_last_row=plan.new_body_last_row,
         )
 
+    if extend_data_validation:
+        _extend_data_validations(worksheet, plan)
+
     return plan.change_spec(str(worksheet.title))
+
+
+def _resize_tracked_references(
+    workbook: Workbook,
+    worksheet: Worksheet,
+    plan: TablePlan,
+) -> None:
+    """Rewrite the names, pivot sources and validation lists that track the table.
+
+    Excel does this itself when it resizes a ``ListObject``; doing it here keeps
+    a pivot that refreshes on load, a name that is read back and a dropdown that
+    reads its list from the table on the filled rows.  Built-in names
+    (``_xlnm.``) are Excel's own and are left to the warning.
+    """
+    geometry = plan.geometry
+    new_body_last_row = plan.new_body_last_row
+    table_sheet = str(worksheet.title)
+
+    def resized(text: str, default_sheet: str | None = None) -> str | None:
+        return resize_reference_text(
+            text,
+            table_sheet=table_sheet,
+            geometry=geometry,
+            new_body_last_row=new_body_last_row,
+            default_sheet=default_sheet,
+        )
+
+    name_collections = [workbook.defined_names]
+    name_collections.extend(sheet.defined_names for sheet in workbook.worksheets)
+    for names in name_collections:
+        for defined in names.values():
+            if str(defined.name or "").startswith(BUILT_IN_NAME_PREFIX):
+                continue
+            updated = resized(str(defined.attr_text or ""))
+            if updated is not None:
+                defined.attr_text = updated
+
+    for sheet in workbook.worksheets:
+        for pivot in getattr(sheet, "_pivots", ()):
+            source = getattr(getattr(pivot.cache, "cacheSource", None), "worksheetSource", None)
+            if source is None:
+                continue
+            reference = getattr(source, "ref", None)
+            sheet_title = getattr(source, "sheet", None)
+            if not reference or not sheet_title:
+                continue
+            updated = resized_reference(
+                str(reference),
+                sheet_matches=same_sheet(str(sheet_title), table_sheet),
+                geometry=geometry,
+                new_body_last_row=new_body_last_row,
+            )
+            if updated is not None:
+                source.ref = updated
+
+        for validation in sheet.data_validations.dataValidation:
+            for attribute in ("formula1", "formula2"):
+                formula = getattr(validation, attribute)
+                if not isinstance(formula, str):
+                    continue
+                updated = resized(formula, str(sheet.title))
+                if updated is not None:
+                    setattr(validation, attribute, updated)
 
 
 def _resize_adjacent_formulas(
     workbook: Workbook,
     worksheet: Worksheet,
-    table: Table,
     plan: TablePlan,
 ) -> None:
     """Resize the formulas that tracked the table body, as Excel does.
@@ -383,35 +498,55 @@ def _resize_adjacent_formulas(
     sheet that refers to it.  openpyxl writes formula text, so the range has to
     be rewritten here or the summary keeps summing the first row only.
 
-    Cells inside the table are skipped: their formulas belong to the table and
-    are written by :func:`populate_table`.  Ranges that only look like they
-    track the table are left alone (see :func:`extend_table_ranges`).
+    Cells in the table's data body are skipped: their formulas belong to the
+    table and are written by :func:`populate_table`.  The totals row is *not*
+    skipped -- it moved with the table, and an A1 formula there such as
+    ``=SUM(B4:B4)`` has to follow the body like any other.  Ranges that only
+    look like they track the table are left alone (see
+    :func:`extend_table_ranges`).
     """
     geometry = plan.geometry
-    current = CellRange(table.ref)
+    first_col, last_col = geometry.first_col, geometry.last_col
     table_sheet = str(worksheet.title)
     for sheet in workbook.worksheets:
         own_sheet = str(sheet.title) == table_sheet
         for (row, column), cell in list(sheet._cells.items()):
-            inside = (
+            in_body = (
                 own_sheet
-                and current.min_row <= row <= current.max_row
-                and current.min_col <= column <= current.max_col
+                and plan.first_data_row <= row <= plan.new_body_last_row
+                and first_col <= column <= last_col
             )
-            if inside or not is_single_cell(cell) or cell.data_type != "f":
+            if in_body or not isinstance(cell, Cell) or cell.data_type != "f":
                 continue
             formula = cell.value
             if not isinstance(formula, str):
                 continue
-            updated = extend_table_ranges(
+            formula_sheet = str(sheet.title)
+            if not may_track_table(
                 formula,
-                sheet_title=table_sheet,
-                formula_sheet=str(sheet.title),
-                first_col=geometry.first_col,
-                last_col=geometry.last_col,
-                old_body=(geometry.first_data_row, geometry.body_last_row),
-                new_body=(plan.first_data_row, plan.new_body_last_row),
-            )
+                table_sheet=table_sheet,
+                formula_sheet=formula_sheet,
+            ):
+                continue
+            try:
+                updated = extend_table_ranges(
+                    formula,
+                    sheet_title=table_sheet,
+                    formula_sheet=formula_sheet,
+                    first_col=geometry.first_col,
+                    last_col=geometry.last_col,
+                    old_body=(geometry.first_data_row, geometry.body_last_row),
+                    new_body=(plan.first_data_row, plan.new_body_last_row),
+                )
+            except TokenizerError:
+                # A formula openpyxl cannot read is not one this fill can
+                # rewrite; failing the whole fill over it would be worse.
+                logger.debug(
+                    "Cannot read the formula in %s!%s; leaving it alone",
+                    formula_sheet,
+                    cell.coordinate,
+                )
+                continue
             if updated is not None:
                 logger.debug("Resized formula %s -> %s", formula, updated)
                 cell.value = updated
@@ -430,9 +565,9 @@ def _reset_row_style(
     for col in range(first_col, last_col + 1):
         target = worksheet._cells.get((row, col))
         source = worksheet._cells.get((template_row, col))
-        if target is None or not is_single_cell(target):
+        if target is None or not isinstance(target, Cell):
             continue
-        if source is not None and is_single_cell(source):
+        if isinstance(source, Cell):
             target._style = copy(source._style)
 
 
@@ -479,7 +614,7 @@ def _read_row(
     snapshots: list[_CellSnapshot] = []
     for col in range(first_col, last_col + 1):
         cell = worksheet._cells.get((row, col))
-        if cell is None or not is_single_cell(cell):
+        if cell is None or not isinstance(cell, Cell):
             snapshots.append(_CellSnapshot(None, None, None))
             continue
         snapshots.append(_CellSnapshot(cell.value, copy(cell._style), cell.data_type))
@@ -495,13 +630,48 @@ def _write_row(
     """Write snapshots captured by :func:`_read_row` into *row*."""
     for offset, snapshot in enumerate(snapshots):
         cell = worksheet.cell(row=row, column=first_col + offset)
-        if not is_single_cell(cell):
+        if not isinstance(cell, Cell):
             continue
         if snapshot.style is not None:
             cell._style = copy(snapshot.style)
         cell.value = snapshot.value
         if snapshot.data_type is not None:
             cell.data_type = snapshot.data_type
+
+
+def _extend_data_validations(worksheet: Worksheet, plan: TablePlan) -> None:
+    """Extend the ``sqref`` of the validations that track the table's height.
+
+    A dropdown applied to a table column has to reach the rows the fill adds;
+    Excel extends it, and :func:`range_tracks_table` is the rule Excel applies.
+    A validation that only happens to sit on the table's rows — outside its
+    columns, or on a different area of the sheet — is left alone.
+    """
+    geometry = plan.geometry
+    for validation in worksheet.data_validations.dataValidation:
+        areas = list(validation.sqref.ranges)
+        extended = False
+        for index, cell_range in enumerate(areas):
+            if not range_tracks_table(
+                cell_range,
+                table_start_column=geometry.first_col,
+                table_end_column=geometry.last_col,
+                table_top_row=geometry.top_row,
+                first_data_row=geometry.first_data_row,
+                old_body_last_row=geometry.body_last_row,
+                table_last_row=plan.new_body_last_row,
+            ):
+                continue
+            areas[index] = CellRange(
+                min_col=cell_range.min_col,
+                min_row=cell_range.min_row,
+                max_col=cell_range.max_col,
+                max_row=plan.new_body_last_row,
+            )
+            extended = True
+        if extended:
+            validation.sqref = " ".join(str(area) for area in areas)
+            logger.debug("Extended a data validation to %s", validation.sqref)
 
 
 def _extend_conditional_formatting(
@@ -540,7 +710,7 @@ def _extend_conditional_formatting(
 
         cell_ranges: list[Any] = sorted(conditional_formatting.sqref.ranges, key=str)
         for cell_range in cell_ranges:
-            if _cf_range_tracks_table(
+            if range_tracks_table(
                 cell_range,
                 table_start_column=table_start_column,
                 table_end_column=table_end_column,
@@ -577,7 +747,7 @@ def _extend_conditional_formatting(
         logger.debug("Extended conditional formatting: %s -> %s", old_sqref, new_sqref)
 
 
-def _cf_range_tracks_table(
+def range_tracks_table(
     cell_range: CellRange,
     *,
     table_start_column: int,
@@ -601,7 +771,7 @@ def _cf_range_tracks_table(
 
     Examples:
         >>> def tracks(area, new_last, old_last=20):
-        ...     return _cf_range_tracks_table(
+        ...     return range_tracks_table(
         ...         CellRange(area),
         ...         table_start_column=2,
         ...         table_end_column=13,
@@ -631,3 +801,7 @@ def _cf_range_tracks_table(
     if not (starts_with_table or cell_range.max_row == old_body_last_row):
         return False
     return not (cell_range.max_row > old_body_last_row and cell_range.max_row > table_last_row)
+
+
+cf_range_tracks_table = range_tracks_table
+"""Alias kept so the name the public API documented keeps working."""

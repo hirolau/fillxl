@@ -5,6 +5,173 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-11-04
+
+The headline is `engine="fillxl"`, a third backend that fills a workbook by
+editing the OOXML package itself. It ships for the first time in this release,
+so the changes it went through while it was being built are not listed here —
+`git log` has those. The rest of the release corrects behaviour in the
+`openpyxl` and `win32com` engines and in the public API.
+
+### Breaking changes
+- `"drop"` is no longer part of the `ColumnValidationStrategy` type. Passing
+  `column_validation_strategy="drop"` still works for one release: it warns with
+  a `DeprecationWarning` and is stored as `"none"`, which produces the same
+  fill. Type checkers will now flag the name.
+- **`.xls` (Excel 97-2003) is no longer supported**, by any engine nor as a
+  template or an output. BIFF8 cannot hold the features fillxl exists to
+  preserve (dynamic arrays, slicers, `chartEx`, rich data, …), and reading it
+  needs Excel anyway, so a fill that names a `.xls` path is refused with a
+  `ValueError` before anything is opened. **Migration:** open the file in Excel
+  and save it as `.xlsx`, `.xlsm` or `.xlsb`, then fill that. `.xlsb` is still
+  supported through `engine="win32com"`.
+
+### Added
+- `engine="fillxl"`: a third backend that fills a workbook by editing the OOXML
+  package itself instead of loading it into an object model. It needs no Excel
+  (and no workbook model), runs on every platform, and rewrites only the parts a
+  fill has to change, so everything the openpyxl engine drops survives: spilled
+  dynamic arrays (`SEQUENCE`, `FILTER`, `SORT`, …) with their
+  `xl/metadata.xml` and cell metadata, slicers, timelines, `chartEx`, rich data,
+  embedded objects and VBA. `on_lossy` stays silent for this engine because
+  nothing is lost — if anything were, it would say so. It reads and writes
+  `.xlsx`/`.xlsm` in the same format; `.xlsb`, encrypted workbooks and format
+  conversion are refused with an error that names `engine="win32com"`.
+  A table that would grow into an array (spill) range is refused rather than
+  overwriting part of a formula, including when the spill's results are blank.
+- `extend_data_validation` (default `True`): a data-validation range applied
+  to a table column now grows and shrinks with the table in the `openpyxl` and
+  `fillxl` engines, which is what Excel does on resize. A range outside the
+  table's columns is left alone; set the flag to `False` to keep the
+  template's ranges exactly as they are.
+- `UntrackedRangeWarning` is new: it reports a pivot cache source, defined name
+  or data-validation list that still covers a table's old rows after a resize.
+- `names_deleted_sheet` (formerly the private `_names_deleted_sheet`) and
+  `cf_range_tracks_table` are public, so the fillxl engine shares the same
+  sheet-reference matching and conditional-formatting rule as the openpyxl one.
+- `on_lossy` now reports `xl/metadata.xml`, the part that carries spilling and
+  data-type information. Without it a template's dynamic arrays become ordinary
+  formulas, which used to happen silently.
+- A [Benchmarks](https://hirolau.github.io/fillxl/benchmarks/) page in the docs:
+  the three engines timed on the same fill, plus `scripts/benchmark.py` now
+  measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
+
+### Changed
+- `cf_range_tracks_table` is now `range_tracks_table`: the same rule also
+  extends data-validation ranges with the table, so the name no longer claims
+  to be about conditional formatting. `cf_range_tracks_table` remains as an
+  alias.
+- `get_backend` now takes a concrete engine name only. `engine="auto"` is
+  resolved by `resolve_engine` before a backend is built, so the factory no
+  longer carries a second, unreachable `"auto"` branch; the `Backend` protocol
+  docstring describes the three engines instead of future ones.
+- Each backend now updates its charts inside `fill_table`, so a fill can no
+  longer resize a table and leave the charts behind by forgetting a second
+  call. `update_charts` is gone from the `Backend` protocol; the engines keep
+  the chart code as a private helper.
+- `engine="fillxl"` is documented as experimental and opt-in: `engine="auto"`
+  never selects it, and the README lists its limits (no `.xlsb` or
+  format conversion, no encrypted files, pivot tables only flagged for refresh,
+  `chartEx` ranges untouched, pivot sources and data validations unaffected)
+  and a "Cached values" section: the engine does not calculate, so the file
+  stays stale until Excel recalculates.
+
+### Documentation
+- The README and the backend guide now explain how `engine="win32com"` writes
+  strings: with a leading `'`, so Excel keeps values such as `00123` as text.
+  That also sets the cell's quote prefix, which means a number typed into the
+  cell later stays text until the cell is cleared.
+
+### Fixed
+- A table resize crashed for any workbook holding a data validation that reads
+  its list from the sheet it sits on (the usual case: the source is stored
+  unqualified as `$H$2:$H$10`). The untracked-range warning parsed it as a
+  defined name, which assumes a `Sheet!` prefix. References are now tokenised
+  and read directly: an unqualified one belongs to the validation's sheet, a
+  custom rule such as `A1>0` is not a range at all, and an `extLst` (x14)
+  validation's `<xm:f>` source is understood too.
+- The untracked-range warning missed sheet-scoped names, never matched a sheet
+  name containing an apostrophe (`Bob''s Data` vs `Bob's Data`), and turned a
+  whole-row `Print_Titles` name (`$1:$1`) into a `TypeError` inside the fill.
+  It also now survives a hand-written, unparsable name instead of raising.
+- A table resize now rewrites the references that track it instead of only
+  warning: defined names (global and sheet-scoped), pivot cache sources and
+  data-validation list sources — including the x14 `<xm:f>` spelling — follow
+  the table's rows in the `openpyxl` and `fillxl` engines, as they do when
+  Excel resizes a table. `win32com` inserts rows, so Excel adjusts those
+  references itself. `UntrackedRangeWarning` is now reserved for what a fill
+  must not touch: built-in names such as `_xlnm.Print_Area`, a source that
+  covers the table body without tracking it, and ranges it could not rewrite.
+  The `openpyxl` engine also reports a print area that covers the old table; it
+  used to miss it.
+- A formula the tokenizer cannot read no longer aborts a whole fill. Only the
+  formulas that could possibly track the resized table are tokenised, and one
+  that still cannot be read is skipped with a debug log instead of raising.
+- A table that would grow past Excel's last row is now refused with a
+  `ValueError` that names the table, the row count and the sheet limit, before
+  anything is written, on every engine. Previously the offline engines wrote
+  cells off the grid and produced a file Excel could not use, and `win32com`
+  surfaced a raw COM error.
+- A table is now found by its display name on every engine. A template whose
+  table part has a different `name` and `displayName` used to fill under one
+  engine and raise `KeyError` under the others; `name` is still used when
+  `displayName` is empty.
+- Sheet names are resolved the way Excel does, without regard to case, by all
+  three engines. `delete_sheets=["rawdata"]` used to leave `RawData` in place
+  under `engine="fillxl"`, so "delete the internal sheet before distribution"
+  could quietly distribute it, and `active_sheet` was matched case-sensitively
+  by the `openpyxl` and `win32com` engines. A name that matches two sheets only
+  by case now warns "not found" everywhere instead of picking one.
+- Text that looks like an Excel escape sequence is now written as typed by the
+  `openpyxl` and `fillxl` engines. Excel decodes `_xHHHH_` in a cell string, so
+  a value such as `file_x0020_name` used to be displayed as `file name`; the
+  leading underscore is now escaped the way Excel's own writer escapes it
+  (`_x005F_`). Formulas are never escaped, and `win32com` already stored the
+  text correctly.
+- `engine="win32com"` now warns with `DanglingReferenceWarning` when
+  `delete_sheets` removes a sheet that formulas, charts, pivots or defined
+  names still read, as the other engines already did. The locations are
+  collected before Excel deletes the sheet, because Excel rewrites them to
+  `#REF!` in place. The warning text no longer mentions openpyxl: references to
+  a deleted sheet show `#REF!` in Excel, whichever engine produced the file.
+- `win32com` no longer reports a VBA loss for conversions that keep macros
+  (`.xlsb` to `.xlsm`): only an `.xlsx` output cannot hold a VBA project. The
+  flag now comes from `Workbook.HasVBProject` before `SaveAs`.
+- A defined name that looks like a cell reference (`YTD2024`, `ZAR1` — a
+  "column" past `XFD`) was shifted per row when a calculated column was filled
+  or a shared formula was unshared, silently pointing the copied formula at
+  another name. Only operands inside the grid (16 384 × 1 048 576) count as
+  references now, so the openpyxl and fillxl engines agree with Excel.
+- win32com: a format change now reports what the new format cannot hold (a
+  `.xlsm` template saved as `.xlsx` loses its VBA project) through `on_lossy`,
+  which used to be a no-op for that engine.
+- A table fill shows the rows it writes: a filter the template was saved with
+  is cleared and body rows hidden by hand are unhidden in all three engines.
+  Before, the filled rows stayed invisible and a `SUBTOTAL(109, …)` totals row
+  silently left them out of the total.
+- An A1 formula in a moved totals row (`=SUM(B2:B2)`) follows the body like any
+  other formula that tracked the table; it used to stay on the first row
+  because the rewrite skipped everything inside the table reference.
+- Column validation no longer skips data that has rows but no columns — a
+  `DataFrame` with only an index, `[{}, {}, {}]`, or a `select` that dropped
+  every column — which resized the table and cleared every data column even
+  under `"strict"`.
+- `column_validation_strategy="warn"` emits one `FillXLWarning` per table,
+  naming both the missing and the extra columns, instead of writing two lines
+  to the log. A mismatch is therefore caught by the documented
+  `warnings.simplefilter("error", fillxl.FillXLWarning)` as well. `"drop"` is
+  deprecated: it is accepted for one release, warns with a `DeprecationWarning`
+  and behaves like `"none"`, which produced the same fill.
+- `win32com` raised `AttributeError` when a named cell sat inside a headerless
+  table: it read `HeaderRowRange` without checking `ShowHeaders`. Such a cell is
+  never a header cell now.
+- A date before 1904-01-01 in a `date1904` workbook is now refused: it became a
+  negative serial that Excel shows as `####`. The first valid day in that date
+  system is 1904-01-01.
+- The openpyxl `on_lossy` report now suggests `engine="fillxl"` for keeping the
+  features without Excel, and `engine="win32com"` only if calculated values are
+  also needed.
+
 ## [0.8.0] - 2026-11-01
 
 Correctness release, not yet 1.0. The public API is unchanged since 0.7.1 —

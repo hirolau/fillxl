@@ -23,6 +23,16 @@ else:
 # Path-like types
 PathLike: TypeAlias = Union[str, "Path"]
 
+# The size of an Excel sheet, shared by every engine and every grid check.
+MAX_ROW: int = 1_048_576
+MAX_COLUMN: int = 16_384
+
 # Backend engine selection
-Engine: TypeAlias = Literal["auto", "openpyxl", "win32com"]
-ConcreteEngine: TypeAlias = Literal["openpyxl", "win32com"]
+Engine: TypeAlias = Literal["auto", "openpyxl", "win32com", "fillxl"]
+ConcreteEngine: TypeAlias = Literal["openpyxl", "win32com", "fillxl"]
+
+# The formats each engine reads and writes, checked before a fill starts and
+# again by the backend itself, so direct backend use cannot slip past.
+OPENPYXL_SUFFIXES: frozenset[str] = frozenset({".xlsx", ".xlsm"})
+FILLXL_SUFFIXES: frozenset[str] = frozenset({".xlsx", ".xlsm"})
+WIN32COM_SUFFIXES: frozenset[str] = frozenset({".xlsx", ".xlsm", ".xlsb"})

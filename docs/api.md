@@ -34,7 +34,7 @@ lists what else changed.
 | `output` | `str \| Path` | Path where the filled workbook will be saved. |
 | `values` | `dict[str, Any] \| None` | Map of named cell → value to fill. |
 | `tables` | `dict[str, TabularData] \| None` | Map of table name → data to fill. |
-| `engine` | `Engine` | Backend engine: `"auto"`, `"openpyxl"`, or `"win32com"`. Default: `"auto"` (see below). |
+| `engine` | `Engine` | Backend engine: `"auto"`, `"openpyxl"`, `"fillxl"`, or `"win32com"`. Default: `"auto"` (see below). |
 | `config` | `FillXLConfig \| None` | Advanced configuration (see below). |
 
 ### Returns
@@ -46,7 +46,7 @@ lists what else changed.
 | Template → output | Engine |
 |-------------------|--------|
 | `.xlsx` → `.xlsx`, `.xlsm` → `.xlsm` | `openpyxl` — no Excel needed |
-| `.xlsb`/`.xls` template, or a different output format | `win32com`, when Excel automation is available |
+| `.xlsb` template, or a different output format | `win32com`, when Excel automation is available |
 | the same, without Excel | `openpyxl`, whose error explains what is missing |
 
 Pass `engine="win32com"` explicitly to drive Microsoft Excel through COM — that
@@ -79,6 +79,7 @@ config = FillXLConfig(
 | `escape_formulas` | `bool` | `True` | Write strings starting with `=` as literal text instead of formulas. Disable only for trusted data that is meant to contain formulas. |
 | `refresh_pivot_tables` | `bool` | `True` | Refresh pivot caches after filling. |
 | `extend_conditional_formatting` | `bool` | `True` | Resize conditional formatting ranges with the table. |
+| `extend_data_validation` | `bool` | `True` | Resize data-validation ranges (dropdowns and other rules) with the table. |
 | `copy_table_styles` | `bool` | `True` | Copy the first data row's styles to new rows. |
 | `hide_underscore_sheets` | `bool` | `True` | Hide sheets whose names start with `_`. On by default, so opt out explicitly to keep such a sheet visible. |
 | `delete_sheets` | `Sequence[str] \| None` | `None` | Sheet names to delete (stored as a tuple). References to the deleted sheets are **not** rewritten; see below. |
@@ -94,8 +95,8 @@ config = FillXLConfig(
 | `"strict"` | Raise `ValueError` if data columns don't match table columns. |
 | `"all_but_formulas"` | Like `"strict"`, but exempt calculated/formula columns. Extra data columns are allowed. |
 | `"all_but_formulas_strict"` | Like `"all_but_formulas"`, but extra data columns raise. |
-| `"drop"` | Skip table columns that have no data column and ignore extra data columns. |
-| `"warn"` | Log warnings about mismatches but continue filling. |
+| `"drop"` | Deprecated alias of `"none"`; accepted for one release with a `DeprecationWarning`. |
+| `"warn"` | Emit one `FillXLWarning` naming the missing and extra columns, then continue filling. |
 | `"none"` | No validation — best-effort fill. |
 
 Table columns without a matching data column are cleared (or keep their
@@ -189,11 +190,11 @@ typo cannot delete the wrong sheet.
 - `veryHidden` sheets stay `veryHidden`, and chart sheets can be deleted or
   activated.
 - `delete_sheets` removes the sheet and nothing else: formulas, chart series,
-  defined names and pivot caches that refer to it still name it. The openpyxl
-  engine cannot rewrite them, so it warns with `DanglingReferenceWarning`
-  instead of shipping a report that opens with `#REF!`. Update those references
-  yourself, or keep the sheet (`engine="win32com"` lets Excel rewrite them to
-  `#REF!` in place).
+  defined names and pivot caches that refer to it still name it, and Excel shows
+  `#REF!` where they do. Every engine warns with `DanglingReferenceWarning` —
+  `win32com` included, where the warning is based on the workbook's state
+  before Excel deletes the sheet. Update those references yourself, or keep the
+  sheet.
 
 ### Defined names
 

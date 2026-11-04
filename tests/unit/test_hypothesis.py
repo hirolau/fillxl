@@ -8,21 +8,8 @@ from __future__ import annotations
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from openpyxl.utils import column_index_from_string
 
-from fillxl._utils import col_to_excel
 from fillxl._validation import validate_columns
-
-# ── Column conversion round-trip ─────────────────────────────────────────────
-
-
-@given(col=st.integers(min_value=1, max_value=16384))  # XFD = col 16384
-def test_col_to_excel_round_trips(col: int) -> None:
-    """col_to_excel(n) → column_index_from_string(result) gives back n."""
-    assert column_index_from_string(col_to_excel(col)) == col
-
-
-# ── Column validation strategy invariants ────────────────────────────────────
 
 
 @given(
@@ -37,18 +24,7 @@ def test_validate_columns_none_accepts_any_column_combination(
     validate_columns(table_cols, data_cols, strategy="none")
 
 
-@given(
-    table_cols=st.lists(st.text(min_size=1), min_size=1, max_size=10, unique=True),
-    data_cols=st.lists(st.text(min_size=1), min_size=1, max_size=15, unique=True),
-)
-def test_validate_columns_drop_accepts_any_column_combination(
-    table_cols: list[str],
-    data_cols: list[str],
-) -> None:
-    """The 'drop' strategy never raises; backends simply skip unmatched columns."""
-    validate_columns(table_cols, data_cols, strategy="drop")
-
-
+@pytest.mark.filterwarnings("ignore::fillxl._warnings.FillXLWarning")
 @given(
     table_cols=st.lists(st.text(min_size=1), min_size=1, max_size=10, unique=True),
     data_cols=st.lists(st.text(min_size=1), min_size=1, max_size=15, unique=True),

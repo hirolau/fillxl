@@ -197,7 +197,7 @@ class TestStrictStrategy:
 class TestDropAndWarnStrategies:
     """Permissive strategies: drop removes extras, warn logs, none skips all."""
 
-    def test_drop_strategy_silently_removes_extra_columns(
+    def test_none_strategy_silently_removes_extra_columns(
         self,
         output_path: Path,
     ) -> None:
@@ -213,7 +213,7 @@ class TestDropAndWarnStrategies:
             template=output_path.with_name("tmpl.xlsx"),
             output=output_path,
             tables={"Data": data},
-            config=FillXLConfig(column_validation_strategy="drop"),
+            config=FillXLConfig(column_validation_strategy="none"),
         )
 
         wb = openpyxl.load_workbook(output_path)
@@ -222,11 +222,11 @@ class TestDropAndWarnStrategies:
         finally:
             wb.close()
 
-    def test_warn_strategy_logs_warnings_and_proceeds(
+    def test_warn_strategy_warns_and_proceeds(
         self,
         output_path: Path,
     ) -> None:
-        """Mismatches are logged at WARNING level but fill continues."""
+        """A mismatch raises a FillXLWarning and the fill continues."""
         _make_table_template(
             output_path.with_name("tmpl.xlsx"),
             columns=["Name"],
@@ -334,7 +334,7 @@ class TestDuplicateColumnNames:
 
         assert output_path.read_bytes() == b"previous"
 
-    @pytest.mark.parametrize("strategy", ["strict", "all_but_formulas", "warn", "drop", "none"])
+    @pytest.mark.parametrize("strategy", ["strict", "all_but_formulas", "warn", "none"])
     def test_the_check_does_not_depend_on_the_validation_strategy(
         self,
         output_path: Path,
@@ -403,13 +403,12 @@ class TestValidateColumnsFunction:
             strategy="warn",
         )
 
-    def test_drop_strategy_accepts_extra_and_missing_columns(self) -> None:
-        """'drop' accepts both extra data columns and missing table columns."""
-        validate_columns(
-            table_columns=["A", "B"],
-            data_columns=["B", "C"],
-            strategy="drop",
-        )
+    def test_the_deprecated_drop_strategy_is_stored_as_none(self) -> None:
+        """'drop' is no longer part of the type; the config maps it to 'none'."""
+        with pytest.warns(DeprecationWarning, match="use 'none'"):
+            config = FillXLConfig(column_validation_strategy="drop")
+
+        assert config.column_validation_strategy == "none"
 
     def test_strict_raises_when_columns_differ(self) -> None:
         """'strict' raises ValueError on any mismatch."""

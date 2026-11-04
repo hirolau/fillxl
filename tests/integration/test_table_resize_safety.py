@@ -6,6 +6,7 @@ sort-state test pins what Excel itself does so the engines keep agreeing.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import openpyxl
@@ -89,6 +90,40 @@ def test_a_table_refuses_to_grow_into_merged_cells(
         _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": rows})
 
 
+def _table_at_the_bottom_of_the_sheet(path: Path) -> Path:
+    """``Sales`` right above Excel's last row: ten rows cannot fit."""
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Data"
+    worksheet["A1048570"], worksheet["B1048570"] = "fund", "nav"
+    worksheet["A1048571"], worksheet["B1048571"] = "A", 1
+    worksheet.add_table(_table("A1048570:B1048571", "Sales", ("fund", "nav")))
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_table_that_would_outgrow_the_sheet_is_refused_before_anything_is_written(
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """A table cannot grow past row 1,048,576; the file must stay untouched."""
+    template = _table_at_the_bottom_of_the_sheet(tmp_path / "template.xlsx")
+    output = tmp_path / "out.xlsx"
+    rows = [{"fund": letter, "nav": index} for index, letter in enumerate("ABCDEFGHIJ")]
+
+    message = (
+        "Table 'Sales' cannot hold 10 rows: it would end on row 1048580, "
+        "and an Excel sheet has 1,048,576 rows."
+    )
+    with pytest.raises(ValueError, match=re.escape(message)):
+        _fill_output(template, output, engine, tables={"Sales": rows})
+
+    assert not output.exists()
+    assert not output.with_name(f"{output.stem}_{engine}{output.suffix}").exists()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Sort state
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -118,11 +153,14 @@ def test_a_sorted_table_keeps_the_sort_state_the_template_had(
     tmp_path: Path,
     engine: Engine,
 ) -> None:
-    """Neither engine rewrites ``sortState``, because Excel does not either.
+    """Excel keeps the old ``sortState`` ref; the fillxl engine keeps it valid.
 
-    Measured in Excel 16: resizing a table (in either direction) leaves the
-    old ``sortState`` ref in place, and the workbook still opens without a
-    repair prompt.  Rewriting it here would make the two engines disagree.
+    Measured in Excel 16: resizing a table leaves the old ``sortState`` ref in
+    place and the workbook still opens without a repair prompt, which the
+    openpyxl and win32com engines reproduce.  The fillxl engine deliberately
+    moves the range with the body instead — see
+    ``tests/ooxml/test_sort_state.py`` — so a stale range never points outside
+    the table it belongs to.
     """
     template = _sorted_template(tmp_path / "template.xlsx")
 
@@ -133,11 +171,12 @@ def test_a_sorted_table_keeps_the_sort_state_the_template_had(
         tables={"Sales": [{"fund": f"f{i}", "nav": i} for i in range(6)]},
     )
 
+    expected = "A2:B4" if engine in ("openpyxl", "win32com") else "A2:B7"
     workbook = openpyxl.load_workbook(output)
     try:
         sort_state = workbook["Data"].tables["Sales"].sortState
         assert sort_state is not None
-        assert sort_state.ref == "A2:B4"
+        assert sort_state.ref == expected
         assert [condition.ref for condition in sort_state.sortCondition] == ["A2:A4"]
     finally:
         workbook.close()

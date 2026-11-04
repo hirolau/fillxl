@@ -30,30 +30,38 @@ def table_column_name(column: TableColumn) -> str:
     return unescape(str(column.name))
 
 
-def col_to_excel(col: int) -> str:
-    """Convert 1-based column number to Excel column letter(s).
+def unquote_sheet_name(text: str) -> str:
+    """*text* without the quotes Excel puts around a sheet name.
 
-    Args:
-        col: 1-based column number
-
-    Returns:
-        Excel column letter(s)
+    Excel quotes a name that is not a plain word and doubles a quote inside
+    it, so ``'Bob''s Data'`` is the sheet ``Bob's Data``.
 
     Examples:
-        >>> col_to_excel(1)
-        'A'
-        >>> col_to_excel(26)
-        'Z'
-        >>> col_to_excel(27)
-        'AA'
+        >>> unquote_sheet_name("'My Sheet'")
+        'My Sheet'
+        >>> unquote_sheet_name("'It''s'")
+        "It's"
+        >>> unquote_sheet_name("Data")
+        'Data'
 
     """
-    result = ""
-    while col > 0:
-        col -= 1
-        result = chr(col % 26 + ord("A")) + result
-        col //= 26
-    return result
+    if len(text) >= 2 and text.startswith("'") and text.endswith("'"):
+        return text[1:-1].replace("''", "'")
+    return text
+
+
+def workbook_uses_1904(workbook: Workbook) -> bool:
+    """Whether *workbook* counts days from 1904-01-01 (the Mac date system).
+
+    Examples:
+        >>> from openpyxl import Workbook
+        >>> workbook_uses_1904(Workbook())
+        False
+
+    """
+    from openpyxl.utils.datetime import MAC_EPOCH
+
+    return bool(workbook.epoch == MAC_EPOCH)
 
 
 def find_worksheet_and_table(workbook: Workbook, table_name: str) -> tuple[Worksheet, Table]:
@@ -75,7 +83,9 @@ def find_worksheet_and_table(workbook: Workbook, table_name: str) -> tuple[Works
     for worksheet in workbook.worksheets:
         if isinstance(worksheet, Ws) and hasattr(worksheet, "tables"):
             for table in worksheet.tables.values():
-                if table.name == table_name:
+                # A table part has both a name and a display name; Excel shows
+                # the display name, so that is what a user asks to fill.
+                if (table.displayName or table.name) == table_name:
                     logger.debug(
                         "Found table '%s' in worksheet '%s'",
                         table_name,

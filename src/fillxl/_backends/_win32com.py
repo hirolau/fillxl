@@ -14,33 +14,40 @@ import logging
 import sys
 import threading
 import time
+import zipfile
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._adapters import TabularAdapter
-from fillxl._cells import header_write_error, named_cell_target
+from fillxl._cells import header_write_error, name_destinations, named_cell_target
 from fillxl._charts import TableChangeSpecs, split_formula_arguments, update_reference_text
+from fillxl._dangling import names_deleted_sheet, warn_dangling_references
 from fillxl._formats import needs_temporal_format, temporal_format, temporal_format_runs
 from fillxl._formulas import (
     BodyState,
     ColumnFormulaEvidence,
-    formula_definitions,
     resolve_formula,
     warn_about_ignored_formula_data,
 )
+from fillxl._lossy import check_conversion_losses
 from fillxl._normalize import (
     check_cell_value,
     check_named_cell_scalar,
     check_nonfinite_value,
-    check_table_cell_scalar,
     com_value_from_normalized,
     prepare_cell_value,
+    prepare_table_cell,
 )
-from fillxl._plan import BlockedRegion, TableGeometry, blocked_area, plan_table_fill
-from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
-from fillxl._utils import col_to_excel
+from fillxl._plan import BlockedRegion, TableGeometry, TablePlan, blocked_area, plan_table_fill
+from fillxl._sheets import (
+    plan_activate,
+    plan_delete,
+    plan_hide,
+    warn_sheet_not_found,
+)
 from fillxl._validation import validate_columns
 from fillxl._warnings import FillXLWarning, warn_user
 
@@ -63,6 +70,7 @@ _XL_FILL_FORMATS = 3
 _MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
 _RPC_E_CHANGED_MODE = -2147417850
 _XL_CALCULATION_MANUAL = -4135
+_XL_CELL_TYPE_FORMULAS = -4123
 
 _OOXML_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xltx", ".xltm"})
 
@@ -73,7 +81,6 @@ _FILE_FORMATS: dict[str, int] = {
     ".xlsx": 51,  # xlOpenXMLWorkbook
     ".xlsm": 52,  # xlOpenXMLWorkbookMacroEnabled
     ".xlsb": 50,  # xlExcel12
-    ".xls": 56,  # xlExcel8
 }
 
 
@@ -100,6 +107,9 @@ class Win32ComBackend:
         self._definitions_loaded = False
         self._com_initialized = False
         self._com_thread: int | None = None
+        # Whether the workbook being saved had a VBA project, read before SaveAs
+        # because check_output() runs after the workbook is closed.
+        self._saved_with_vba: bool | None = None
         # Excel's calculation mode before this fill; restored before SaveAs.
         self._previous_calculation: int | None = None
 
@@ -210,14 +220,14 @@ class Win32ComBackend:
             msg = f"Named cell '{name}' not found in workbook"
             raise KeyError(msg) from exc
 
-        target = named_cell_target(name, _com_name_destinations(str(name_obj.RefersTo)))
+        target = named_cell_target(name, name_destinations(str(name_obj.RefersTo)))
         if target is None:
             return
         sheet_name, address = target
         check_named_cell_scalar(name, value)
         check_nonfinite_value(value, name=name)
         normalized = prepare_cell_value(value)
-        check_cell_value(normalized, name=name)
+        check_cell_value(normalized, name=name, date1904=self._workbook_date1904())
         prepared = com_value_from_normalized(normalized, escape_formulas=config.escape_formulas)
         try:
             target_range = self._workbook.Worksheets(sheet_name).Range(address)
@@ -229,7 +239,7 @@ class Win32ComBackend:
         # name the caller never saw.  Refuse, as the openpyxl engine does, so
         # the engines cannot disagree.
         conflict = _list_object_of(target_range)
-        if conflict is not None and int(target_range.Row) == int(conflict.HeaderRowRange.Row):
+        if conflict is not None and _is_header_cell(target_range, conflict):
             raise header_write_error(sheet_name, address, str(conflict.Name))
         try:
             # Read the format first: Excel changes a General cell when a date arrives.
@@ -242,6 +252,10 @@ class Win32ComBackend:
             msg = f"Could not write named cell '{name}' ({sheet_name}!{address}): {exc}"
             raise RuntimeError(msg) from exc
 
+    def _workbook_date1904(self) -> bool:
+        """Whether this workbook counts days from 1904-01-01."""
+        return bool(self._workbook.Date1904)
+
     def _existing_number_format(self, target: Any) -> Any:  # noqa: ANN401
         """The range's format, with Excel's name for General spelled ``General``.
 
@@ -252,15 +266,16 @@ class Win32ComBackend:
         return _number_format_of(target.NumberFormat, _general_format_name(self._app))
 
     def _find_list_object(self, name: str) -> tuple[Any, Any]:
-        """The ListObject called exactly *name* and its worksheet."""
+        """The ListObject whose display name is exactly *name* and its worksheet.
+
+        A table part carries both ``name`` and ``displayName``; Excel shows the
+        display name, and the other engines look tables up by it.  The
+        comparison is case-sensitive, because openpyxl's is.
+        """
         for sheet in self._workbook.Worksheets:
-            try:
-                candidate = sheet.ListObjects(name)
-            except Exception:  # not on this sheet
-                continue
-            # ListObjects() ignores case; openpyxl does not, and both must agree.
-            if candidate is not None and str(candidate.Name) == name:
-                return candidate, sheet
+            for candidate in sheet.ListObjects:
+                if str(candidate.DisplayName or candidate.Name) == name:
+                    return candidate, sheet
         msg = f"Table '{name}' not found in workbook"
         raise KeyError(msg)
 
@@ -309,12 +324,13 @@ class Win32ComBackend:
             strategy=config.column_validation_strategy,
             formula_columns=list(formulas),
             table_name=name,
+            data_rows=len(rows),
         )
         warn_about_ignored_formula_data(name, data_columns, rows, formulas)
 
-        plan = plan_table_fill(geometry, len(rows))
-        first_letter = col_to_excel(geometry.first_col)
-        last_letter = col_to_excel(geometry.last_col)
+        plan = plan_table_fill(geometry, len(rows), table_name=name)
+        first_letter = get_column_letter(geometry.first_col)
+        last_letter = get_column_letter(geometry.last_col)
 
         if plan.overflow_rows is not None:
             _check_overflow_regions_com(
@@ -358,6 +374,8 @@ class Win32ComBackend:
             worksheet.Range(f"{first_letter}{first_row}:{last_letter}{last_row}").ClearContents()
         logger.debug("[win32com] resize took %.3fs", time.perf_counter() - t_resize)
 
+        _show_filled_rows_com(list_obj, worksheet, plan)
+
         if rows:
             _write_rows_com(
                 list_obj,
@@ -369,6 +387,7 @@ class Win32ComBackend:
                 headerless=geometry.header_rows == 0,
                 config=config,
                 general_format=_general_format_name(self._app),
+                date1904=self._workbook_date1904(),
             )
 
         if config.extend_conditional_formatting:
@@ -383,16 +402,20 @@ class Win32ComBackend:
                 last_data_row=plan.new_body_last_row,
             )
 
-        return plan.change_spec(str(worksheet.Name))
+        # References that track the body -- summary formulas on any sheet,
+        # defined names, pivot sources, data validations, chartEx and
+        # sparklines -- need no help here: resizing a ListObject rewrites them
+        # itself.  Verified: Excel does not insert rows (content below stays
+        # put), it moves the references.  The offline engines do the same, by
+        # rewriting those parts themselves.
+        spec = plan.change_spec(str(worksheet.Name))
+        self._update_charts(spec)
+        return spec
 
-    def update_charts(self, spec: TableChangeSpecs) -> None:
+    def _update_charts(self, spec: TableChangeSpecs) -> None:
         """Point chart series that show the resized table at its new rows.
 
         Covers charts embedded in worksheets and charts on their own chart sheet.
-
-        Args:
-            spec: The table dimension change to reflect in charts.
-
         """
         self._ensure_workbook()
         for chart in self._iter_charts():
@@ -461,19 +484,14 @@ class Win32ComBackend:
     def hide_sheets(self, prefix: str) -> None:
         """Hide visible sheets whose names start with *prefix*."""
         self._ensure_workbook()
-        visible = self._visible_sheet_names()
-        to_hide = [name for name in visible if name.startswith(prefix)]
-        if not to_hide:
-            return
-        require_a_visible_sheet(
-            visible,
-            to_hide,
-            "Hiding",
-            hint="Set hide_underscore_sheets=False to keep it visible.",
+        plan = plan_hide(
+            prefix,
+            self._visible_sheet_names(),
+            str(self._workbook.ActiveSheet.Name),
         )
-        if str(self._workbook.ActiveSheet.Name) in to_hide:
-            self._workbook.Sheets(first_remaining(visible, to_hide)).Activate()
-        for name in to_hide:
+        if plan.activate is not None:
+            self._workbook.Sheets(plan.activate).Activate()
+        for name in plan.to_hide:
             try:
                 self._workbook.Sheets(name).Visible = _XL_SHEET_HIDDEN
             except Exception as exc:
@@ -484,37 +502,74 @@ class Win32ComBackend:
     def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the sheets named in *names*."""
         self._ensure_workbook()
-        existing = set(self._sheet_names())
-        present = [name for name in dict.fromkeys(names) if name in existing]
-        for name in names:
-            if name not in existing:
-                warn_sheet_not_found(name, "nothing was deleted")
-        if not present:
+        active = str(self._workbook.ActiveSheet.Name)
+        plan = plan_delete(
+            names,
+            self._sheet_names(),
+            self._visible_sheet_names(),
+            active,
+        )
+        for name in plan.not_found:
+            warn_sheet_not_found(name, "nothing was deleted")
+        if not plan.present:
             return
-        visible = self._visible_sheet_names()
-        require_a_visible_sheet(visible, present, "Deleting")
-        if str(self._workbook.ActiveSheet.Name) in present:
-            self._workbook.Sheets(first_remaining(visible, present)).Activate()
-        for name in present:
+        # Excel rewrites the references to #REF! as it deletes, so the
+        # locations have to be collected while they still read the sheet.
+        locations = self._dangling_locations(list(plan.present))
+        # Excel keeps the same tab active unless it is going away, so the
+        # selection only has to be re-applied in that case.
+        if plan.activate is not None and plan.activate != active:
+            self._workbook.Sheets(plan.activate).Activate()
+        for name in plan.present:
             try:
                 self._workbook.Sheets(name).Delete()
             except Exception as exc:
                 msg = f"Could not delete sheet '{name}': {exc}"
                 raise RuntimeError(msg) from exc
             logger.debug("Deleted sheet '%s'", name)
+        warn_dangling_references(list(plan.present), locations)
+
+    def _dangling_locations(self, deleted: Sequence[str]) -> list[str]:
+        """Locations on the remaining sheets that still name a sheet in *deleted*."""
+        names = {name.lower() for name in deleted}
+        found: list[str] = []
+        for sheet in self._workbook.Worksheets:
+            title = str(sheet.Name)
+            if title.lower() in names:
+                continue
+            found.extend(_formula_locations(sheet, title, names))
+            try:
+                chart_objects = sheet.ChartObjects()
+            except Exception:  # pragma: no cover - every worksheet has the collection
+                chart_objects = None
+            if chart_objects is not None and any(
+                _chart_mentions(chart_objects(index).Chart, names)
+                for index in range(1, int(chart_objects.Count) + 1)
+            ):
+                found.append(f"a chart on {title!r}")
+            if _pivot_mentions(sheet, names):
+                found.append(f"a pivot table on {title!r}")
+        for chart_sheet in self._workbook.Charts:
+            if _chart_mentions(chart_sheet, names):
+                found.append(f"a chart on {str(chart_sheet.Name)!r}")
+        for defined in self._workbook.Names:
+            if names_deleted_sheet(str(defined.RefersTo), names):
+                found.append(f"the defined name {str(defined.Name)!r}")
+        return found
 
     def set_active_sheet(self, name: str) -> None:
         """Set the active (displayed) sheet."""
         self._ensure_workbook()
-        if name not in self._sheet_names():
+        resolved = plan_activate(
+            name,
+            self._sheet_names(),
+            lambda title: _com_is_visible(self._workbook.Sheets(title)),
+        )
+        if resolved is None:
             warn_sheet_not_found(name, "the workbook keeps its active sheet")
             return
-        sheet = self._workbook.Sheets(name)
-        if not _com_is_visible(sheet):
-            msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
-            raise ValueError(msg)
-        sheet.Activate()
-        logger.debug("Set active sheet to '%s'", name)
+        self._workbook.Sheets(resolved).Activate()
+        logger.debug("Set active sheet to '%s'", resolved)
 
     def save(self, path: Path) -> None:
         """Save the workbook to *path*.
@@ -551,6 +606,9 @@ class Win32ComBackend:
         if self._previous_calculation is not None:
             self._app.Calculation = self._previous_calculation
             self._previous_calculation = None
+        # Read before SaveAs: check_output() runs after close(), when the
+        # workbook can no longer be asked.
+        self._saved_with_vba = _com_has_vba(self._workbook)
         logger.debug("Saving workbook to %s (format %d)", abs_path, file_format)
         self._workbook.SaveAs(str(abs_path), FileFormat=file_format)
         logger.debug("[win32com] save took %.3fs", time.perf_counter() - t0)
@@ -579,7 +637,19 @@ class Win32ComBackend:
                 self._release_com()
 
     def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
-        """Excel writes back every feature it read, so there is nothing to check."""
+        """Report template features the output format could not hold.
+
+        Excel writes back every feature it read, so a save to the template's
+        own format loses nothing.  A save to another format can: the VBA
+        project never survives an ``.xlsx`` output.
+        """
+        check_conversion_losses(
+            template,
+            output,
+            policy,
+            engine="win32com",
+            has_vba=self._saved_with_vba,
+        )
 
     def _release_com(self) -> None:
         if not self._com_initialized:
@@ -596,8 +666,87 @@ class Win32ComBackend:
 # ── Standalone helpers ──────────────────────────────────────────────────────
 
 
+def _formula_locations(sheet: Any, title: str, deleted: set[str]) -> list[str]:  # noqa: ANN401
+    """``Sheet!A1`` for every formula of *sheet* that names a deleted sheet.
+
+    ``SpecialCells`` raises when the sheet holds no formula at all.  Reading
+    ``.Formula`` per area gives a 2-D tuple, which is much faster than asking
+    Excel about one cell at a time.
+    """
+    try:
+        cells = sheet.UsedRange.SpecialCells(_XL_CELL_TYPE_FORMULAS)
+    except Exception:
+        return []
+    found: list[str] = []
+    areas = cells.Areas
+    for index in range(1, int(areas.Count) + 1):
+        area = areas(index)
+        values = area.Formula
+        if isinstance(values, str):
+            values = ((values,),)
+        top, left = int(area.Row), int(area.Column)
+        for row_offset, row_values in enumerate(values):
+            for column_offset, value in enumerate(row_values):
+                if names_deleted_sheet(value, deleted):
+                    found.append(
+                        f"{title}!{get_column_letter(left + column_offset)}{top + row_offset}",
+                    )
+    return found
+
+
+def _chart_mentions(chart: Any, deleted: set[str]) -> bool:  # noqa: ANN401
+    """Whether any series of *chart* reads from a deleted sheet."""
+    try:
+        series = chart.SeriesCollection()
+    except Exception:  # pragma: no cover - a chart without a series collection
+        return False
+    for index in range(1, int(series.Count) + 1):
+        try:
+            formula = str(series(index).Formula)
+        except Exception:
+            # A modern (chartEx) series has no SERIES() formula; Excel keeps
+            # its sources itself and rewrites them on save.
+            continue
+        if names_deleted_sheet(formula, deleted):
+            return True
+    return False
+
+
+def _pivot_mentions(sheet: Any, deleted: set[str]) -> bool:  # noqa: ANN401
+    """Whether a pivot table on *sheet* reads from a deleted sheet.
+
+    ``SourceData`` is an R1C1 string that still spells the sheet as
+    ``RawData!``, which is what the shared matcher understands.
+    """
+    try:
+        pivots = sheet.PivotTables()
+    except Exception:  # pragma: no cover - every worksheet has the collection
+        return False
+    for index in range(1, int(pivots.Count) + 1):
+        try:
+            source = pivots(index).PivotCache().SourceData
+        except Exception:
+            continue
+        if names_deleted_sheet(source, deleted):
+            return True
+    return False
+
+
 def _com_is_visible(sheet: Any) -> bool:  # noqa: ANN401
     return sheet.Visible not in (_XL_SHEET_HIDDEN, _XL_SHEET_VERY_HIDDEN)
+
+
+def _is_header_cell(target_range: Any, list_object: Any) -> bool:  # noqa: ANN401
+    """Whether *target_range* sits on *list_object*'s header row.
+
+    A headerless table (``ShowHeaders`` is ``False``) has no header row at all,
+    and Excel leaves ``HeaderRowRange`` empty for one, so no cell of it can be
+    a header cell.
+    """
+    if not bool(list_object.ShowHeaders):
+        return False
+    header = list_object.HeaderRowRange
+    return header is not None and int(target_range.Row) == int(header.Row)
 
 
 def _list_object_of(target_range: Any) -> Any:  # noqa: ANN401
@@ -663,6 +812,33 @@ def set_number_format(target: Any, format_code: str) -> None:  # noqa: ANN401
 def _com_has_totals_row(list_obj: Any) -> bool:  # noqa: ANN401
     """Whether a COM ``ListObject`` is configured with a totals row."""
     return bool(getattr(list_obj, "ShowTotals", False))
+
+
+def _com_has_vba(workbook: Any) -> bool | None:  # noqa: ANN401
+    """Whether *workbook* carries a VBA project, or ``None`` when it cannot say."""
+    try:
+        return bool(workbook.HasVBProject)
+    except Exception:  # pragma: no cover - a workbook always has the property
+        return None
+
+
+def _show_filled_rows_com(list_obj: Any, worksheet: Any, plan: TablePlan) -> None:  # noqa: ANN401
+    """Show the rows a fill writes and drop the table's filter criteria.
+
+    A template saved with a filter applied, or with rows hidden by hand, would
+    hide data the fill just wrote -- and a ``SUBTOTAL(109, …)`` totals row
+    leaves hidden rows out.  Excel does not reapply a filter on ``Resize``.
+    """
+    try:
+        autofilter = list_obj.AutoFilter
+        if autofilter is not None and autofilter.FilterMode:
+            autofilter.ShowAllData()
+    except Exception:  # a table without an enabled filter has nothing to clear
+        logger.debug("No table filter to clear on %s", list_obj.Name)
+    try:
+        worksheet.Rows(f"{plan.first_data_row}:{plan.new_last_row}").EntireRow.Hidden = False
+    except Exception:
+        logger.debug("Could not unhide rows on %s", worksheet.Name)
 
 
 def _resize_target_row(
@@ -760,7 +936,7 @@ def _check_overflow_com(
     for row_offset, row_values in enumerate(grid):
         for col_offset, cell in enumerate(row_values):
             if cell is not None:
-                cell_ref = f"{col_to_excel(start_col + col_offset)}{first_row + row_offset}"
+                cell_ref = f"{get_column_letter(start_col + col_offset)}{first_row + row_offset}"
                 msg = (
                     f"Table '{table_name}' cannot expand to {num_data_rows} rows: "
                     f"cell {cell_ref} already contains data ({cell!r}). "
@@ -769,25 +945,34 @@ def _check_overflow_com(
                 raise ValueError(msg)
 
 
-def _com_name_destinations(refers_to: str) -> list[tuple[str, str]]:
-    """Parse ``Name.RefersTo`` exactly the way the openpyxl backend parses names."""
-    from openpyxl.workbook.defined_name import DefinedName
-
-    probe = DefinedName("fillxl_probe", attr_text=refers_to.removeprefix("="))
-    return list(probe.destinations)
-
-
 def _read_table_formula_definitions(
     path: Path | None,
 ) -> dict[str, dict[str, str]] | None:
-    """Every table's calculated-column definition texts, or ``None`` if unreadable."""
+    """Every table's calculated-column definition texts, or ``None`` if unreadable.
+
+    The table parts are read straight out of the package: Excel has the
+    workbook open, and loading it into openpyxl as well would be slow while
+    answering the same question.
+    """
     if path is None or path.suffix.lower() not in _OOXML_SUFFIXES:
         return None
-    import openpyxl
+    from fillxl._ooxml.package import OoxmlPackage
+    from fillxl._ooxml.tables import tables_on_sheet
+    from fillxl._ooxml.workbook import WorkbookPart
 
     try:
-        workbook = openpyxl.load_workbook(path)
-    except Exception:
+        package = OoxmlPackage(path)
+        workbook = WorkbookPart(package)
+        return {
+            table.display_name: {
+                column.name: _normalise_newlines(column.calculated_formula)
+                for column in table.columns()
+                if column.calculated_formula
+            }
+            for sheet in workbook.worksheet_parts()
+            for table in tables_on_sheet(package, sheet)
+        }
+    except (ValueError, KeyError, OSError, zipfile.BadZipFile):
         logger.warning(
             "Could not read table definitions from %s; calculated columns are "
             "detected from cell formulas only",
@@ -795,14 +980,11 @@ def _read_table_formula_definitions(
             exc_info=True,
         )
         return None
-    try:
-        return {
-            str(table.name): formula_definitions(table)
-            for worksheet in workbook.worksheets
-            for table in worksheet.tables.values()
-        }
-    finally:
-        workbook.close()
+
+
+def _normalise_newlines(text: str) -> str:
+    """*text* with CRLF and lone CR turned into LF, as an XML parser reads them."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _read_formula(cell: Any) -> str:  # noqa: ANN401
@@ -912,7 +1094,11 @@ def _merged_regions_com(
     first_col: int,
     last_col: int,
 ) -> list[BlockedRegion]:
-    """Merged ranges touching the rows a table wants to grow into."""
+    """Merged ranges touching the rows a table wants to grow into.
+
+    Only the first blocking merge is reported: it is enough to refuse the
+    fill, and reading every cell of the area through COM is expensive.
+    """
     area = worksheet.Range(
         worksheet.Cells(first_row, first_col),
         worksheet.Cells(last_row, last_col),
@@ -932,27 +1118,21 @@ def _merged_regions_com(
             )
         ]
 
-    regions: list[BlockedRegion] = []
-    seen: set[str] = set()
     for row in range(first_row, last_row + 1):
         for col in range(first_col, last_col + 1):
             merged = worksheet.Cells(row, col).MergeArea
             if int(merged.Cells.Count) <= 1:
                 continue
-            address = _clean_address(merged)
-            if address in seen:
-                continue
-            seen.add(address)
-            regions.append(
+            return [
                 BlockedRegion(
-                    description=f"the merged range {address}",
+                    description=f"the merged range {_clean_address(merged)}",
                     first_row=int(merged.Row),
                     last_row=int(merged.Row + merged.Rows.Count - 1),
                     first_col=int(merged.Column),
                     last_col=int(merged.Column + merged.Columns.Count - 1),
                 )
-            )
-    return regions
+            ]
+    return []
 
 
 def _check_overflow_regions_com(
@@ -1008,6 +1188,7 @@ def _write_rows_com(
     headerless: bool,
     config: FillXLConfig,
     general_format: str,
+    date1904: bool,
 ) -> None:
     """Write *rows* into the (already resized) table body."""
     body = list_obj.DataBodyRange
@@ -1028,26 +1209,13 @@ def _write_rows_com(
             source = sources[col_idx]
             normalized = None
             if source is not None:
-                check_table_cell_scalar(
-                    row[source],
-                    table=table_name,
-                    row=row_number,
-                    column=table_columns[col_idx],
-                )
-                check_nonfinite_value(
+                normalized = prepare_table_cell(
                     row[source],
                     table=table_name,
                     row=row_number,
                     column=table_columns[col_idx],
                     warned=warned,
-                )
-                normalized = prepare_cell_value(row[source])
-                check_cell_value(
-                    normalized,
-                    table=table_name,
-                    row=row_number,
-                    column=table_columns[col_idx],
-                    warned=warned,
+                    date1904=date1904,
                 )
                 row_values[col_idx] = com_value_from_normalized(
                     normalized, escape_formulas=config.escape_formulas
@@ -1195,8 +1363,8 @@ def _extend_conditional_formatting_com(
     old_data_last_row: int,
     last_data_row: int,
 ) -> None:
-    """Resize CF ranges that track the table (see :func:`_cf_range_tracks_table`)."""
-    from fillxl._tables import _cf_range_tracks_table
+    """Resize CF ranges that track the table (see :func:`range_tracks_table`)."""
+    from fillxl._tables import range_tracks_table
 
     conditions = worksheet.Cells.FormatConditions
     for index in range(1, conditions.Count + 1):
@@ -1212,7 +1380,7 @@ def _extend_conditional_formatting_com(
                 max_col=area.Column + area.Columns.Count - 1,
                 max_row=area.Row + area.Rows.Count - 1,
             )
-            if _cf_range_tracks_table(
+            if range_tracks_table(
                 bounds,
                 table_start_column=start_col,
                 table_end_column=end_col,

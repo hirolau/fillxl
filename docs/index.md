@@ -32,13 +32,16 @@ fill(..., tables={"Sales": pd.read_csv("sales.csv")})
 ```python
 fill(..., engine="auto")       # default: openpyxl unless Excel is needed
 fill(..., engine="openpyxl")   # cross-platform, no Excel needed
+fill(..., engine="fillxl")     # keeps everything, no Excel, no model
 fill(..., engine="win32com")   # Windows + Excel (maximum fidelity)
 ```
 
 `"auto"` uses openpyxl for `.xlsx`/`.xlsm` templates saved in the same format,
-and Excel when it is needed (`.xlsb`/`.xls` templates, format conversion) and
-available. Both engines write the same values for the same template and data;
-[Backends](backends.md) lists what still differs.
+and Excel when it is needed (`.xlsb` templates, format conversion) and
+available. `"fillxl"` is opt-in and experimental; [The fillxl
+engine](fillxl-engine.md) describes what it does. Every engine writes the same
+values for the same template and data; [Backends](backends.md) lists what still
+differs.
 
 ## Visual Example
 
@@ -82,8 +85,10 @@ fill(
 - Automatic table resizing + chart range updates
 - Calculated columns and formulas that track the table stay in step with it
 - Conditional formatting and pivot table refresh
-- Two backends: `openpyxl` (default) and `win32com` (Windows + Excel)
-- Dates, sheets and warnings behave the same in both engines
+- Three backends: `openpyxl` (default), `fillxl` (keeps spilled arrays and
+  other parts openpyxl cannot write, still no Excel) and `win32com` (Windows +
+  Excel)
+- Dates, sheets and warnings behave the same in every engine
 - Supports list, dict, pandas, polars, and duckdb data
 
 ## Supported Data Sources
@@ -100,9 +105,11 @@ fill(
 
 fillxl is a thin layer over openpyxl (or over Excel itself), so fill time is
 dominated by the engine: expect a few seconds for tens of thousands of cells
-and minutes for hundreds of thousands. Run `scripts/benchmark.py` to measure
-your own machine, template and data — absolute numbers vary too much between
-machines to be worth publishing.
+and minutes for hundreds of thousands. `engine="fillxl"` is the fastest of the
+three, at roughly twice the speed of `openpyxl` for the same workbook.
+
+[Benchmarks](benchmarks.md) shows the published numbers and how to reproduce
+them with `scripts/benchmark.py` on your own machine, template and data.
 
 ## Project Status
 

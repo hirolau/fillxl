@@ -30,6 +30,17 @@ class DanglingReferenceWarning(FillXLWarning):
     """A deleted sheet is still named by a formula, chart, name or pivot."""
 
 
+class UntrackedRangeWarning(FillXLWarning):
+    """A pivot source, defined name or validation list still covers the old table rows.
+
+    The fill resizes charts and A1 formulas that track a table body, but a
+    reference stored outside a cell formula is not something any engine edits.
+    Such a reference keeps covering the template's rows, so the rows the fill
+    wrote are missing from it — a pivot that refreshes on load then shows a
+    total that quietly excludes them.
+    """
+
+
 def warn_user(message: str, category: type[FillXLWarning] = FillXLWarning) -> None:
     """Warn about *message*, blaming the first frame outside fillxl.
 

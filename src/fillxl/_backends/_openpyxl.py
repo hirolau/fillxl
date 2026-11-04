@@ -15,9 +15,14 @@ from fillxl._charts import (
 )
 from fillxl._dangling import find_dangling_references, warn_dangling_references
 from fillxl._lossy import check_lossy
-from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
+from fillxl._sheets import (
+    plan_activate,
+    plan_delete,
+    plan_hide,
+    warn_sheet_not_found,
+)
 from fillxl._tables import populate_table
-from fillxl._validation import ColumnValidationStrategy, validate_columns
+from fillxl._types import OPENPYXL_SUFFIXES
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -27,8 +32,6 @@ if TYPE_CHECKING:
     from fillxl._lossy import OnLossy
 
 logger = logging.getLogger(__name__)
-
-_OPENPYXL_SUFFIXES = (".xlsx", ".xlsm")
 
 
 class OpenpyxlBackend:
@@ -68,16 +71,15 @@ class OpenpyxlBackend:
         logger.debug("Loading workbook from %s", path)
 
         ext = path.suffix.lower()
-        if ext not in _OPENPYXL_SUFFIXES:
+        if ext not in OPENPYXL_SUFFIXES:
             msg = (
                 f"File type '{ext}' is not supported by the openpyxl backend "
-                "(supported: .xlsx, .xlsm). Use engine='win32com' for .xlsb and .xls."
+                "(supported: .xlsx, .xlsm). Use engine='win32com' for .xlsb."
             )
             raise ValueError(msg)
 
         self._source_suffix = ext
         self._workbook = openpyxl.load_workbook(path, keep_vba=ext == ".xlsm", rich_text=True)
-        _fix_chart_axes(self._workbook)
 
     def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.
@@ -118,29 +120,22 @@ class OpenpyxlBackend:
         # The adapter is built once and shared with populate_table so that
         # expensive data (e.g. a DuckDB relation) is only read once.
         adapter = TabularAdapter(data)
-        _validate_table_columns(
-            workbook=workbook,
-            table_name=name,
-            data_columns=adapter.columns,
-            strategy=config.column_validation_strategy,
-        )
 
-        return populate_table(
+        spec = populate_table(
             workbook,
             name,
             adapter,
             copy_style_in_tables=config.copy_table_styles,
             extend_conditional_formatting=config.extend_conditional_formatting,
+            extend_data_validation=config.extend_data_validation,
             escape_formulas=config.escape_formulas,
+            column_validation_strategy=config.column_validation_strategy,
         )
+        self._update_charts(spec)
+        return spec
 
-    def update_charts(self, spec: TableChangeSpecs) -> None:
-        """Update chart data ranges after a table resize.
-
-        Args:
-            spec: The table dimension change to reflect in charts.
-
-        """
+    def _update_charts(self, spec: TableChangeSpecs) -> None:
+        """Point the charts that showed the table at its new rows."""
         update_chart_data_ranges(spec, self._require_workbook())
 
     def set_pivot_refresh(self) -> None:
@@ -158,22 +153,12 @@ class OpenpyxlBackend:
 
         """
         workbook = self._require_workbook()
-        visible = _visible_titles(workbook)
-        to_hide = [title for title in visible if title.startswith(prefix)]
-        if not to_hide:
-            return
-        require_a_visible_sheet(
-            visible,
-            to_hide,
-            "Hiding",
-            hint="Set hide_underscore_sheets=False to keep it visible.",
-        )
-        active = _active_title(workbook)
-        for title in to_hide:
+        plan = plan_hide(prefix, _visible_titles(workbook), _active_title(workbook))
+        for title in plan.to_hide:
             workbook[title].sheet_state = "hidden"
             logger.debug("Hidden sheet '%s'", title)
-        if active is None or active in to_hide:
-            _activate(workbook, first_remaining(visible, to_hide))
+        if plan.activate is not None:
+            _activate(workbook, plan.activate)
 
     def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the sheets named in *names*.
@@ -183,25 +168,28 @@ class OpenpyxlBackend:
 
         """
         workbook = self._require_workbook()
-        present = [name for name in dict.fromkeys(names) if name in workbook.sheetnames]
-        for name in names:
-            if name not in workbook.sheetnames:
-                warn_sheet_not_found(name, "nothing was deleted")
-        if not present:
+        plan = plan_delete(
+            names,
+            workbook.sheetnames,
+            _visible_titles(workbook),
+            _active_title(workbook),
+        )
+        for name in plan.not_found:
+            warn_sheet_not_found(name, "nothing was deleted")
+        if not plan.present:
             return
-        visible = _visible_titles(workbook)
-        require_a_visible_sheet(visible, present, "Deleting")
-        active = _active_title(workbook)
-        for name in present:
+        for name in plan.present:
             workbook.remove(workbook[name])
             logger.debug("Deleted sheet '%s'", name)
-        # openpyxl keeps the active *index*, which now points at another sheet.
-        if active is not None and active not in present:
-            _activate(workbook, active)
-        else:
-            _activate(workbook, first_remaining(visible, present))
-        self._deleted_sheets.extend(present)
-        warn_dangling_references(present, find_dangling_references(workbook, present))
+        # openpyxl keeps the active *index*, which now points at another
+        # sheet, so the tab has to be re-applied even when it survived.
+        if plan.activate is not None:
+            _activate(workbook, plan.activate)
+        self._deleted_sheets.extend(plan.present)
+        warn_dangling_references(
+            list(plan.present),
+            find_dangling_references(workbook, list(plan.present)),
+        )
 
     def set_active_sheet(self, name: str) -> None:
         """Set the active (displayed) sheet.
@@ -214,14 +202,16 @@ class OpenpyxlBackend:
 
         """
         workbook = self._require_workbook()
-        if name not in workbook.sheetnames:
+        resolved = plan_activate(
+            name,
+            list(workbook.sheetnames),
+            lambda title: workbook[title].sheet_state == "visible",
+        )
+        if resolved is None:
             warn_sheet_not_found(name, "the workbook keeps its active sheet")
             return
-        if workbook[name].sheet_state != "visible":
-            msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
-            raise ValueError(msg)
-        _activate(workbook, name)
-        logger.debug("Set active sheet to '%s'", name)
+        _activate(workbook, resolved)
+        logger.debug("Set active sheet to '%s'", resolved)
 
     def save(self, path: Path) -> None:
         """Save the workbook to *path*.
@@ -292,43 +282,6 @@ def _set_tab_selected(sheet: Any, *, selected: bool) -> None:  # noqa: ANN401
         return
     for view in views.sheetView:
         view.tabSelected = selected
-
-
-def _validate_table_columns(
-    workbook: openpyxl.Workbook,
-    table_name: str,
-    data_columns: list[str],
-    strategy: ColumnValidationStrategy,
-) -> None:
-    """Validate columns of incoming data against the Excel table definition.
-
-    Args:
-        workbook: The openpyxl Workbook containing the table.
-        table_name: Name of the table to validate against.
-        data_columns: Column names from the incoming data.
-        strategy: Validation strategy (see :func:`fillxl._validation.validate_columns`).
-
-    Raises:
-        ValueError: If the strategy requires exact match and columns don't align.
-
-    """
-    from fillxl._formulas import openpyxl_formula_columns
-    from fillxl._tables import openpyxl_table_geometry
-    from fillxl._utils import find_worksheet_and_table, table_column_name
-
-    worksheet, table = find_worksheet_and_table(workbook, table_name)
-    geometry = openpyxl_table_geometry(table)
-    table_columns = [table_column_name(col) for col in table.tableColumns]
-    formula_columns = list(
-        openpyxl_formula_columns(worksheet, table, geometry.first_data_row, geometry.body_last_row)
-    )
-    validate_columns(
-        table_columns=table_columns,
-        data_columns=data_columns,
-        strategy=strategy,
-        formula_columns=formula_columns,
-        table_name=table_name,
-    )
 
 
 def _fix_chart_axes(workbook: openpyxl.Workbook) -> None:

@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 from openpyxl.worksheet.cell_range import CellRange
 
+from fillxl._utils import unquote_sheet_name
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,21 +88,6 @@ def _format_ref(first_col: int, first_row: int, last_col: int, last_row: int) ->
     return f"{get_column_letter(first_col)}{first_row}:{get_column_letter(last_col)}{last_row}"
 
 
-def _unquote_sheet_name(sheet_name: str) -> str:
-    """Strip the quoting Excel adds around sheet names.
-
-    Examples:
-        >>> _unquote_sheet_name("'My Sheet'")
-        'My Sheet'
-        >>> _unquote_sheet_name("Data")
-        'Data'
-
-    """
-    if len(sheet_name) >= 2 and sheet_name.startswith("'") and sheet_name.endswith("'"):
-        return sheet_name[1:-1].replace("''", "'")
-    return sheet_name
-
-
 # A reference such as Data!$B$13:$B$20, 'My Sheet'!$B$13 or Försäljning!B13.
 # The sheet is quoted ('' escapes a quote) or a run of characters that cannot
 # appear in an unquoted name.  The look-behind stops a match from starting in
@@ -171,7 +158,7 @@ def update_reference_text(text: str, spec: TableChangeSpecs) -> str | None:
 
     def replace(match: re.Match[str]) -> str:
         nonlocal changed
-        if _unquote_sheet_name(match["sheet"]) != spec.worksheet_title:
+        if unquote_sheet_name(match["sheet"]) != spec.worksheet_title:
             return match[0]
         bounds = CellRange(match["area"])
         if bounds.min_row != spec.first_data_row or bounds.max_row != spec.old_last_row:

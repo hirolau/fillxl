@@ -11,6 +11,7 @@ runners), so the same suite protects local runs and CI pipelines with Excel.
 from __future__ import annotations
 
 import datetime as dt
+import warnings
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -315,6 +316,50 @@ def test_a_column_missing_from_the_data_does_not_leak_template_values(
         None,
         None,
     ]
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_the_warn_strategy_reports_both_column_sets_and_still_fills_the_match(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+    recwarn: pytest.WarningsRecorder,
+) -> None:
+    """One warning per table, naming what is missing and what is extra."""
+    filled = _fill_and_read(
+        equivalence_template,
+        output_path,
+        engine,
+        tables={"Items": [{"Name": "a", "Extra": 1}]},
+        config=FillXLConfig(column_validation_strategy="warn"),
+    )
+
+    mismatch = [w for w in recwarn if issubclass(w.category, FillXLWarning)]
+    assert len(mismatch) == 1
+    message = str(mismatch[0].message)
+    assert "'Value'" in message
+    assert "'Notes'" in message
+    assert "'Extra'" in message
+    assert filled.worksheet["A2"].value == "a"
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_column_mismatch_can_be_turned_into_an_error(
+    equivalence_template: Path,
+    output_path: Path,
+    engine: Engine,
+) -> None:
+    """The documented warning filter must stop a fill on a mismatched table."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FillXLWarning)
+        with pytest.raises(FillXLWarning):
+            _fill_output(
+                equivalence_template,
+                output_path,
+                engine,
+                tables={"Items": [{"Name": "a", "Extra": 1}]},
+                config=FillXLConfig(column_validation_strategy="warn"),
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

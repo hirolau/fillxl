@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import shutil
 import warnings
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import openpyxl
 import pytest
 
 from fillxl import FillXLConfig, LossyTemplateError, LossyTemplateWarning, fill
-from tests._assets import TEMPLATE
+from tests._assets import ASSETS
+
+MACRO_TEMPLATE = ASSETS / "test_template_1_slsm.xlsm"
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from fillxl._lossy import OnLossy
 
@@ -80,17 +83,47 @@ def test_an_embedded_object_is_reported_and_keeps_the_previous_output(
         assert [n for n in archive.namelist() if n.startswith("xl/embeddings/")] == []
 
 
+def _plain_template(path: Path) -> Path:
+    """A template with nothing the openpyxl engine can lose."""
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Data"
+    worksheet["A1"] = "Name"
+    worksheet["A2"] = "sample"
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
 def test_a_plain_template_does_not_warn(tmp_path: Path) -> None:
     """An ordinary template has no features to lose."""
+    template = _plain_template(tmp_path / "plain.xlsx")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        fill(
-            template=TEMPLATE,
-            output=tmp_path / "out.xlsx",
-            values={"single_cell": "x"},
-        )
+        fill(template=template, output=tmp_path / "out.xlsx")
 
     assert not [item for item in caught if "did not preserve" in str(item.message)]
+
+
+def test_losing_cell_metadata_is_reported(tmp_path: Path) -> None:
+    """``xl/metadata.xml`` carries spilling and data-type information.
+
+    It is what makes an edited formula start spilling again, so a fill that
+    drops it silently changes what the user's formulas do.
+    """
+    template = _plain_template(tmp_path / "metadata.xlsx")
+    _inject_part(
+        template,
+        "xl/metadata.xml",
+        b'<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>',
+    )
+
+    with pytest.raises(LossyTemplateError, match="cell metadata"):
+        fill(
+            template=template,
+            output=tmp_path / "out.xlsx",
+            config=FillXLConfig(on_lossy="raise"),
+        )
 
 
 def test_on_lossy_rejects_unknown_values() -> None:
@@ -107,9 +140,9 @@ def test_the_openpyxl_backend_excuses_the_sheets_it_deleted(
 ) -> None:
     """A deleted sheet's pictures are its own, so ``on_lossy`` must not count them."""
     from fillxl._backends import _openpyxl
+    from fillxl._lossy import check_lossy as real_check
 
     recorded: dict[str, object] = {}
-    real_check = _openpyxl.check_lossy
 
     def spy(
         template: Path,
@@ -137,3 +170,103 @@ def test_the_openpyxl_backend_excuses_the_sheets_it_deleted(
     )
 
     assert recorded["deleted"] == ["Scratch"]
+
+
+def _vba_template(tmp_path: Path) -> Path:
+    """A real macro-enabled template: the VBA project is what a format change drops."""
+    target = tmp_path / "macro.xlsm"
+    shutil.copyfile(MACRO_TEMPLATE, target)
+    return target
+
+
+@pytest.mark.win32com
+def test_converting_a_macro_template_to_xlsx_reports_the_vba_loss(tmp_path: Path) -> None:
+    """Excel writes back what it read, but ``.xlsx`` cannot hold a macro project."""
+    from tests._engines import _fill_output
+
+    template = _vba_template(tmp_path)
+    output = tmp_path / "out.xlsx"
+
+    with pytest.warns(LossyTemplateWarning, match="VBA project"):
+        result = _fill_output(template, output, "win32com")
+
+    assert result.suffix == ".xlsx"
+
+
+@pytest.mark.win32com
+def test_converting_a_macro_template_to_xlsx_can_fail_the_fill(tmp_path: Path) -> None:
+    """``on_lossy="raise"`` has to apply to a conversion, not only to a lossy engine."""
+    from tests._engines import _fill_output
+
+    template = _vba_template(tmp_path)
+
+    with pytest.raises(LossyTemplateError, match="VBA project"):
+        _fill_output(
+            template,
+            tmp_path / "out.xlsx",
+            "win32com",
+            config=FillXLConfig(on_lossy="raise"),
+        )
+
+
+@pytest.fixture(scope="module")
+def excel() -> Iterator[Any]:
+    """A hidden Excel instance, for the conversions only Excel can perform."""
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    app = win32com.client.DispatchEx("Excel.Application")
+    app.Visible = False
+    app.DisplayAlerts = False
+    app.AutomationSecurity = 3
+    try:
+        yield app
+    finally:
+        app.Quit()
+        pythoncom.CoUninitialize()
+
+
+def _converted(template: Path, *, suffix: str, file_format: int, excel: Any) -> Path:  # noqa: ANN401
+    """*template* saved again in another format by Excel, macros included."""
+    target = template.with_name(f"{template.stem}{suffix}")
+    workbook = excel.Workbooks.Open(
+        str(template),
+        UpdateLinks=0,
+        ReadOnly=False,
+        IgnoreReadOnlyRecommended=True,
+        AddToMru=False,
+    )
+    try:
+        workbook.SaveAs(str(target), FileFormat=file_format)
+    finally:
+        workbook.Close(False)
+    return target
+
+
+def _conversion_warnings(caught: list[warnings.WarningMessage]) -> list[str]:
+    return [
+        str(record.message) for record in caught if isinstance(record.message, LossyTemplateWarning)
+    ]
+
+
+@pytest.mark.win32com
+def test_an_xlsb_template_saved_as_xlsm_loses_nothing(
+    tmp_path: Path,
+    excel: Any,  # noqa: ANN401
+) -> None:
+    """Binary OOXML holds the same feature set; nothing may be reported."""
+    from tests._engines import _fill_output
+
+    template = _converted(
+        _vba_template(tmp_path),
+        suffix=".xlsb",
+        file_format=50,
+        excel=excel,
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _fill_output(template, tmp_path / "out.xlsm", "win32com")
+
+    assert _conversion_warnings(caught) == []

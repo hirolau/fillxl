@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
+from fillxl._warnings import warn_user
+
 logger = logging.getLogger(__name__)
 
 ColumnValidationStrategy = Literal[
@@ -15,7 +17,6 @@ ColumnValidationStrategy = Literal[
     "all_but_formulas_strict",
     "none",
     "strict",
-    "drop",
     "warn",
 ]
 
@@ -27,6 +28,7 @@ def validate_columns(
     *,
     formula_columns: list[str] | None = None,
     table_name: str | None = None,
+    data_rows: int = 0,
 ) -> None:
     """Validate data columns against Excel table columns.
 
@@ -44,25 +46,38 @@ def validate_columns(
               Formula columns are ignored.
             - ``"all_but_formulas_strict"``: Like ``"all_but_formulas"``, but
               NO extra data columns are allowed.
-            - ``"none"``: Skip validation entirely.
+            - ``"none"``: Skip validation entirely.  The deprecated name
+              ``"drop"`` is still accepted by ``FillXLConfig``, which warns and
+              stores ``"none"``.
             - ``"strict"``: 1-to-1 match between table and data columns.
-            - ``"drop"``: Silently drop extra data columns and skip missing
-              table columns.
-            - ``"warn"``: Log warnings but proceed with best-effort fill.
+            - ``"warn"``: Emit one :class:`~fillxl.FillXLWarning` naming the
+              missing and extra columns, then proceed with a best-effort fill.
         formula_columns: Names of table columns that are formulas.  Only
             relevant for ``"all_but_formulas"`` / ``"all_but_formulas_strict"``.
         table_name: Name of the table, used in error and log messages.
+        data_rows: Number of rows the data holds.  Data with rows but no
+            columns still has to pass validation: the table is resized and
+            every data column is cleared, which ``"strict"`` must refuse.
+            Empty data (no rows, no columns) keeps the old behaviour of
+            clearing the table.
 
     Raises:
         ValueError: If *strategy* is ``"strict"``, ``"all_but_formulas"``, or
             ``"all_but_formulas_strict"`` and the validation fails.
 
+    Examples:
+        >>> validate_columns(["A"], [], "all_but_formulas")  # a cleared table
+        >>> try:
+        ...     validate_columns(["A"], [], "strict", data_rows=3)
+        ... except ValueError as error:
+        ...     str(error).startswith("Column mismatch for table: missing columns")
+        True
+
     """
-    if strategy == "none" or not data_columns:
+    if strategy == "none" or (not data_columns and not data_rows):
         return
 
     where = f"table {table_name!r}" if table_name else "table"
-    label = f"Table {table_name!r}" if table_name else "Table"
     formula_set = set(formula_columns or [])
     if strategy in ("all_but_formulas", "all_but_formulas_strict"):
         effective = [c for c in table_columns if c not in formula_set]
@@ -105,13 +120,9 @@ def validate_columns(
             )
             raise ValueError(msg)
         return
-    if strategy == "drop":
-        if extra:
-            logger.info("%s: dropping extra data columns %s", label, extra)
-        if missing:
-            logger.info("%s: leaving table columns without data empty: %s", label, missing)
-        return
-    if missing:
-        logger.warning("%s: data is missing columns %s", label, missing)
-    if extra:
-        logger.warning("%s: data has extra columns %s", label, extra)
+    if strategy == "warn":
+        warn_user(
+            f"Column mismatch for {where}: {details}. The fill continues with the "
+            "columns that match; rename the columns or choose another "
+            "column_validation_strategy to change that.",
+        )

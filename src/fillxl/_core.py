@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fillxl._backend import get_backend, resolve_engine
+from fillxl._backend import get_backend, reject_xls_paths, resolve_engine
 from fillxl._config import FillXLConfig
 from fillxl._normalize import reset_tz_warning_state
 
@@ -61,10 +61,26 @@ def fill(
         output: Path where the filled output will be saved.
         values: Mapping of named cell / defined name to scalar values.
         tables: Mapping of Excel table names to tabular data.
-        engine: ``"openpyxl"``, ``"win32com"`` or ``"auto"`` (default).
-            ``"auto"`` uses openpyxl for ``.xlsx``/``.xlsm`` templates saved in
-            the same format, and Excel (win32com) when it is needed and
-            available: ``.xlsb``/``.xls`` templates, or a different output format.
+        engine: Which engine fills the workbook (see *Choosing an engine* in
+            the README).
+
+            - ``"auto"`` (default): ``openpyxl``, unless Excel is required and
+              available.  It never picks ``fillxl``.
+            - ``"openpyxl"``: runs on any OS without Excel; drops modern
+              features (losses are reported via ``on_lossy``); writes no
+              cached formula results, so Excel recalculates on open; pivot
+              tables are marked to refresh on open; ``.xlsx`` → ``.xlsx`` and
+              ``.xlsm`` → ``.xlsm``.
+            - ``"fillxl"``: runs on any OS without Excel and is experimental
+              and opt-in; keeps modern features (dynamic arrays, slicers,
+              ``chartEx``, rich data, …); writes no cached formula results and
+              clears the cached ones, so Excel recalculates on open; pivot
+              tables are marked to refresh on open; same formats as
+              ``openpyxl``.
+            - ``"win32com"``: Windows with Excel; keeps modern features;
+              saves formula results calculated by Excel; refreshes pivot
+              tables now; ``.xlsx``, ``.xlsm`` and ``.xlsb``, with conversion
+              between them.
         config: Configuration options.  Uses :class:`FillXLConfig` defaults
             if not provided.
 
@@ -99,6 +115,9 @@ def fill(
 
     template_path = Path(template)
     output_path = Path(output)
+    # An unsupported format is refused before the template is looked at, so the
+    # message is about the format and not a missing file.
+    reject_xls_paths(template_path, output_path)
     if not template_path.exists():
         msg = f"Template file not found: {template_path}"
         raise FileNotFoundError(msg)
@@ -128,8 +147,7 @@ def fill(
                 for name, value in named_values.items():
                     backend.fill_named_cell(name, value, cfg)
                 for table_name, data in table_data.items():
-                    spec = backend.fill_table(table_name, data, cfg)
-                    backend.update_charts(spec)
+                    backend.fill_table(table_name, data, cfg)
                 if cfg.refresh_pivot_tables:
                     backend.set_pivot_refresh()
                 if cfg.hide_underscore_sheets:
@@ -138,6 +156,8 @@ def fill(
                     backend.delete_sheets(cfg.delete_sheets)
                 if cfg.active_sheet is not None:
                     backend.set_active_sheet(cfg.active_sheet)
+                # Must stay inside the TemporaryDirectory block: the fillxl
+                # engine streams untouched parts from the temporary copy.
                 backend.save(staging_path)
             finally:
                 backend.close()

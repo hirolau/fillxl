@@ -603,7 +603,7 @@ class TestWin32ComCalculatedColumns:
             output=output,
             engine="win32com",
             tables={"TableTest": _table_rows(3)},
-            config=FillXLConfig(column_validation_strategy="drop"),
+            config=FillXLConfig(column_validation_strategy="none"),
         )
 
         assert _com_column_has_formula(output, "TableTest", "ColFormula") is True
@@ -929,12 +929,13 @@ class TestReadTableFormulaDefinitions:
             assert _read_table_formula_definitions(p) is None
         assert "Could not read table definitions" in caplog.text
 
-    def test_all_tables_are_read_with_one_workbook_load(
+    def test_all_tables_are_read_with_one_package_read(
         self,
         tmp_path: Path,
     ) -> None:
-        """Filling many tables must not reload the workbook once per table."""
+        """Filling many tables must not re-read the package once per table."""
         from fillxl._backends._win32com import Win32ComBackend
+        from fillxl._ooxml.package import OoxmlPackage
 
         p = tmp_path / "two_tables.xlsx"
         wb = openpyxl.Workbook()
@@ -965,15 +966,11 @@ class TestReadTableFormulaDefinitions:
         backend = Win32ComBackend()
         backend._load_path = p
 
-        with mock.patch.object(
-            openpyxl,
-            "load_workbook",
-            wraps=openpyxl.load_workbook,
-        ) as load_workbook:
+        with mock.patch("fillxl._ooxml.package.OoxmlPackage", wraps=OoxmlPackage) as read:
             assert backend._table_formula_definitions("TableA") == {"Col1": "Col1+1"}
             assert backend._table_formula_definitions("TableB") == {"Col1": 'Col1&"!"'}
 
-        assert load_workbook.call_count == 1
+        assert read.call_count == 1
 
     def test_prepare_formula_for_com_preserves_newlines_and_indent(
         self,

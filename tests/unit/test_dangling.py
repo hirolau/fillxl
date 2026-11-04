@@ -11,8 +11,8 @@ from openpyxl.chart import BarChart, Reference
 from openpyxl.workbook.defined_name import DefinedName
 
 from fillxl._dangling import (
-    _names_deleted_sheet,
     find_dangling_references,
+    names_deleted_sheet,
     warn_dangling_references,
 )
 from tests._assets import PIVOT_TEMPLATE
@@ -23,23 +23,23 @@ if TYPE_CHECKING:
 
 def test_a_formula_that_names_the_sheet_is_a_dangling_reference() -> None:
     """The plain case: a formula reads a cell on the sheet that went away."""
-    assert _names_deleted_sheet("=SUM(RawData!B2:B2)", {"rawdata"})
+    assert names_deleted_sheet("=SUM(RawData!B2:B2)", {"rawdata"})
 
 
 def test_a_quoted_sheet_name_is_matched_and_unquoted() -> None:
     """Excel quotes names with spaces and doubles quotes inside them."""
-    assert _names_deleted_sheet("=SUM('Raw Data'!B2)", {"raw data"})
-    assert _names_deleted_sheet("=SUM('Bob''s Data'!B2)", {"bob's data"})
+    assert names_deleted_sheet("=SUM('Raw Data'!B2)", {"raw data"})
+    assert names_deleted_sheet("=SUM('Bob''s Data'!B2)", {"bob's data"})
 
 
 def test_a_sheet_name_inside_a_string_literal_is_not_a_reference() -> None:
     """Text that merely spells a reference must not trigger a warning."""
-    assert not _names_deleted_sheet('="RawData!B2 is gone"', {"rawdata"})
+    assert not names_deleted_sheet('="RawData!B2 is gone"', {"rawdata"})
 
 
 def test_a_longer_sheet_name_is_not_mistaken_for_a_shorter_one() -> None:
     """``MyData!`` is not a reference to ``Data!``."""
-    assert not _names_deleted_sheet("=SUM(MyData!B2)", {"data"})
+    assert not names_deleted_sheet("=SUM(MyData!B2)", {"data"})
 
 
 def _report(workbook: Workbook) -> None:
@@ -166,4 +166,4 @@ def test_nothing_is_warned_without_locations() -> None:
 @pytest.mark.parametrize("text", [None, ""])
 def test_empty_text_never_names_a_sheet(text: str | None) -> None:
     """Chart references without a formula are not references."""
-    assert not _names_deleted_sheet(text, {"rawdata"})
+    assert not names_deleted_sheet(text, {"rawdata"})

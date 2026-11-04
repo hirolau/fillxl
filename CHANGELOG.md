@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- A table is now found by its display name on every engine. A template whose
+  table part has a different `name` and `displayName` used to fill under one
+  engine and raise `KeyError` under the others; `name` is still used when
+  `displayName` is empty.
 - A formula the tokenizer cannot read no longer aborts a whole fill. Only the
   formulas that could possibly track the resized table are tokenised, and one
   that still cannot be read is skipped with a debug log instead of raising; a

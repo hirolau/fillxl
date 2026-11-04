@@ -109,7 +109,9 @@ def find_worksheet_and_table(workbook: Workbook, table_name: str) -> tuple[Works
     for worksheet in workbook.worksheets:
         if isinstance(worksheet, Ws) and hasattr(worksheet, "tables"):
             for table in worksheet.tables.values():
-                if table.name == table_name:
+                # A table part has both a name and a display name; Excel shows
+                # the display name, so that is what a user asks to fill.
+                if (table.displayName or table.name) == table_name:
                     logger.debug(
                         "Found table '%s' in worksheet '%s'",
                         table_name,

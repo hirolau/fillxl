@@ -12,10 +12,16 @@ import openpyxl
 import pytest
 
 from fillxl import FillXLConfig, fill
+from fillxl._ooxml import xmltext
 from tests._assets import TEMPLATE
+from tests._engines import ENGINES, _fill_output
+from tests.ooxml._patch import patch_part
+from tests.parity.builders import table_template
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from fillxl import Engine
 
 
 def _data_rows(count: int) -> list[dict[str, object]]:
@@ -30,6 +36,33 @@ def _data_rows(count: int) -> list[dict[str, object]]:
         }
         for i in range(1, count + 1)
     ]
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_table_whose_name_and_display_name_differ_is_found_by_every_engine(
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """COM and the fillxl engine know the table by its ``displayName``."""
+    template = table_template(tmp_path / "template.xlsx", body=(("A", 1),), name="Sales")
+    patch_part(
+        template,
+        "xl/tables/table1.xml",
+        lambda xml: xmltext.set_tag_attribute(xml, "name", "Table1"),
+    )
+
+    output = _fill_output(
+        template,
+        tmp_path / "out.xlsx",
+        engine,
+        tables={"Sales": [{"fund": "A", "nav": 1}, {"fund": "B", "nav": 2}]},
+    )
+
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert workbook["Data"]["B3"].value == 2
+    finally:
+        workbook.close()
 
 
 def test_new_rows_inherit_font_and_fill_from_first_data_row(output_path: Path) -> None:

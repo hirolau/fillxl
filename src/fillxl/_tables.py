@@ -171,7 +171,7 @@ def _occupied_regions(worksheet: Worksheet, table: Table) -> list[BlockedRegion]
     """Everything on *worksheet* that a table must not grow into."""
     regions = [
         BlockedRegion(
-            description=f"table {other.name!r} at {other.ref}",
+            description=f"table {other.displayName or other.name!r} at {other.ref}",
             first_row=CellRange(other.ref).min_row,
             last_row=CellRange(other.ref).max_row,
             first_col=CellRange(other.ref).min_col,

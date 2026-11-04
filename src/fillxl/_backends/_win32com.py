@@ -264,15 +264,16 @@ class Win32ComBackend:
         return _number_format_of(target.NumberFormat, _general_format_name(self._app))
 
     def _find_list_object(self, name: str) -> tuple[Any, Any]:
-        """The ListObject called exactly *name* and its worksheet."""
+        """The ListObject whose display name is exactly *name* and its worksheet.
+
+        A table part carries both ``name`` and ``displayName``; Excel shows the
+        display name, and the other engines look tables up by it.  The
+        comparison is case-sensitive, because openpyxl's is.
+        """
         for sheet in self._workbook.Worksheets:
-            try:
-                candidate = sheet.ListObjects(name)
-            except Exception:  # not on this sheet
-                continue
-            # ListObjects() ignores case; openpyxl does not, and both must agree.
-            if candidate is not None and str(candidate.Name) == name:
-                return candidate, sheet
+            for candidate in sheet.ListObjects:
+                if str(candidate.DisplayName or candidate.Name) == name:
+                    return candidate, sheet
         msg = f"Table '{name}' not found in workbook"
         raise KeyError(msg)
 
@@ -869,7 +870,7 @@ def _read_table_formula_definitions(
         return None
     try:
         return {
-            str(table.name): formula_definitions(table)
+            str(table.displayName or table.name): formula_definitions(table)
             for worksheet in workbook.worksheets
             for table in worksheet.tables.values()
         }

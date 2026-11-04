@@ -22,7 +22,13 @@ from fillxl._ooxml.pivots import set_refresh_on_load
 from fillxl._ooxml.styles import StylesPart
 from fillxl._ooxml.tables import TablePart
 from fillxl._ooxml.workbook import WorkbookPart
-from fillxl._ooxml.worksheet import SheetPart, cell_has_value, column_index, split_reference
+from fillxl._ooxml.worksheet import (
+    SheetPart,
+    SheetStore,
+    cell_has_value,
+    column_index,
+    split_reference,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -554,9 +560,15 @@ def test_calculation_settings_and_the_calc_chain(package_path: Path) -> None:
 def test_a_sheet_can_be_hidden_and_activated(package_path: Path) -> None:
     package = OoxmlPackage(package_path)
     workbook = WorkbookPart(package)
+    sheets = SheetStore(package)
 
     workbook.set_sheet_state("_Hidden", "hidden")
     workbook.set_active_sheet("_Hidden")
+    # The workbook says which tab is active; each sheet says whether it is
+    # selected, and a worksheet's part is owned by the store.
+    sheets.get("xl/worksheets/sheet2.xml").set_tab_selected(True)
+    sheets.get("xl/worksheets/sheet1.xml").set_tab_selected(False)
+    sheets.save_all()
 
     hidden = workbook.sheet("_hidden")
     assert hidden is not None

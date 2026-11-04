@@ -19,6 +19,7 @@ from openpyxl.worksheet.table import Table, TableColumn
 
 from fillxl import FillXLConfig, fill
 from fillxl._lossy import find_lost_features
+from fillxl._ooxml.worksheet import SheetPart
 from tests._spills import (
     assert_well_formed,
     build_spill_in_growth_path,
@@ -328,6 +329,141 @@ def test_an_underscore_sheet_is_hidden_and_the_visible_one_becomes_active(
         assert workbook.active.title == "Report"
         selected = [name for name in workbook.sheetnames if workbook[name].sheet_view.tabSelected]
         assert selected == ["Report"]
+    finally:
+        workbook.close()
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# One owner for worksheet parts
+# ───────────────────────────────────────────────────────────────────────────────
+
+
+def _named_cells_on_one_sheet_template(path: Path) -> Path:
+    """Five named cells, all on ``Data``."""
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Data"
+    for index in range(1, 6):
+        worksheet.cell(row=index, column=1, value=0)
+        workbook.defined_names.add(
+            DefinedName(f"cell{index}", attr_text=f"Data!$A${index}"),
+        )
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def test_filling_many_named_cells_on_one_sheet_renders_that_sheet_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sheet is written back once, at save time, not once per value."""
+    template = _named_cells_on_one_sheet_template(tmp_path / "template.xlsx")
+    renders: list[str] = []
+    render = SheetPart.to_xml
+
+    def counted(self: SheetPart) -> str:
+        renders.append(self.part)
+        return render(self)
+
+    monkeypatch.setattr(SheetPart, "to_xml", counted)
+
+    fill(
+        template,
+        tmp_path / "out.xlsx",
+        engine="fillxl",
+        values={f"cell{index}": index for index in range(1, 6)},
+    )
+
+    assert renders.count("xl/worksheets/sheet1.xml") == 1
+
+
+def _two_sheet_named_template(path: Path) -> Path:
+    """A named cell on each of two sheets."""
+    workbook = openpyxl.Workbook()
+    report = workbook.active
+    report.title = "Report"
+    summary = workbook.create_sheet("Summary")
+    report["A1"] = 0
+    summary["A1"] = 0
+    workbook.defined_names.add(DefinedName("report_value", attr_text="Report!$A$1"))
+    workbook.defined_names.add(DefinedName("summary_value", attr_text="Summary!$A$1"))
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def test_activating_a_sheet_after_filling_it_keeps_the_filled_values(
+    tmp_path: Path,
+) -> None:
+    """Selecting a tab must not throw away edits the store has not written yet."""
+    template = _two_sheet_named_template(tmp_path / "template.xlsx")
+
+    output = fill(
+        template,
+        tmp_path / "out.xlsx",
+        engine="fillxl",
+        values={"report_value": 1, "summary_value": 2},
+        config=FillXLConfig(hide_underscore_sheets=False, active_sheet="Summary"),
+    )
+
+    assert_well_formed(output)
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert workbook["Report"]["A1"].value == 1
+        assert workbook["Summary"]["A1"].value == 2
+        assert workbook.active is not None
+        assert workbook.active.title == "Summary"
+        selected = [name for name in workbook.sheetnames if workbook[name].sheet_view.tabSelected]
+        assert selected == ["Summary"]
+    finally:
+        workbook.close()
+
+
+def test_deleting_a_sheet_after_filling_it_does_not_bring_it_back(
+    tmp_path: Path,
+) -> None:
+    """A deleted sheet's editor is discarded, not written back at save time."""
+    template = _two_sheet_named_template(tmp_path / "template.xlsx")
+
+    output = fill(
+        template,
+        tmp_path / "out.xlsx",
+        engine="fillxl",
+        values={"report_value": 1, "summary_value": 2},
+        config=FillXLConfig(hide_underscore_sheets=False, delete_sheets=["Report"]),
+    )
+
+    assert_well_formed(output)
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert workbook.sheetnames == ["Summary"]
+        assert workbook["Summary"]["A1"].value == 2
+    finally:
+        workbook.close()
+
+
+def test_hiding_a_sheet_after_filling_it_keeps_the_filled_values(
+    tmp_path: Path,
+) -> None:
+    """Hiding a sheet touches the workbook, never the sheet's own cells."""
+    workbook = openpyxl.Workbook()
+    hidden = workbook.active
+    hidden.title = "_data"
+    hidden["A1"] = 0
+    workbook.create_sheet("Report")
+    workbook.defined_names.add(DefinedName("data_value", attr_text="_data!$A$1"))
+    template = tmp_path / "template.xlsx"
+    workbook.save(template)
+    workbook.close()
+
+    output = fill(template, tmp_path / "out.xlsx", engine="fillxl", values={"data_value": 7})
+
+    assert_well_formed(output)
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert workbook["_data"].sheet_state == "hidden"
+        assert workbook["_data"]["A1"].value == 7
     finally:
         workbook.close()
 

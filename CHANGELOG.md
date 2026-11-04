@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- `engine="fillxl"` writes each worksheet once, at save time, instead of
+  re-rendering it after every named cell and table it fills. Worksheets are now
+  read and written only through the session's sheet store, so hiding,
+  activating or deleting a sheet can no longer discard edits that were not
+  written yet — or resurrect a sheet that was deleted.
 - A table is now found by its display name on every engine. A template whose
   table part has a different `name` and `displayName` used to fill under one
   engine and raise `KeyError` under the others; `name` is still used when

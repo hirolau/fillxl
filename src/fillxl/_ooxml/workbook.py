@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from attrs import define
 
 from fillxl._ooxml import xmltext
+from fillxl._ooxml.worksheet import CHARTSHEET_VIEW_ANCHORS, root_element_end
 
 if TYPE_CHECKING:
     from fillxl._ooxml.package import OoxmlPackage
@@ -33,17 +34,6 @@ _SHEET_VIEW = xmltext.element_re("sheetView")
 
 _VISIBLE = "visible"
 _RELATIONSHIP_SUFFIX = "/officeDocument"
-
-# Where a missing <sheetViews> has to be inserted (ECMA-376 element order).
-_WORKSHEET_VIEW_ANCHORS = ("sheetFormatPr", "cols", "sheetData")
-_CHARTSHEET_VIEW_ANCHORS = (
-    "sheetProtection",
-    "customSheetViews",
-    "pageMargins",
-    "pageSetup",
-    "headerFooter",
-    "drawing",
-)
 
 # Element order inside <workbook> (ECMA-376 CT_Workbook): calcPr comes after
 # definedNames, so a missing element has to be inserted at the right place.
@@ -102,19 +92,6 @@ class DefinedNameEntry:
     name: str
     text: str
     local_sheet_id: int | None
-
-
-def _root_element_end(text: str) -> int:
-    """The index just past the root element's start tag.
-
-    ``text.find(">")`` is not that index: it stops at the end of the XML
-    declaration, or of a comment that precedes the root.
-    """
-    for match in re.finditer(r"<[^>]*>", text):
-        if match.group(0)[1:2] in ("?", "!"):
-            continue
-        return match.end()
-    return len(text)  # pragma: no cover - a part always has a root element
 
 
 def _renumber_defined_names(text: str, deleted: list[int]) -> str:
@@ -378,13 +355,15 @@ class WorkbookPart:
         return entries[0].name
 
     def set_active_sheet(self, name: str) -> None:
-        """Make *name* the sheet Excel shows, and the only selected tab."""
+        """Point ``activeTab`` at *name*.
+
+        The tab selection lives in each sheet's own part, so the caller sets
+        that through the sheet store (worksheets) or
+        :meth:`set_tab_selected` (chartsheets).
+        """
         entries = self.sheets()
         target = next(entry for entry in entries if entry.name == name)
         self._set_active_tab(target.index)
-        for entry in entries:
-            if entry.part:
-                self._set_tab_selected(entry.part, selected=entry.index == target.index)
 
     def _set_active_tab(self, index: int) -> None:
         """Point ``<workbookView activeTab>`` at *index*."""
@@ -402,8 +381,12 @@ class WorkbookPart:
         closing = text.rfind("</")  # pragma: no cover - a workbook always lists sheets
         self._set(f"{text[:closing]}{new_views}{text[closing:]}")
 
-    def _set_tab_selected(self, part: str, *, selected: bool) -> None:
-        """Set ``tabSelected`` on the sheet part *part*."""
+    def set_tab_selected(self, part: str, *, selected: bool) -> None:
+        """Set ``tabSelected`` on the chartsheet part *part*.
+
+        Chartsheets have no :class:`~fillxl._ooxml.worksheet.SheetPart` (they
+        hold no cells), so the workbook edits them directly.
+        """
         text = self.package.text(part)
         view = _SHEET_VIEW.search(text)
         value = "1" if selected else "0"
@@ -418,7 +401,7 @@ class WorkbookPart:
         # and the data (on a chartsheet: the page setup and the drawing), so
         # inserting it before the first of those keeps the schema order.
         new_view = '<sheetViews><sheetView workbookViewId="0" tabSelected="1"/></sheetViews>'
-        anchors = _WORKSHEET_VIEW_ANCHORS if "/worksheets/" in part else _CHARTSHEET_VIEW_ANCHORS
+        anchors = CHARTSHEET_VIEW_ANCHORS
         for name in anchors:
             anchor = xmltext.start_tag_re(name).search(text)
             if anchor is not None:
@@ -431,7 +414,7 @@ class WorkbookPart:
         if views is not None:  # pragma: no cover - a sheetViews block without a view
             self.package.set_text(part, f"{text[: views.start()]}{new_view}{text[views.end() :]}")
             return
-        root_end = _root_element_end(text)
+        root_end = root_element_end(text)
         self.package.set_text(part, f"{text[:root_end]}{new_view}{text[root_end:]}")
 
     # ── deleting sheets ────────────────────────────────────────────────────

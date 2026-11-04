@@ -20,7 +20,7 @@ from openpyxl.utils import get_column_letter
 from fillxl._dangling import names_deleted_sheet, warn_dangling_references
 from fillxl._ooxml import xmltext
 from fillxl._ooxml.charts import CHART_PART
-from fillxl._ooxml.worksheet import SheetPart
+from fillxl._ooxml.worksheet import SheetStore
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -35,6 +35,7 @@ def find_dangling_references(
     package: OoxmlPackage,
     workbook: WorkbookPart,
     deleted: Sequence[str],
+    sheets: SheetStore,
 ) -> list[str]:
     """Locations in the workbook that still reference one of the *deleted* sheets.
 
@@ -42,6 +43,7 @@ def find_dangling_references(
         package: The open package, after the sheets were removed.
         workbook: The workbook part, after the sheets were removed.
         deleted: Names of the sheets that were deleted.
+        sheets: The sheet store, so a filled sheet is read as it now stands.
 
     Returns:
         Human-readable locations such as ``"Report!A1"`` or
@@ -54,7 +56,7 @@ def find_dangling_references(
     found: list[str] = []
     chart_parts = _chart_parts(package)
     for entry in workbook.worksheet_parts():
-        sheet = SheetPart(package, entry.part)
+        sheet = sheets.get(entry.part)
         found.extend(
             f"{entry.name}!{get_column_letter(column)}{row}"
             for row, column, formula in sheet.formula_cells()
@@ -106,6 +108,10 @@ def warn_about_deleted_sheets(
     package: OoxmlPackage,
     workbook: WorkbookPart,
     deleted: Sequence[str],
+    sheets: SheetStore,
 ) -> None:
     """Warn about everything that still refers to the sheets in *deleted*."""
-    warn_dangling_references(deleted, find_dangling_references(package, workbook, deleted))
+    warn_dangling_references(
+        deleted,
+        find_dangling_references(package, workbook, deleted, sheets),
+    )

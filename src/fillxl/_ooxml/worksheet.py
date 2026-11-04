@@ -55,8 +55,34 @@ _MERGE_CELL = xmltext.element_re("mergeCell")
 _ROW_REFERENCE = re.compile(r"^\$?(?P<column>[A-Za-z]{1,3})\$?(?P<row>\d+)$")
 _HAS_FORMULA = re.compile(rf"<{_TAG}f\b")
 _HIDDEN_ATTRIBUTE = re.compile(r'\s+hidden\s*=\s*"[^"]*"')
+_SHEET_VIEWS = xmltext.element_re("sheetViews")
+_SHEET_VIEW = xmltext.element_re("sheetView")
+
+# Where a missing <sheetViews> has to be inserted (ECMA-376 element order).
+WORKSHEET_VIEW_ANCHORS = ("sheetFormatPr", "cols", "sheetData")
+CHARTSHEET_VIEW_ANCHORS = (
+    "sheetProtection",
+    "customSheetViews",
+    "pageMargins",
+    "pageSetup",
+    "headerFooter",
+    "drawing",
+)
 
 logger = logging.getLogger(__name__)
+
+
+def root_element_end(text: str) -> int:
+    """The index just past the root element's start tag.
+
+    ``text.find(">")`` is not that index: it stops at the end of the XML
+    declaration, or of a comment that precedes the root.
+    """
+    for match in re.finditer(r"<[^>]*>", text):
+        if match.group(0)[1:2] in ("?", "!"):
+            continue
+        return match.end()
+    return len(text)  # pragma: no cover - a part always has a root element
 
 
 def column_index(letters: str) -> int:
@@ -278,6 +304,11 @@ class SheetPart:
         self._index_shared()
         self._changed = False
 
+    @property
+    def tail(self) -> str:
+        """Everything after ``</sheetData>``: validations, formatting, extensions."""
+        return self._tail
+
     # ── parsing ────────────────────────────────────────────────────────────
 
     def _parse_rows(self, body: str) -> dict[int, _Row]:
@@ -433,6 +464,10 @@ class SheetPart:
         xml = self.cell(row, column)
         return xml is not None and cell_has_value(xml)
 
+    def has_formula(self) -> bool:
+        """Whether the sheet holds at least one formula cell."""
+        return any(_HAS_FORMULA.search(xml) for _, _, xml in self.iter_cells())
+
     def iter_cells(self) -> Iterator[tuple[int, int, str]]:
         """Yield ``(row, column, xml)`` for every cell in the sheet."""
         for number in sorted(self._rows):
@@ -470,6 +505,43 @@ class SheetPart:
         return shown
 
     # ── sheet features ─────────────────────────────────────────────────────
+
+    def set_tab_selected(self, selected: bool) -> None:
+        """Set ``tabSelected`` on this sheet's ``<sheetView>``.
+
+        The workbook says which tab is *active*; each sheet also says whether
+        it is *selected*, and a selection that disagrees leaves two tabs
+        highlighted in Excel.  ``<sheetViews>`` always precedes
+        ``<sheetData>``, so this only edits the head of the part.
+        """
+        value = "1" if selected else "0"
+        view = _SHEET_VIEW.search(self._head)
+        if view is not None:
+            updated = xmltext.set_tag_attribute(view.group(0), "tabSelected", value)
+            self._head = f"{self._head[: view.start()]}{updated}{self._head[view.end() :]}"
+            self._dirty()
+            return
+        if not selected:
+            return
+        # A sheet can be saved without a <sheetView>; insert one where the
+        # schema expects it, before the row defaults, the columns and the data.
+        new_view = '<sheetViews><sheetView workbookViewId="0" tabSelected="1"/></sheetViews>'
+        for name in WORKSHEET_VIEW_ANCHORS:
+            anchor = xmltext.start_tag_re(name).search(self._head)
+            if anchor is not None:
+                self._head = (
+                    f"{self._head[: anchor.start()]}{new_view}{self._head[anchor.start() :]}"
+                )
+                self._dirty()
+                return
+        views = _SHEET_VIEWS.search(self._head)
+        if views is not None:  # pragma: no cover - a sheetViews block without a view
+            self._head = f"{self._head[: views.start()]}{new_view}{self._head[views.end() :]}"
+            self._dirty()
+            return
+        root_end = root_element_end(self._head)
+        self._head = f"{self._head[:root_end]}{new_view}{self._head[root_end:]}"
+        self._dirty()
 
     def merged_ranges(self) -> list[str]:
         """Every merged range of the sheet."""
@@ -856,23 +928,44 @@ class SheetStore:
         return self._sheets[part]
 
     def formula_parts(self, parts: list[str]) -> list[SheetPart]:
-        """The editors of those *parts* that contain at least one formula."""
-        return [
-            self.get(part)
-            for part in parts
-            if _HAS_FORMULA.search(self.package.text(part)) is not None
-        ]
+        """The editors of those *parts* that contain at least one formula.
+
+        A cached editor is asked directly, so a part edited during this session
+        is judged by its current cells; an editor that has not been needed yet
+        is not created for a sheet that holds no formula.
+        """
+        found: list[SheetPart] = []
+        for part in parts:
+            cached = self._sheets.get(part)
+            if cached is not None:
+                has_formula = cached.has_formula()
+            else:
+                has_formula = _HAS_FORMULA.search(self.package.text(part)) is not None
+            if has_formula:
+                found.append(self.get(part))
+        return found
 
     def save_all(self) -> None:
-        """Write back every sheet that changed."""
-        for sheet in self._sheets.values():
+        """Write back every sheet that changed.
+
+        Raises:
+            RuntimeError: If an editor would write a part the package no longer
+                has, which would resurrect a sheet that was deleted.
+
+        """
+        for part, sheet in self._sheets.items():
+            if not self.package.has(part):
+                msg = (
+                    f"Cannot write {part}: the part was removed from the workbook. "
+                    "Sheets removed by delete_sheets have to be discarded from the store."
+                )
+                raise RuntimeError(msg)
             sheet.save()
 
-    def forget(self, part: str) -> None:
-        """Drop the cached editor of *part*, so the next :meth:`get` re-reads it.
+    def discard(self, part: str) -> None:
+        """Drop the cached editor of *part*, so its edits are never written back.
 
-        An operation that changes a part directly through the package (hiding a
-        sheet, deleting one, activating one) leaves a cached editor holding the
-        old text; saving it back would undo the change.
+        Only a part that the package dropped needs this: a deleted sheet must
+        not come back because an editor still held the text it had before.
         """
         self._sheets.pop(part, None)

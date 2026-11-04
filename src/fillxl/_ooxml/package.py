@@ -109,6 +109,9 @@ class OoxmlPackage:
         # Parts are read on first access: a fill touches a handful of XML
         # parts and must not pull a 20 MB image into memory to do it.
         self._parts: dict[str, bytes] = {}
+        # Decoding is cached separately so reading a part twice does not decode
+        # it twice; an editor that owns a part reads it on every change.
+        self._texts: dict[str, str] = {}
         self._dropped: set[str] = set()
         self._dirty: set[str] = set()
         self._shared_strings: list[str] | None = None
@@ -150,16 +153,22 @@ class OoxmlPackage:
                 destroy it, and the other engine can read it.
 
         """
+        cached = self._texts.get(part)
+        if cached is not None:
+            return cached
         data = self.raw(part)
         if data.startswith((_UTF16_LE, _UTF16_BE)):
             raise _not_utf8(part)
         try:
-            return data.decode("utf-8")
+            decoded = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise _not_utf8(part) from exc
+        self._texts[part] = decoded
+        return decoded
 
     def set_text(self, part: str, text: str) -> None:
         """Replace *part* with *text*."""
+        self._texts[part] = text
         self._parts[part] = text.encode("utf-8")
         if part not in self._order:
             self._order.append(part)
@@ -195,12 +204,14 @@ class OoxmlPackage:
         """Remove *part*, its relationship part and its content-type override."""
         self._dropped.add(part)
         self._parts.pop(part, None)
+        self._texts.pop(part, None)
         self._order = [name for name in self._order if name != part]
         self._dirty.discard(part)
         rels = rels_part(part)
         if rels != _ROOT_RELS and self.has(rels):
             self._dropped.add(rels)
             self._parts.pop(rels, None)
+            self._texts.pop(rels, None)
             self._order = [name for name in self._order if name != rels]
             self._dirty.discard(rels)
         self.remove_override(part)

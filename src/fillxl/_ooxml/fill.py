@@ -317,7 +317,7 @@ def fill_table(
     if plan.new_body_last_row != geometry.body_last_row:
         _resize_adjacent_formulas(workbook, table, plan, sheets)
         warn_about_untracked_ranges(
-            _untracked_range_sources(package, workbook),
+            _untracked_range_sources(package, workbook, sheets),
             table_name=name,
             sheet_title=table.sheet.name,
             geometry=geometry,
@@ -776,6 +776,7 @@ def _sheet_title(workbook: WorkbookPart, part: str) -> str:
 def _untracked_range_sources(
     package: OoxmlPackage,
     workbook: WorkbookPart,
+    sheets: SheetStore,
 ) -> list[RangeSource]:
     """Every defined name, pivot source and validation list that holds a range."""
     sources: list[RangeSource] = [
@@ -788,17 +789,17 @@ def _untracked_range_sources(
         for sheet_title, reference in pivot_worksheet_sources(package)
     )
     for entry in workbook.worksheet_parts():
-        sources.extend(_validation_sources(package, entry.part, entry.name))
+        sources.extend(_validation_sources(sheets.get(entry.part), entry.name))
     return sources
 
 
-def _validation_sources(package: OoxmlPackage, part: str, sheet_title: str) -> list[RangeSource]:
+def _validation_sources(sheet: SheetPart, sheet_title: str) -> list[RangeSource]:
     """The range a sheet's data validations read their lists from.
 
     An unqualified list source means the sheet the validation sits on.
     """
     sources: list[RangeSource] = []
-    for match in _DATA_VALIDATION.finditer(package.text(part)):
+    for match in _DATA_VALIDATION.finditer(sheet.tail):
         element = match.group(0)
         sqref = xmltext.attribute(element, "sqref")
         description = f"the data validation over {sqref}" if sqref else "a data validation"

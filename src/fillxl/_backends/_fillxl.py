@@ -61,11 +61,22 @@ class FillxlBackend:
             raise RuntimeError(msg)
         return package, workbook, self._sheets, self._styles
 
-    def _save_parts(self) -> None:
-        """Write back the cached sheet editors, so ``package.text()`` is current."""
-        _, _, sheets, styles = self._require_session()
-        sheets.save_all()
-        styles.save()
+    def _select_only(self, active: str) -> None:
+        """Make *active* the only selected tab, through each part's owner."""
+        _, workbook, sheets, _ = self._require_session()
+        entries = workbook.sheets()
+        worksheets = {entry.part for entry in workbook.worksheet_parts()}
+        target = next(entry for entry in entries if entry.name == active)
+        workbook.set_active_sheet(active)
+        for entry in entries:
+            if not entry.part:
+                continue
+            selected = entry.index == target.index
+            if entry.part in worksheets:
+                sheets.get(entry.part).set_tab_selected(selected)
+            else:
+                # A chartsheet holds no cells, so the workbook part owns it.
+                workbook.set_tab_selected(entry.part, selected=selected)
 
     # ── Backend protocol ────────────────────────────────────────────────────
 
@@ -115,7 +126,6 @@ class FillxlBackend:
             sheets=sheets,
             styles=styles,
         )
-        self._save_parts()
 
     def fill_table(
         self,
@@ -135,9 +145,7 @@ class FillxlBackend:
 
         """
         package, workbook, sheets, styles = self._require_session()
-        spec = fill_table(package, workbook, name, data, config, sheets=sheets, styles=styles)
-        self._save_parts()
-        return spec
+        return fill_table(package, workbook, name, data, config, sheets=sheets, styles=styles)
 
     def update_charts(self, spec: TableChangeSpecs) -> None:
         """Update chart data ranges after a table resize.
@@ -173,17 +181,11 @@ class FillxlBackend:
             hint="Set hide_underscore_sheets=False to keep it visible.",
         )
         active = workbook.active_sheet_name()
-        _, _, sheets, _ = self._require_session()
         for name in to_hide:
             workbook.set_sheet_state(name, "hidden")
-            entry = workbook.sheet(name)
-            if entry is not None:
-                sheets.forget(entry.part)
             logger.debug("Hidden sheet '%s'", name)
         if active is None or active in to_hide:
-            workbook.set_active_sheet(first_remaining(visible, to_hide))
-            for entry in workbook.sheets():
-                sheets.forget(entry.part)
+            self._select_only(first_remaining(visible, to_hide))
 
     def delete_sheets(self, names: Sequence[str]) -> None:
         """Delete the sheets named in *names*.
@@ -214,17 +216,15 @@ class FillxlBackend:
         }
         workbook.remove_sheets(present)
         for part in present_parts:
-            sheets.forget(part)
+            sheets.discard(part)
         for name in present:
             logger.debug("Deleted sheet '%s'", name)
         if active is not None and active not in present:
-            workbook.set_active_sheet(active)
+            self._select_only(active)
         else:
-            workbook.set_active_sheet(first_remaining(visible, present))
-        for entry in workbook.sheets():
-            sheets.forget(entry.part)
+            self._select_only(first_remaining(visible, present))
         self._deleted_sheets.extend(present)
-        warn_about_deleted_sheets(package, workbook, present)
+        warn_about_deleted_sheets(package, workbook, present, sheets)
 
     def set_active_sheet(self, name: str) -> None:
         """Set the active (displayed) sheet.
@@ -244,10 +244,7 @@ class FillxlBackend:
         if not entry.visible:
             msg = f"Sheet '{name}' is hidden and cannot be the active sheet."
             raise ValueError(msg)
-        workbook.set_active_sheet(entry.name)
-        _, _, sheets, _ = self._require_session()
-        for sheet_entry in workbook.sheets():
-            sheets.forget(sheet_entry.part)
+        self._select_only(entry.name)
         logger.debug("Set active sheet to '%s'", name)
 
     def save(self, path: Path) -> None:
@@ -275,6 +272,12 @@ class FillxlBackend:
         workbook.set_full_calc_on_load()
         workbook.remove_calc_chain()
         self._clear_every_cached_result(workbook)
+        _, _, sheets, styles = self._require_session()
+        # Every sheet part is written once, here: the editors are the only
+        # writers of a worksheet, so a sheet that changed is written once and
+        # a sheet that did not is left byte-identical.
+        sheets.save_all()
+        styles.save()
         logger.debug("Saving workbook to %s", path)
         package.save(path)
 
@@ -294,7 +297,6 @@ class FillxlBackend:
             cleared += sheet.clear_stale_results()
         if cleared:
             logger.debug("Cleared cached results of %d cells", cleared)
-        self._save_parts()
 
     def close(self) -> None:
         """Release the in-memory package."""

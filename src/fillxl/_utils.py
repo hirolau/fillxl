@@ -30,32 +30,6 @@ def table_column_name(column: TableColumn) -> str:
     return unescape(str(column.name))
 
 
-def col_to_excel(col: int) -> str:
-    """Convert 1-based column number to Excel column letter(s).
-
-    Args:
-        col: 1-based column number
-
-    Returns:
-        Excel column letter(s)
-
-    Examples:
-        >>> col_to_excel(1)
-        'A'
-        >>> col_to_excel(26)
-        'Z'
-        >>> col_to_excel(27)
-        'AA'
-
-    """
-    result = ""
-    while col > 0:
-        col -= 1
-        result = chr(col % 26 + ord("A")) + result
-        col //= 26
-    return result
-
-
 def unquote_sheet_name(text: str) -> str:
     """*text* without the quotes Excel puts around a sheet name.
 

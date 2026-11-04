@@ -48,7 +48,6 @@ from fillxl._sheets import (
     plan_hide,
     warn_sheet_not_found,
 )
-from fillxl._utils import col_to_excel
 from fillxl._validation import validate_columns
 from fillxl._warnings import FillXLWarning, warn_user
 
@@ -330,8 +329,8 @@ class Win32ComBackend:
         warn_about_ignored_formula_data(name, data_columns, rows, formulas)
 
         plan = plan_table_fill(geometry, len(rows), table_name=name)
-        first_letter = col_to_excel(geometry.first_col)
-        last_letter = col_to_excel(geometry.last_col)
+        first_letter = get_column_letter(geometry.first_col)
+        last_letter = get_column_letter(geometry.last_col)
 
         if plan.overflow_rows is not None:
             _check_overflow_regions_com(
@@ -936,7 +935,7 @@ def _check_overflow_com(
     for row_offset, row_values in enumerate(grid):
         for col_offset, cell in enumerate(row_values):
             if cell is not None:
-                cell_ref = f"{col_to_excel(start_col + col_offset)}{first_row + row_offset}"
+                cell_ref = f"{get_column_letter(start_col + col_offset)}{first_row + row_offset}"
                 msg = (
                     f"Table '{table_name}' cannot expand to {num_data_rows} rows: "
                     f"cell {cell_ref} already contains data ({cell!r}). "

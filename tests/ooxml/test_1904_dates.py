@@ -13,11 +13,13 @@ from typing import TYPE_CHECKING
 import openpyxl
 import pytest
 
-from fillxl import CellValueError, fill
+from fillxl import CellValueError, Engine, fill
 from tests.ooxml._build import body_rows, date1904_template
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+ENGINES: list[Engine] = ["openpyxl", "fillxl"]
 
 
 def test_dates_written_into_a_1904_workbook_read_back_as_the_same_dates(
@@ -46,9 +48,9 @@ def test_dates_written_into_a_1904_workbook_read_back_as_the_same_dates(
         workbook.close()
 
 
-@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+@pytest.mark.parametrize("engine", ENGINES)
 def test_a_named_date_before_the_1904_epoch_is_refused_by_both_engines(
-    engine: str,
+    engine: Engine,
     tmp_path: Path,
 ) -> None:
     """Excel shows a date before day zero as ####, so neither engine may write one."""
@@ -66,9 +68,9 @@ def test_a_named_date_before_the_1904_epoch_is_refused_by_both_engines(
     assert not (tmp_path / f"{engine}.xlsx").exists()
 
 
-@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+@pytest.mark.parametrize("engine", ENGINES)
 def test_a_table_date_before_the_1904_epoch_is_refused_by_both_engines(
-    engine: str,
+    engine: Engine,
     tmp_path: Path,
 ) -> None:
     """A table cell is validated by the same rule as a named cell."""
@@ -85,8 +87,8 @@ def test_a_table_date_before_the_1904_epoch_is_refused_by_both_engines(
     assert not (tmp_path / f"{engine}.xlsx").exists()
 
 
-@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
-def test_a_date_on_the_1904_epoch_is_written(engine: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_date_on_the_1904_epoch_is_written(engine: Engine, tmp_path: Path) -> None:
     """Day zero of the 1904 system is a serial Excel can show."""
     template = date1904_template(tmp_path / "template.xlsx")
 

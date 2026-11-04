@@ -10,17 +10,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from fillxl import fill
+from fillxl import Engine, fill
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-ENGINES = ["auto", "openpyxl", "fillxl", "win32com"]
+ENGINES: list[Engine] = ["auto", "openpyxl", "fillxl", "win32com"]
 
 
 @pytest.mark.parametrize("engine", ENGINES)
 def test_an_xls_template_is_refused_before_anything_is_opened(
-    engine: str,
+    engine: Engine,
     tmp_path: Path,
 ) -> None:
     """The template does not exist, so a different error would mean it was opened."""
@@ -34,7 +34,7 @@ def test_an_xls_template_is_refused_before_anything_is_opened(
 
 @pytest.mark.parametrize("engine", ENGINES)
 def test_an_xls_output_is_refused_before_the_template_is_opened(
-    engine: str,
+    engine: Engine,
     tmp_path: Path,
 ) -> None:
     """Writing a BIFF8 file is as unsupported as reading one."""

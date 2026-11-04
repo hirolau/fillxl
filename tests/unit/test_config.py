@@ -31,7 +31,7 @@ class TestConfigValidation:
         from fillxl._config import _KNOWN_STRATEGIES
         from fillxl._validation import ColumnValidationStrategy
 
-        assert _KNOWN_STRATEGIES == frozenset(get_args(ColumnValidationStrategy)) | {"drop"}
+        assert frozenset(get_args(ColumnValidationStrategy)) | {"drop"} == _KNOWN_STRATEGIES
         for strategy in get_args(ColumnValidationStrategy):
             FillXLConfig(column_validation_strategy=strategy)
 

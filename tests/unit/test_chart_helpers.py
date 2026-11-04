@@ -178,6 +178,9 @@ class TestUpdateChartDataRanges:
                         {"Col1": "e", "Col2": 5, "ColNotFilled": "v"},
                     ]
                 ),
+                # This test is about the chart ranges; the fixture's data omits
+                # columns on purpose, so column checking is not its subject.
+                column_validation_strategy="none",
             )
             update_chart_data_ranges(spec, wb)
 

@@ -80,7 +80,6 @@ class OpenpyxlBackend:
 
         self._source_suffix = ext
         self._workbook = openpyxl.load_workbook(path, keep_vba=ext == ".xlsm", rich_text=True)
-        _fix_chart_axes(self._workbook)
 
     def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
         """Write a scalar *value* to the named cell *name*.

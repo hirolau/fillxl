@@ -13,6 +13,7 @@ from attrs import define
 from openpyxl.utils import get_column_letter
 
 from ._charts import TableChangeSpecs
+from ._types import MAX_ROW
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -189,8 +190,21 @@ class TablePlan:
         )
 
 
-def plan_table_fill(geometry: TableGeometry, data_rows: int) -> TablePlan:
+def plan_table_fill(
+    geometry: TableGeometry,
+    data_rows: int,
+    *,
+    table_name: str | None = None,
+) -> TablePlan:
     """Plan filling the table at *geometry* with *data_rows* rows.
+
+    Args:
+        geometry: Where the table sits before the fill.
+        data_rows: Number of rows being written.
+        table_name: Name used in the error for a table that cannot fit.
+
+    Raises:
+        ValueError: If the table would end below Excel's last row.
 
     Examples:
         A one-row table that receives eight rows grows into rows 14-20:
@@ -220,6 +234,19 @@ def plan_table_fill(geometry: TableGeometry, data_rows: int) -> TablePlan:
         >>> plan.new_body_last_row, plan.unused_body_rows, plan.vacated_rows
         (13, (13, 20), (14, 20))
 
+        A table ending exactly on the last row fits, and one row more does not:
+
+        >>> last = MAX_ROW - 1
+        >>> geometry = TableGeometry(
+        ...     top_row=last, last_row=last, first_col=1, last_col=2, header_rows=0, totals_rows=0
+        ... )
+        >>> plan_table_fill(geometry, 2).new_last_row == MAX_ROW
+        True
+        >>> plan_table_fill(geometry, 3, table_name="Data")  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        ValueError: Table 'Data' cannot hold 3 rows: it would end on row 1048577, and ...
+
     """
     if data_rows < 0:
         msg = f"data_rows must not be negative, got {data_rows}"
@@ -227,6 +254,13 @@ def plan_table_fill(geometry: TableGeometry, data_rows: int) -> TablePlan:
     g = geometry
     new_body_last_row = g.first_data_row + max(data_rows, 1) - 1
     new_last_row = new_body_last_row + g.totals_rows
+    if new_last_row > MAX_ROW:
+        subject = f"Table '{table_name}'" if table_name else "The table"
+        msg = (
+            f"{subject} cannot hold {data_rows} rows: it would end on row {new_last_row}, "
+            f"and an Excel sheet has {MAX_ROW:,} rows."
+        )
+        raise ValueError(msg)
     first_unused = g.first_data_row + data_rows
     return TablePlan(
         geometry=g,

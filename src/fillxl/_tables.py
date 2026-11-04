@@ -252,7 +252,7 @@ def populate_table(
 
     worksheet, table = find_worksheet_and_table(workbook, table_name)
     geometry = openpyxl_table_geometry(table)
-    plan = plan_table_fill(geometry, len(rows))
+    plan = plan_table_fill(geometry, len(rows), table_name=table_name)
     first_col, last_col = geometry.first_col, geometry.last_col
     header_rows = geometry.header_rows
 

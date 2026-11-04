@@ -211,7 +211,7 @@ def fill_table(
     sheet_entries = workbook.worksheet_parts()
     table = find_table(package, sheet_entries, name)
     geometry = table.geometry()
-    plan = plan_table_fill(geometry, len(adapter.rows))
+    plan = plan_table_fill(geometry, len(adapter.rows), table_name=name)
     sheet = sheets.get(table.sheet.part)
     # The fill rewrites the table area; a shared group that reaches into it is
     # unshared first, so no dependent is left without its master.

@@ -24,6 +24,7 @@ from openpyxl.formula.tokenizer import TokenizerError
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
 
+from fillxl._types import MAX_COLUMN, MAX_ROW
 from fillxl._utils import table_column_name, unquote_sheet_name
 from fillxl._warnings import warn_user
 
@@ -38,8 +39,6 @@ logger = logging.getLogger(__name__)
 BodyState = Literal["formula", "mixed", "empty", "values"]
 CellKind = Literal["formula", "empty", "value"]
 
-_MAX_ROW = 1_048_576
-_MAX_COLUMN = 16_384
 # A single A1 reference, optionally qualified by a sheet name.  A defined name
 # such as ``Rate`` has no digits and a structured reference contains ``[``, so
 # neither matches; ``LOG10(`` is a function token, never an operand.
@@ -91,8 +90,8 @@ def _endpoint_in_bounds(reference: str) -> bool:
     if match is None:  # pragma: no cover - _A1_OPERAND guarantees the shape
         return False
     return (
-        1 <= _column_index(match.group("col")) <= _MAX_COLUMN
-        and 1 <= int(match.group("row").lstrip("$")) <= _MAX_ROW
+        1 <= _column_index(match.group("col")) <= MAX_COLUMN
+        and 1 <= int(match.group("row").lstrip("$")) <= MAX_ROW
     )
 
 
@@ -245,7 +244,7 @@ def _shift_operand(operand: str, row_offset: int, column_offset: int) -> str:
         row = row_text.lstrip("$")
         if row_offset and not row_text.startswith("$"):
             new_row = int(row) + row_offset
-            if not 1 <= new_row <= _MAX_ROW:
+            if not 1 <= new_row <= MAX_ROW:
                 msg = (
                     f"Filling this table would move the reference {operand!r} to row "
                     f"{new_row}, outside the sheet"
@@ -254,7 +253,7 @@ def _shift_operand(operand: str, row_offset: int, column_offset: int) -> str:
             row = str(new_row)
         if column_offset and not column_text.startswith("$"):
             new_column = _column_index(column) + column_offset
-            if not 1 <= new_column <= _MAX_COLUMN:
+            if not 1 <= new_column <= MAX_COLUMN:
                 msg = (
                     f"Filling this table would move the reference {operand!r} to "
                     f"column {new_column}, outside the sheet"

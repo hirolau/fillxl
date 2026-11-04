@@ -325,7 +325,7 @@ class Win32ComBackend:
         )
         warn_about_ignored_formula_data(name, data_columns, rows, formulas)
 
-        plan = plan_table_fill(geometry, len(rows))
+        plan = plan_table_fill(geometry, len(rows), table_name=name)
         first_letter = col_to_excel(geometry.first_col)
         last_letter = col_to_excel(geometry.last_col)
 

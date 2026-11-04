@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- A table that would grow past Excel's last row is now refused with a
+  `ValueError` that names the table, the row count and the sheet limit, before
+  anything is written, on every engine. Previously the offline engines wrote
+  cells off the grid and produced a file Excel could not use, and `win32com`
+  surfaced a raw COM error.
 - `engine="fillxl"` no longer corrupts a shared formula when it clears the
   template's cached results. A group whose master cell shows an empty result
   lost its master, leaving dependants pointing at a group that no longer

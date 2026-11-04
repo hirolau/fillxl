@@ -6,6 +6,7 @@ sort-state test pins what Excel itself does so the engines keep agreeing.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import openpyxl
@@ -87,6 +88,40 @@ def test_a_table_refuses_to_grow_into_merged_cells(
 
     with pytest.raises(ValueError, match=r"the merged range A5:B5 is in the way"):
         _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": rows})
+
+
+def _table_at_the_bottom_of_the_sheet(path: Path) -> Path:
+    """``Sales`` right above Excel's last row: ten rows cannot fit."""
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Data"
+    worksheet["A1048570"], worksheet["B1048570"] = "fund", "nav"
+    worksheet["A1048571"], worksheet["B1048571"] = "A", 1
+    worksheet.add_table(_table("A1048570:B1048571", "Sales", ("fund", "nav")))
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_table_that_would_outgrow_the_sheet_is_refused_before_anything_is_written(
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """A table cannot grow past row 1,048,576; the file must stay untouched."""
+    template = _table_at_the_bottom_of_the_sheet(tmp_path / "template.xlsx")
+    output = tmp_path / "out.xlsx"
+    rows = [{"fund": letter, "nav": index} for index, letter in enumerate("ABCDEFGHIJ")]
+
+    message = (
+        "Table 'Sales' cannot hold 10 rows: it would end on row 1048580, "
+        "and an Excel sheet has 1,048,576 rows."
+    )
+    with pytest.raises(ValueError, match=re.escape(message)):
+        _fill_output(template, output, engine, tables={"Sales": rows})
+
+    assert not output.exists()
+    assert not output.with_name(f"{output.stem}_{engine}{output.suffix}").exists()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

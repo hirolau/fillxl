@@ -54,29 +54,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def is_single_cell(cell: object) -> bool:
-    """Check if an object is a single Cell instance (not a MergedCell).
-
-    Args:
-        cell: Object to check
-
-    Returns:
-        True if *cell* is a :class:`~openpyxl.cell.cell.Cell` instance.
-
-    Examples:
-        >>> from openpyxl.cell.cell import Cell
-        >>> is_single_cell(Cell(None, None, None, None))
-        True
-        >>> is_single_cell("not a cell")
-        False
-        >>> from openpyxl.worksheet.cell_range import CellRange
-        >>> is_single_cell(CellRange("A1:B2"))
-        False
-
-    """
-    return isinstance(cell, Cell)
-
-
 def openpyxl_table_geometry(table: Table) -> TableGeometry:
     """Where *table* sits, read from its reference and header/totals settings."""
     ref = CellRange(table.ref)
@@ -110,7 +87,7 @@ def _clear_rows(
             if col in skipped:
                 continue
             cell = worksheet._cells.get((row, col))
-            if cell is not None and is_single_cell(cell):
+            if isinstance(cell, Cell):
                 cell.value = None
 
 
@@ -322,7 +299,7 @@ def populate_table(
     logger.debug("Table '%s' resized: %s -> %s", table_name, original_ref, plan.new_ref)
 
     table_first_cell = worksheet.cell(row=geometry.top_row, column=first_col)
-    if not is_single_cell(table_first_cell):
+    if not isinstance(table_first_cell, Cell):
         msg = "Expected a single cell! This should never happen in a table."
         raise ValueError(msg)
 
@@ -539,7 +516,7 @@ def _resize_adjacent_formulas(
                 and plan.first_data_row <= row <= plan.new_body_last_row
                 and first_col <= column <= last_col
             )
-            if in_body or not is_single_cell(cell) or cell.data_type != "f":
+            if in_body or not isinstance(cell, Cell) or cell.data_type != "f":
                 continue
             formula = cell.value
             if not isinstance(formula, str):
@@ -588,9 +565,9 @@ def _reset_row_style(
     for col in range(first_col, last_col + 1):
         target = worksheet._cells.get((row, col))
         source = worksheet._cells.get((template_row, col))
-        if target is None or not is_single_cell(target):
+        if target is None or not isinstance(target, Cell):
             continue
-        if source is not None and is_single_cell(source):
+        if isinstance(source, Cell):
             target._style = copy(source._style)
 
 
@@ -637,7 +614,7 @@ def _read_row(
     snapshots: list[_CellSnapshot] = []
     for col in range(first_col, last_col + 1):
         cell = worksheet._cells.get((row, col))
-        if cell is None or not is_single_cell(cell):
+        if cell is None or not isinstance(cell, Cell):
             snapshots.append(_CellSnapshot(None, None, None))
             continue
         snapshots.append(_CellSnapshot(cell.value, copy(cell._style), cell.data_type))
@@ -653,7 +630,7 @@ def _write_row(
     """Write snapshots captured by :func:`_read_row` into *row*."""
     for offset, snapshot in enumerate(snapshots):
         cell = worksheet.cell(row=row, column=first_col + offset)
-        if not is_single_cell(cell):
+        if not isinstance(cell, Cell):
             continue
         if snapshot.style is not None:
             cell._style = copy(snapshot.style)

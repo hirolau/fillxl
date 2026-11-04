@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Changed
+- `cf_range_tracks_table` is now `range_tracks_table`: the same rule also
+  extends data-validation ranges with the table, so the name no longer claims
+  to be about conditional formatting. `cf_range_tracks_table` remains as an
+  alias.
 - `get_backend` now takes a concrete engine name only. `engine="auto"` is
   resolved by `resolve_engine` before a backend is built, so the factory no
   longer carries a second, unreachable `"auto"` branch; the `Backend` protocol

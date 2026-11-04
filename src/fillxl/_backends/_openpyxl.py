@@ -23,7 +23,6 @@ from fillxl._sheets import (
 )
 from fillxl._tables import populate_table
 from fillxl._types import OPENPYXL_SUFFIXES
-from fillxl._validation import ColumnValidationStrategy, validate_columns
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -122,12 +121,6 @@ class OpenpyxlBackend:
         # The adapter is built once and shared with populate_table so that
         # expensive data (e.g. a DuckDB relation) is only read once.
         adapter = TabularAdapter(data)
-        _validate_table_columns(
-            workbook=workbook,
-            table_name=name,
-            adapter=adapter,
-            strategy=config.column_validation_strategy,
-        )
 
         return populate_table(
             workbook,
@@ -137,6 +130,7 @@ class OpenpyxlBackend:
             extend_conditional_formatting=config.extend_conditional_formatting,
             extend_data_validation=config.extend_data_validation,
             escape_formulas=config.escape_formulas,
+            column_validation_strategy=config.column_validation_strategy,
         )
 
     def update_charts(self, spec: TableChangeSpecs) -> None:
@@ -302,44 +296,6 @@ def _set_tab_selected(sheet: Any, *, selected: bool) -> None:  # noqa: ANN401
         return
     for view in views.sheetView:
         view.tabSelected = selected
-
-
-def _validate_table_columns(
-    workbook: openpyxl.Workbook,
-    table_name: str,
-    adapter: TabularAdapter,
-    strategy: ColumnValidationStrategy,
-) -> None:
-    """Validate columns of incoming data against the Excel table definition.
-
-    Args:
-        workbook: The openpyxl Workbook containing the table.
-        table_name: Name of the table to validate against.
-        adapter: The incoming data, for its column names and row count.
-        strategy: Validation strategy (see :func:`fillxl._validation.validate_columns`).
-
-    Raises:
-        ValueError: If the strategy requires exact match and columns don't align.
-
-    """
-    from fillxl._formulas import openpyxl_formula_columns
-    from fillxl._tables import openpyxl_table_geometry
-    from fillxl._utils import find_worksheet_and_table, table_column_name
-
-    worksheet, table = find_worksheet_and_table(workbook, table_name)
-    geometry = openpyxl_table_geometry(table)
-    table_columns = [table_column_name(col) for col in table.tableColumns]
-    formula_columns = list(
-        openpyxl_formula_columns(worksheet, table, geometry.first_data_row, geometry.body_last_row)
-    )
-    validate_columns(
-        table_columns=table_columns,
-        data_columns=adapter.columns,
-        strategy=strategy,
-        formula_columns=formula_columns,
-        table_name=table_name,
-        data_rows=len(adapter.rows),
-    )
 
 
 def _fix_chart_axes(workbook: openpyxl.Workbook) -> None:

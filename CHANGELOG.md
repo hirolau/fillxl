@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- The `openpyxl` engine now checks the columns once, inside the table fill,
+  right after it detects calculated columns and before it checks whether the
+  table has room to grow. A column mismatch therefore comes first there too,
+  as it already did in the `fillxl` engine, instead of depending on which check
+  happened to run first.
 - Text that looks like an Excel escape sequence is now written as typed by the
   `openpyxl` and `fillxl` engines. Excel decodes `_xHHHH_` in a cell string, so
   a value such as `file_x0020_name` used to be displayed as `file name`; the

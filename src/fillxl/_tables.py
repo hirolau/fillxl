@@ -42,6 +42,7 @@ from ._references import (
     warn_about_untracked_ranges,
 )
 from ._utils import find_worksheet_and_table, table_column_name, workbook_uses_1904
+from ._validation import ColumnValidationStrategy, validate_columns
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -235,6 +236,7 @@ def populate_table(
     extend_conditional_formatting: bool = True,
     extend_data_validation: bool = True,
     escape_formulas: bool = False,
+    column_validation_strategy: ColumnValidationStrategy = "all_but_formulas",
 ) -> TableChangeSpecs:
     """Populate an Excel table with tabular data.
 
@@ -251,6 +253,8 @@ def populate_table(
             cover new rows
         escape_formulas: If True, strings starting with ``=`` are written as
             literal text instead of becoming formulas.
+        column_validation_strategy: How to react when the data's columns do
+            not match the table's (see :func:`fillxl._validation.validate_columns`).
 
     Returns:
         TableChangeSpecs describing the old and new table dimensions
@@ -272,6 +276,16 @@ def populate_table(
     # Calculated columns must be detected before any body cell is cleared.
     formula_columns = openpyxl_formula_columns(
         worksheet, table, geometry.first_data_row, geometry.body_last_row
+    )
+    # Before the room-to-grow checks, so a column mismatch is reported the way
+    # the fillxl engine reports it.
+    validate_columns(
+        table_columns=[table_column_name(column) for column in table.tableColumns],
+        data_columns=columns,
+        strategy=column_validation_strategy,
+        formula_columns=list(formula_columns),
+        table_name=table_name,
+        data_rows=len(rows),
     )
     warn_about_ignored_formula_data(table_name, columns, rows, formula_columns)
 

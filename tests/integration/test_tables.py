@@ -38,6 +38,30 @@ def _data_rows(count: int) -> list[dict[str, object]]:
     ]
 
 
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_a_column_mismatch_is_reported_before_the_table_is_checked_for_room_to_grow(
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """A mismatch names the columns; the blocked cell is the lesser problem."""
+    template = table_template(tmp_path / "template.xlsx", body=(("A", 1),), name="Sales")
+    workbook = openpyxl.load_workbook(template)
+    worksheet = workbook["Data"]
+    worksheet["A3"] = "in the way"
+    workbook.save(template)
+    workbook.close()
+
+    rows = [{"fund": "A", "nav": 1, "extra": "x"}] * 4
+    with pytest.raises(ValueError, match="Column mismatch"):
+        _fill_output(
+            template,
+            tmp_path / "out.xlsx",
+            engine,
+            tables={"Sales": rows},
+            config=FillXLConfig(column_validation_strategy="strict"),
+        )
+
+
 @pytest.mark.parametrize("engine", ENGINES)
 def test_a_table_whose_name_and_display_name_differ_is_found_by_every_engine(
     tmp_path: Path,

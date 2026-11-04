@@ -275,14 +275,14 @@ class OoxmlPackage:
 
         self.set_text(part, _RELATIONSHIP.sub(keep, text))
 
-    def dependencies(self, owner: str) -> Iterator[tuple[str, str]]:
-        """Yield ``(owner, part)`` for every internal relationship of *owner*."""
+    def dependency_parts(self, owner: str) -> Iterator[str]:
+        """Yield the part every internal relationship of *owner* points at."""
         for relationship in self.relationships(owner):
             if relationship.external:
                 continue
             resolved = self._resolve(owner, relationship.target)
             if resolved is not None:
-                yield owner, resolved
+                yield resolved
 
     def reachable_from(self, roots: list[str]) -> set[str]:
         """Every part reachable from *roots* through internal relationships."""
@@ -293,7 +293,7 @@ class OoxmlPackage:
             if part in seen or not self.has(part):
                 continue
             seen.add(part)
-            pending.extend(target for _, target in self.dependencies(part))
+            pending.extend(self.dependency_parts(part))
         return seen
 
     @staticmethod

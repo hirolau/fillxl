@@ -18,19 +18,6 @@ from fillxl._normalize import is_text_cell_value
 from fillxl._ooxml import xmltext
 
 
-def number_text(value: int | float) -> str:
-    """How Excel stores a number in a ``<v>`` element.
-
-    Examples:
-        >>> number_text(42)
-        '42'
-        >>> number_text(2.5)
-        '2.5'
-
-    """
-    return str(value)
-
-
 def serial_text(
     value: dt.date | dt.datetime,
     *,
@@ -79,6 +66,8 @@ def build_cell(
     Examples:
         >>> build_cell("B7", 42, style="1", escape_formulas=False)
         '<c r="B7" s="1"><v>42</v></c>'
+        >>> build_cell("B7", 2.5, style=None, escape_formulas=False)
+        '<c r="B7"><v>2.5</v></c>'
         >>> build_cell("B7", True, style=None, escape_formulas=False)
         '<c r="B7" t="b"><v>1</v></c>'
         >>> build_cell("B7", "North", style="1", escape_formulas=False)
@@ -97,7 +86,7 @@ def build_cell(
     if isinstance(value, bool):
         return f'<c{attributes} t="b"><v>{"1" if value else "0"}</v></c>'
     if isinstance(value, (int, float)):
-        return f"<c{attributes}><v>{number_text(value)}</v></c>"
+        return f"<c{attributes}><v>{value}</v></c>"
     if isinstance(value, (dt.date, dt.datetime)):
         return f"<c{attributes}><v>{serial_text(value, epoch=epoch)}</v></c>"
     text = str(value)

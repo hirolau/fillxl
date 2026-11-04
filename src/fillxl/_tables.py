@@ -24,6 +24,7 @@ from ._normalize import (
     is_text_cell_value,
     prepare_table_cell,
 )
+from ._ooxml.xmltext import escape_ooxml_escapes
 from ._plan import (
     BlockedRegion,
     RowSpan,
@@ -369,10 +370,15 @@ def populate_table(
                 # arrives, or openpyxl replaces it with its default date format.
                 if copy_style_in_tables:
                     cell._style = copy(first_row_style)
-                cell.value = value
                 # Force text for strings openpyxl would reinterpret: error
                 # values such as "#N/A", and formulas when escaping is on.
-                if is_text_cell_value(value, escape_formulas=escape_formulas):
+                # Excel decodes ``_xHHHH_`` in a cell string, so literal text is
+                # escaped the way Excel's own writer escapes it.
+                as_text = is_text_cell_value(value, escape_formulas=escape_formulas)
+                if as_text:
+                    value = escape_ooxml_escapes(str(value))
+                cell.value = value
+                if as_text:
                     cell.data_type = "s"
 
         else:

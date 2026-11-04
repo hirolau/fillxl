@@ -103,7 +103,10 @@ def build_cell(
     text = str(value)
     if not is_text_cell_value(text, escape_formulas=escape_formulas):
         return f"<c{attributes}><f>{xmltext.escape_text(text[1:])}</f></c>"
+    # Excel decodes ``_xHHHH_`` in a string, so literal text has to be escaped
+    # the way Excel's own writer escapes it.
     return (
         f'<c{attributes} t="inlineStr"><is>'
-        f'<t xml:space="preserve">{xmltext.escape_text(text)}</t></is></c>'
+        f'<t xml:space="preserve">'
+        f"{xmltext.escape_text(xmltext.escape_ooxml_escapes(text))}</t></is></c>"
     )

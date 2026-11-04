@@ -15,6 +15,7 @@ from fillxl._normalize import (
     is_text_cell_value,
     prepare_cell_value,
 )
+from fillxl._ooxml.xmltext import escape_ooxml_escapes
 from fillxl._utils import workbook_uses_1904
 from fillxl._warnings import warn_user
 
@@ -246,11 +247,16 @@ def populate_named_cells(
             raise header_write_error(worksheet_name, cell_address, str(conflict.name))
 
         cell = worksheet[cell_address]
+        # Excel decodes ``_xHHHH_`` in a cell string, so literal text is escaped
+        # the way Excel's own writer escapes it — never a formula.
+        as_text = is_text_cell_value(normalised_value, escape_formulas=escape_formulas)
+        if as_text:
+            normalised_value = escape_ooxml_escapes(str(normalised_value))
         cell.value = normalised_value
 
         # Force text for strings openpyxl would reinterpret: error values
         # such as "#N/A", and formulas when escaping is enabled.
-        if is_text_cell_value(normalised_value, escape_formulas=escape_formulas):
+        if as_text:
             cell.data_type = "s"
 
         logger.debug(

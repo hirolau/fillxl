@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- Text that looks like an Excel escape sequence is now written as typed by the
+  `openpyxl` and `fillxl` engines. Excel decodes `_xHHHH_` in a cell string, so
+  a value such as `file_x0020_name` used to be displayed as `file name`; the
+  leading underscore is now escaped the way Excel's own writer escapes it
+  (`_x005F_`). Formulas are never escaped, and `win32com` already stored the
+  text correctly.
 - `engine="win32com"` now warns with `DanglingReferenceWarning` when
   `delete_sheets` removes a sheet that formulas, charts, pivots or defined
   names still read, as the other engines already did. The locations are

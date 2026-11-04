@@ -20,6 +20,7 @@ _NAME = r"[A-Za-z_][\w.\-]*"
 _ANY_PREFIX = rf"(?:{_NAME}:)?"
 
 _CHARACTER_REFERENCE = re.compile(r"&(?:(#\d+)|#x([0-9A-Fa-f]+)|(lt|gt|amp|quot|apos));")
+_OOXML_ESCAPE = re.compile(r"_x[0-9A-Fa-f]{4}_")
 _NAMED_ENTITIES = {"lt": "<", "gt": ">", "amp": "&", "quot": '"', "apos": "'"}
 
 
@@ -76,6 +77,26 @@ def escape_attribute(text: str, quote: str = '"') -> str:
     """
     escaped = escape_text(text).replace('"', "&quot;")
     return escaped.replace("'", "&apos;") if quote == "'" else escaped
+
+
+def escape_ooxml_escapes(text: str) -> str:
+    """*text* with the leading underscore of every ``_xHHHH_`` escape escaped.
+
+    Excel reads ``_xHHHH_`` in a cell string as the character with that code,
+    so the user's ``file_x0020_name`` would be shown as ``file name``.  Its own
+    writer stores the text with the underscore escaped (``_x005F_``), which is
+    what Excel decodes back to the literal text.
+
+    Examples:
+        >>> escape_ooxml_escapes("a_x0041_b")
+        'a_x005F_x0041_b'
+        >>> escape_ooxml_escapes("file name")
+        'file name'
+        >>> escape_ooxml_escapes("_x005F_x0041_")
+        '_x005F_x005F_x0041_'
+
+    """
+    return _OOXML_ESCAPE.sub(lambda match: "_x005F_" + match.group(0)[1:], text)
 
 
 def any_prefix(name: str) -> str:

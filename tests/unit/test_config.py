@@ -17,6 +17,13 @@ class TestConfigValidation:
         with pytest.raises(ValueError, match="column_validation_strategy"):
             FillXLConfig(column_validation_strategy=cast(Any, "bogus"))
 
+    def test_the_drop_strategy_is_deprecated_in_favour_of_none(self) -> None:
+        """'drop' and 'none' produce the same fill, so only one name is needed."""
+        with pytest.warns(DeprecationWarning, match="use 'none'"):
+            config = FillXLConfig(column_validation_strategy="drop")
+
+        assert config.column_validation_strategy == "none"
+
     def test_the_accepted_strategy_names_come_from_the_literal_type(self) -> None:
         """The validator and the ColumnValidationStrategy Literal cannot drift."""
         from typing import get_args
@@ -26,6 +33,10 @@ class TestConfigValidation:
 
         assert frozenset(get_args(ColumnValidationStrategy)) == _KNOWN_STRATEGIES
         for strategy in get_args(ColumnValidationStrategy):
+            if strategy == "drop":
+                with pytest.warns(DeprecationWarning):
+                    FillXLConfig(column_validation_strategy=strategy)
+                continue
             FillXLConfig(column_validation_strategy=strategy)
 
 

@@ -185,15 +185,21 @@ class TestColumnValidationStrategyOption:
             "all_but_formulas",
             "all_but_formulas_strict",
             "none",
-            "drop",
             "warn",
         ],
-        ids=["strict", "all_but_formulas", "all_but_formulas_strict", "none", "drop", "warn"],
+        ids=["strict", "all_but_formulas", "all_but_formulas_strict", "none", "warn"],
     )
     def test_strategy_name_is_accepted(self, strategy: ColumnValidationStrategy) -> None:
-        """Each of the six strategy names passes config validation."""
+        """Each supported strategy name passes config validation."""
         cfg = FillXLConfig(column_validation_strategy=strategy)
         assert cfg.column_validation_strategy == strategy
+
+    def test_the_drop_strategy_is_accepted_as_a_deprecated_alias_of_none(self) -> None:
+        """'drop' still works for one release, says so, and behaves like 'none'."""
+        with pytest.warns(DeprecationWarning, match="use 'none'"):
+            cfg = FillXLConfig(column_validation_strategy="drop")
+
+        assert cfg.column_validation_strategy == "none"
 
     def test_an_invalid_strategy_name_raises_valueerror(self) -> None:
         """'bogus' or any unknown strategy is rejected."""

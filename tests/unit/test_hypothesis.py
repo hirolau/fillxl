@@ -49,6 +49,7 @@ def test_validate_columns_drop_accepts_any_column_combination(
     validate_columns(table_cols, data_cols, strategy="drop")
 
 
+@pytest.mark.filterwarnings("ignore::fillxl._warnings.FillXLWarning")
 @given(
     table_cols=st.lists(st.text(min_size=1), min_size=1, max_size=10, unique=True),
     data_cols=st.lists(st.text(min_size=1), min_size=1, max_size=15, unique=True),

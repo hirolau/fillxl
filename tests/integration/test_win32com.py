@@ -603,7 +603,7 @@ class TestWin32ComCalculatedColumns:
             output=output,
             engine="win32com",
             tables={"TableTest": _table_rows(3)},
-            config=FillXLConfig(column_validation_strategy="drop"),
+            config=FillXLConfig(column_validation_strategy="none"),
         )
 
         assert _com_column_has_formula(output, "TableTest", "ColFormula") is True

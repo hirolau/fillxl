@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import get_args
+import warnings
+from typing import cast, get_args
 
 from attrs import define, field
 from attrs.validators import in_, instance_of
@@ -13,25 +14,29 @@ from fillxl._validation import ColumnValidationStrategy
 _KNOWN_STRATEGIES: frozenset[str] = frozenset(get_args(ColumnValidationStrategy))
 
 
-def _validate_column_strategy(
-    _instance: object,
-    _attribute: object,
-    value: str,
-) -> None:
-    """Validate the column validation strategy name.
+def _column_strategy(value: str) -> ColumnValidationStrategy:
+    """Validate the column validation strategy name, mapping deprecated names.
+
+    ``"drop"`` and ``"none"`` produce the same fill, so ``"drop"`` is accepted
+    for one release, warns, and is stored as ``"none"``.
 
     Args:
-        _instance: attrs instance (unused, required by attrs validator signature)
-        _attribute: attrs attribute (unused)
         value: Strategy name to validate
+
+    Returns:
+        The strategy to store.
 
     Raises:
         ValueError: If *value* is not a known strategy name
 
     Examples:
-        >>> _validate_column_strategy(None, None, "strict")
-        >>> _validate_column_strategy(None, None, "all_but_formulas")
-        >>> _validate_column_strategy(None, None, "bogus")
+        >>> _column_strategy("strict")
+        'strict'
+        >>> _column_strategy("all_but_formulas")
+        'all_but_formulas'
+        >>> _column_strategy("drop")  # doctest: +ELLIPSIS
+        'none'
+        >>> _column_strategy("bogus")
         Traceback (most recent call last):
             ...
         ValueError: column_validation_strategy must be one of ...got 'bogus'
@@ -42,6 +47,15 @@ def _validate_column_strategy(
             f"column_validation_strategy must be one of {sorted(_KNOWN_STRATEGIES)}, got {value!r}"
         )
         raise ValueError(msg)
+    if value == "drop":
+        warnings.warn(
+            "column_validation_strategy='drop' is deprecated and will be removed in a "
+            "future release; use 'none' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return "none"
+    return cast("ColumnValidationStrategy", value)
 
 
 def _to_sheet_tuple(value: list[str] | tuple[str, ...] | None) -> tuple[str, ...] | None:
@@ -114,7 +128,7 @@ class FillXLConfig:
 
     column_validation_strategy: ColumnValidationStrategy = field(
         default="all_but_formulas",
-        validator=_validate_column_strategy,
+        converter=_column_strategy,
     )
     escape_formulas: bool = field(default=True, validator=instance_of(bool))
     refresh_pivot_tables: bool = field(default=True, validator=instance_of(bool))

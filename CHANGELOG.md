@@ -119,6 +119,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DataFrame` with only an index, `[{}, {}, {}]`, or a `select` that dropped
   every column — which resized the table and cleared every data column even
   under `"strict"`.
+- `column_validation_strategy="warn"` emits one `FillXLWarning` per table,
+  naming both the missing and the extra columns, instead of writing two lines
+  to the log. A mismatch is therefore caught by the documented
+  `warnings.simplefilter("error", fillxl.FillXLWarning)` as well. `"drop"` is
+  deprecated: it is accepted for one release, warns with a `DeprecationWarning`
+  and behaves like `"none"`, which produced the same fill.
 
 ### Changed
 - `engine="fillxl"` is documented as experimental and opt-in: `engine="auto"`

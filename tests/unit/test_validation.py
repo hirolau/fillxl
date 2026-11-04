@@ -6,9 +6,12 @@ or in the story suite (tests_story/).
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 from fillxl._validation import validate_columns
+from fillxl._warnings import FillXLWarning
 
 
 def test_validate_columns_accepts_exact_match() -> None:
@@ -32,9 +35,23 @@ def test_validate_columns_drop_accepts_extra_and_missing_columns() -> None:
     validate_columns(["A", "B"], ["A", "C", "D"], "drop")
 
 
-def test_validate_columns_warn_accepts_extra_and_missing_columns() -> None:
-    """Warn strategy accepts extra and missing columns without raising."""
-    validate_columns(["A", "B"], ["A", "C"], "warn")
+def test_the_warn_strategy_emits_one_warning_that_names_both_column_sets() -> None:
+    """A mismatch is the caller's to act on, so it is a warning and not a log line."""
+    with pytest.warns(FillXLWarning) as caught:
+        validate_columns(["A", "B"], ["A", "C"], "warn", table_name="T")
+
+    assert len(caught) == 1
+    message = str(caught[0].message)
+    assert "missing columns: ['B']" in message
+    assert "extra columns: ['C']" in message
+
+
+def test_a_column_mismatch_becomes_an_error_under_the_warning_filter() -> None:
+    """``simplefilter('error', FillXLWarning)`` has to catch a column mismatch."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FillXLWarning)
+        with pytest.raises(FillXLWarning):
+            validate_columns(["A", "B"], ["A", "C"], "warn")
 
 
 def test_validate_columns_all_but_formulas_allows_extra_and_omits_formula() -> None:
@@ -90,30 +107,13 @@ def test_validate_columns_none_skips_validation_entirely() -> None:
     validate_columns(["A", "B"], ["X", "Y", "Z"], "none")
 
 
-def test_validate_columns_drop_logs_info_about_dropped_columns(
+def test_the_deprecated_drop_strategy_behaves_like_none(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Drop strategy logs extra/missing column info."""
-    caplog.set_level("INFO")
+    """The two names are the same fill; only the logging used to differ."""
+    caplog.set_level("DEBUG")
     validate_columns(["A", "B"], ["A", "C", "D"], "drop")
-    assert any(
-        record.levelname == "INFO" and "dropping extra data columns" in record.message
-        for record in caplog.records
-    )
-
-
-def test_validate_columns_warn_logs_warning_about_extra_and_missing(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Warn strategy logs warnings about extra/missing columns."""
-    caplog.set_level("WARNING")
-    validate_columns(["A", "B"], ["A", "C"], "warn")
-    assert any(
-        record.levelname == "WARNING" and "extra" in record.message for record in caplog.records
-    )
-    assert any(
-        record.levelname == "WARNING" and "missing" in record.message for record in caplog.records
-    )
+    assert caplog.records == []
 
 
 def test_validate_columns_still_checks_data_with_rows_but_no_columns() -> None:

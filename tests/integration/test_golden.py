@@ -233,7 +233,7 @@ _WIN32COM_DEFS: list[tuple[str, str, str, Engine, dict[str, Any]]] = [
                 "single_cell_merged_cells": "Filled merged cell",
                 "named_range_on_another_sheet": "Filled cross-sheet",
             },
-            "config": FillXLConfig(column_validation_strategy="drop"),
+            "config": FillXLConfig(column_validation_strategy="none"),
         },
     ),
     (

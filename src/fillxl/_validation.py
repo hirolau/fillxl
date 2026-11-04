@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
+from fillxl._warnings import warn_user
+
 logger = logging.getLogger(__name__)
 
 ColumnValidationStrategy = Literal[
@@ -47,9 +49,11 @@ def validate_columns(
               NO extra data columns are allowed.
             - ``"none"``: Skip validation entirely.
             - ``"strict"``: 1-to-1 match between table and data columns.
-            - ``"drop"``: Silently drop extra data columns and skip missing
-              table columns.
-            - ``"warn"``: Log warnings but proceed with best-effort fill.
+            - ``"drop"``: Deprecated alias of ``"none"``; it is accepted for
+              one release and ``FillXLConfig`` warns with a
+              ``DeprecationWarning``.
+            - ``"warn"``: Emit one :class:`~fillxl.FillXLWarning` naming the
+              missing and extra columns, then proceed with a best-effort fill.
         formula_columns: Names of table columns that are formulas.  Only
             relevant for ``"all_but_formulas"`` / ``"all_but_formulas_strict"``.
         table_name: Name of the table, used in error and log messages.
@@ -72,11 +76,10 @@ def validate_columns(
         True
 
     """
-    if strategy == "none" or (not data_columns and not data_rows):
+    if strategy in ("none", "drop") or (not data_columns and not data_rows):
         return
 
     where = f"table {table_name!r}" if table_name else "table"
-    label = f"Table {table_name!r}" if table_name else "Table"
     formula_set = set(formula_columns or [])
     if strategy in ("all_but_formulas", "all_but_formulas_strict"):
         effective = [c for c in table_columns if c not in formula_set]
@@ -119,13 +122,9 @@ def validate_columns(
             )
             raise ValueError(msg)
         return
-    if strategy == "drop":
-        if extra:
-            logger.info("%s: dropping extra data columns %s", label, extra)
-        if missing:
-            logger.info("%s: leaving table columns without data empty: %s", label, missing)
-        return
-    if missing:
-        logger.warning("%s: data is missing columns %s", label, missing)
-    if extra:
-        logger.warning("%s: data has extra columns %s", label, extra)
+    if strategy == "warn":
+        warn_user(
+            f"Column mismatch for {where}: {details}. The fill continues with the "
+            "columns that match; rename the columns or choose another "
+            "column_validation_strategy to change that.",
+        )

@@ -401,24 +401,6 @@ def test_a_column_mismatch_names_the_table_it_happened_in(tmp_path: Path) -> Non
         )
 
 
-def test_dropping_columns_logs_which_table_they_came_from(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """The drop strategy says which table lost which columns."""
-    template = _sales_template(tmp_path / "template.xlsx")
-
-    with caplog.at_level("INFO", logger="fillxl._validation"):
-        fill(
-            template=template,
-            output=tmp_path / "out.xlsx",
-            engine="openpyxl",
-            tables={"Sales": [{"fund": "A", "region": "EU"}]},
-            config=FillXLConfig(column_validation_strategy="drop"),
-        )
-
-    assert "Table 'Sales'" in caplog.text
-
-
 def test_a_header_with_a_line_break_matches_the_data_column_of_the_same_name(
     tmp_path: Path,
 ) -> None:

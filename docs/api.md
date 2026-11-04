@@ -94,8 +94,8 @@ config = FillXLConfig(
 | `"strict"` | Raise `ValueError` if data columns don't match table columns. |
 | `"all_but_formulas"` | Like `"strict"`, but exempt calculated/formula columns. Extra data columns are allowed. |
 | `"all_but_formulas_strict"` | Like `"all_but_formulas"`, but extra data columns raise. |
-| `"drop"` | Skip table columns that have no data column and ignore extra data columns. |
-| `"warn"` | Log warnings about mismatches but continue filling. |
+| `"drop"` | Deprecated alias of `"none"`; accepted for one release with a `DeprecationWarning`. |
+| `"warn"` | Emit one `FillXLWarning` naming the missing and extra columns, then continue filling. |
 | `"none"` | No validation — best-effort fill. |
 
 Table columns without a matching data column are cleared (or keep their

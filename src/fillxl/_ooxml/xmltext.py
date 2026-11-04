@@ -126,9 +126,49 @@ def element_re(name: str) -> re.Pattern[str]:
     return re.compile(rf"<{tag}\b[^>]*?(?:/>|>.*?</{tag}>)", re.S)
 
 
-def start_tag_re(name: str) -> re.Pattern[str]:
-    """A pattern matching the start tag of *name* (with or without a prefix)."""
-    return re.compile(rf"<{any_prefix(name)}\b[^>]*>")
+def root_prefix(text: str) -> str:
+    """The namespace prefix of *text*'s root element: ``""`` or e.g. ``"x:"``.
+
+    An anchor such as "before ``<extLst>``" must find the root's own child: a
+    look-alike inside an extension list (``<x14:pivotCaches>``) carries the
+    extension's prefix and is not a sibling of the root's children.
+
+    Examples:
+        >>> root_prefix('<?xml version="1.0"?><workbook xmlns="urn:x"/>')
+        ''
+        >>> root_prefix('<x:workbook xmlns:x="urn:x"><x:sheets/></x:workbook>')
+        'x:'
+        >>> root_prefix("<!-- a note --><workbook/>")
+        ''
+
+    """
+    for match in re.finditer(r"<[^>]*>", text):
+        tag = match.group(0)
+        if tag[1:2] in ("?", "!"):
+            continue
+        name = re.match(r"<(?P<prefix>[A-Za-z_][\w.\-]*:)?[A-Za-z_][\w.\-]*", tag)
+        return "" if name is None else (name.group("prefix") or "")
+    return ""  # pragma: no cover - a part always has a root element
+
+
+def start_tag_re(name: str, *, prefix: str | None = None) -> re.Pattern[str]:
+    """A pattern matching the start tag of *name*.
+
+    Without *prefix*, a namespace prefix is accepted (or none).  With one, only
+    that exact prefix matches — pass ``xmltext.root_prefix(text)`` to find an
+    element that is a sibling of the root's other children.
+
+    Examples:
+        >>> start_tag_re("row").search("<x:row/>").group(0)
+        '<x:row/>'
+        >>> start_tag_re("row", prefix="").search("<x:row/>") is None
+        True
+        >>> start_tag_re("row", prefix="").search("<row/>").group(0)
+        '<row/>'
+
+    """
+    tag = any_prefix(name) if prefix is None else f"{re.escape(prefix)}{name}"
+    return re.compile(rf"<{tag}\b[^>]*>")
 
 
 def start_tag(xml: str, name: str) -> str | None:

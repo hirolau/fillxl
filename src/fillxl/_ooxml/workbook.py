@@ -342,8 +342,9 @@ class WorkbookPart:
             updated = xmltext.set_tag_attribute(existing.group(0), "fullCalcOnLoad", "1")
             self._set(text[: existing.start()] + updated + text[existing.end() :])
             return
+        prefix = xmltext.root_prefix(text)
         for name in _AFTER_CALC_PR:
-            match = xmltext.start_tag_re(name).search(text)
+            match = xmltext.start_tag_re(name, prefix=prefix).search(text)
             if match is not None:
                 inserted = f'<calcPr fullCalcOnLoad="1"/>{text[match.start() :]}'
                 self._set(text[: match.start()] + inserted)
@@ -430,9 +431,9 @@ class WorkbookPart:
         # and the data (on a chartsheet: the page setup and the drawing), so
         # inserting it before the first of those keeps the schema order.
         new_view = '<sheetViews><sheetView workbookViewId="0" tabSelected="1"/></sheetViews>'
-        anchors = CHARTSHEET_VIEW_ANCHORS
-        for name in anchors:
-            anchor = xmltext.start_tag_re(name).search(text)
+        root_prefix = xmltext.root_prefix(text)
+        for name in CHARTSHEET_VIEW_ANCHORS:
+            anchor = xmltext.start_tag_re(name, prefix=root_prefix).search(text)
             if anchor is not None:
                 self.package.set_text(
                     part,

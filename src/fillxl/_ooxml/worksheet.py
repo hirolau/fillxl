@@ -689,8 +689,9 @@ class SheetPart:
         # A sheet can be saved without a <sheetView>; insert one where the
         # schema expects it, before the row defaults, the columns and the data.
         new_view = '<sheetViews><sheetView workbookViewId="0" tabSelected="1"/></sheetViews>'
+        root_prefix = xmltext.root_prefix(self._head)
         for name in WORKSHEET_VIEW_ANCHORS:
-            anchor = xmltext.start_tag_re(name).search(self._head)
+            anchor = xmltext.start_tag_re(name, prefix=root_prefix).search(self._head)
             if anchor is not None:
                 self._head = (
                     f"{self._head[: anchor.start()]}{new_view}{self._head[anchor.start() :]}"

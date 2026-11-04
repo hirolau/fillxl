@@ -557,6 +557,55 @@ def test_calculation_settings_and_the_calc_chain(package_path: Path) -> None:
     assert b"calcChain" not in package.raw("xl/_rels/workbook.xml.rels")
 
 
+WORKBOOK_WITHOUT_CALC_PR = (
+    f'<workbook xmlns="{MAIN_NS}" xmlns:r="{REL_NS}">'
+    '<bookViews><workbookView activeTab="0"/></bookViews>'
+    '<sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets>'
+    '<extLst><ext uri="{140A7094-0E35-4892-8432-C4D2E57EDEB5}" '
+    'xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">'
+    '<x14:pivotCaches><x14:pivotCache cacheId="1" r:id="rId3"/></x14:pivotCaches>'
+    "</ext></extLst>"
+    "</workbook>"
+)
+
+
+def test_a_workbook_without_calculation_settings_gets_them_before_its_extension_list(
+    tmp_path: Path,
+) -> None:
+    """The anchor is the workbook's own ``<extLst>``, not one inside an extension."""
+    path = build_package(
+        tmp_path / "book.xlsx",
+        {"xl/workbook.xml": WORKBOOK_WITHOUT_CALC_PR},
+    )
+    package = OoxmlPackage(path)
+    workbook = WorkbookPart(package)
+
+    workbook.set_full_calc_on_load()
+
+    root = ElementTree.fromstring(package.text("xl/workbook.xml"))
+    children = [child.tag for child in root]
+    calc_pr = f"{{{MAIN_NS}}}calcPr"
+    assert calc_pr in children
+    assert children.index(calc_pr) < children.index(f"{{{MAIN_NS}}}extLst")
+
+
+def test_anchors_ignore_an_element_hidden_behind_a_namespace_prefix(tmp_path: Path) -> None:
+    """``<x14:pivotCaches>`` is not the workbook's own ``<pivotCaches>``."""
+    package = OoxmlPackage(
+        build_package(
+            tmp_path / "book.xlsx",
+            {"xl/workbook.xml": WORKBOOK_WITHOUT_CALC_PR},
+        ),
+    )
+    workbook = WorkbookPart(package)
+
+    workbook.set_full_calc_on_load()
+
+    text = package.text("xl/workbook.xml")
+    assert "<extLst><calcPr" not in text
+    assert text.index("<calcPr") < text.index("<extLst>")
+
+
 def test_a_sheet_can_be_hidden_and_activated(package_path: Path) -> None:
     package = OoxmlPackage(package_path)
     workbook = WorkbookPart(package)

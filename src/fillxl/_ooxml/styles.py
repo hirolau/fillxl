@@ -202,7 +202,10 @@ class StylesPart:
             self._text = self._text[: block.start()] + rebuilt + self._text[block.end() :]
             return new_id
         new_block = f'<numFmts count="1">{element}</numFmts>'
-        anchor = xmltext.start_tag_re("fonts").search(self._text)
+        anchor = xmltext.start_tag_re(
+            "fonts",
+            prefix=xmltext.root_prefix(self._text),
+        ).search(self._text)
         position = anchor.start() if anchor is not None else self._text.find(">") + 1
         self._text = f"{self._text[:position]}{new_block}{self._text[position:]}"
         return new_id

@@ -104,8 +104,11 @@ class FillXLConfig:
         hide_underscore_sheets: Whether to hide sheets starting with "_".
         delete_sheets: Sheet names to delete.
         active_sheet: Name of the sheet to set as active after filling.
-        on_lossy: What to do when the openpyxl engine drops template
-            features: ``"ignore"``, ``"warn"`` (default) or ``"raise"``.
+        on_lossy: What to do when a fill loses template features:
+            ``"ignore"``, ``"warn"`` (default) or ``"raise"``.  It covers the
+            openpyxl engine's dropped features, the fillxl engine's self-check,
+            and win32com format conversions that cannot hold everything the
+            template had (for example ``.xlsm`` saved as ``.xlsx``).
 
     """
 

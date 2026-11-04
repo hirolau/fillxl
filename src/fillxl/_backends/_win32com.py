@@ -403,10 +403,11 @@ class Win32ComBackend:
             )
 
         # References that track the body -- summary formulas on any sheet,
-        # defined names, pivot sources -- need no help here: resizing a
-        # ListObject rewrites them itself.  Verified: Excel does not insert
-        # rows (content below stays put), it moves the references.  The
-        # engines that write into empty cells cannot, and warn instead.
+        # defined names, pivot sources, data validations, chartEx and
+        # sparklines -- need no help here: resizing a ListObject rewrites them
+        # itself.  Verified: Excel does not insert rows (content below stays
+        # put), it moves the references.  The offline engines do the same, by
+        # rewriting those parts themselves.
         spec = plan.change_spec(str(worksheet.Name))
         self._update_charts(spec)
         return spec

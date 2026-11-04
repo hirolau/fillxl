@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- `engine="fillxl"` no longer corrupts a shared formula when it clears the
+  template's cached results. A group whose master cell shows an empty result
+  lost its master, leaving dependants pointing at a group that no longer
+  existed — well-formed XML that Excel repaired by dropping the formulas
+  ("Removed Records: Formula"). Clearing a result now rewrites the value in
+  place without reshaping the group, restyling a member reads the cell after
+  the group has been unshared, a shared stub that reaches the writer is refused
+  instead of saved, and a sheet is checked before it is written back so a group
+  without a covering master can never reach the output.
 - A table resize crashed for any workbook holding a data validation that reads
   its list from the sheet it sits on (the usual case: the source is stored
   unqualified as `$H$2:$H$10`). The untracked-range warning parsed it as a

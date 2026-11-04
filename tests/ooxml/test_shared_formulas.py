@@ -9,16 +9,19 @@ formula and overwrites a live formula with a value.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import openpyxl
 import pytest
 from openpyxl.workbook.defined_name import DefinedName
+from openpyxl.worksheet.cell_range import CellRange
 from openpyxl.worksheet.table import Table, TableColumn
 
 from fillxl import FillXLConfig, fill
+from fillxl._ooxml import xmltext
 from fillxl._ooxml.package import OoxmlPackage
-from fillxl._ooxml.worksheet import SheetPart
+from fillxl._ooxml.worksheet import SheetPart, column_index
 from fillxl._warnings import DanglingReferenceWarning
 from tests._spills import assert_well_formed
 from tests.ooxml._build import (
@@ -133,6 +136,135 @@ def test_a_deleted_sheet_referenced_only_by_shared_dependents_is_still_reported(
 
     messages = " ".join(str(warning.message) for warning in caught)
     assert "Tracker!A2" in messages or "Tracker!A3" in messages
+
+
+def _share_with_cached(dependants: str, master: str, sheet_xml: str) -> str:
+    """One shared group in column C, with cached results Windows could freeze."""
+    sheet_xml = put_cell(sheet_xml, f'<c r="C2">{master}</c>')
+    sheet_xml = put_cell(sheet_xml, f'<c r="C3"><f t="shared" si="0"/><v>{dependants}</v></c>')
+    return put_cell(sheet_xml, f'<c r="C4"><f t="shared" si="0"/><v>{dependants}</v></c>')
+
+
+def _masters_by_si(sheet_xml: str) -> dict[str, tuple[int, int, str]]:
+    """``si`` → (row, column, ref) of every shared master in *sheet_xml*."""
+    pattern = re.compile(r"<c r=\"(?P<cell>[A-Z]+)(?P<row>\d+)\">(?P<rest>.*?)</c>", re.S)
+    masters: dict[str, tuple[int, int, str]] = {}
+    for match in pattern.finditer(sheet_xml):
+        cell_xml = match.group(0)
+        tag = xmltext.start_tag(cell_xml, "f")
+        if tag is None or xmltext.attribute(tag, "t") != "shared":
+            continue
+        si = xmltext.attribute(tag, "si")
+        ref = xmltext.attribute(tag, "ref")
+        text = xmltext.element_text(cell_xml, "f")
+        if si is None or ref is None or text is None:
+            continue
+        column = column_index(match.group("cell"))
+        masters[si] = (int(match.group("row")), column, ref)
+    return masters
+
+
+def _assert_every_stub_has_a_covering_master(sheet_xml: str) -> None:
+    """Every ``<f t="shared" si="N"/>`` must be covered by a master of its ``si``."""
+    masters = _masters_by_si(sheet_xml)
+    stub = re.compile(
+        r"<c r=\"(?P<cell>[A-Z]+)(?P<row>\d+)\"><f t=\"shared\" si=\"(?P<si>\d+)\"/></c>",
+    )
+    for match in stub.finditer(sheet_xml):
+        si = match.group("si")
+        assert si in masters, f"{match.group('cell')}{match.group('row')} has no master"
+        row = int(match.group("row"))
+        column = column_index(match.group("cell"))
+        _, _, ref = masters[si]
+        bounds = CellRange(ref)
+        assert bounds.min_row <= row <= bounds.max_row
+        assert bounds.min_col <= column <= bounds.max_col
+
+
+def _isolated_shared_template(path: Path, dependants: str, master: str) -> Path:
+    """A group in ``C2:C4`` next to an unrelated named cell ``filler``."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    for row in (2, 3, 4):
+        sheet.cell(row=row, column=1, value=row)
+        sheet.cell(row=row, column=3, value=f'=IF(A{row}>0,A{row},"")')
+    sheet.cell(row=10, column=1, value=0)
+    workbook.defined_names.add(DefinedName("filler", attr_text="Data!$A$10"))
+    workbook.save(path)
+    workbook.close()
+    patch_part(path, SHEET_PART, lambda xml: _share_with_cached(dependants, master, xml))
+    return path
+
+
+def test_a_shared_formula_whose_first_cell_shows_an_empty_string_survives_saving(
+    tmp_path: Path,
+) -> None:
+    """An empty cached result must not leave the dependants without a master."""
+    template = _isolated_shared_template(
+        tmp_path / "template.xlsx",
+        dependants="5",
+        master='<f t="shared" ref="C2:C4" si="0">IF(A2&gt;0,A2,"")</f><v></v>',
+    )
+
+    output = fill(template, tmp_path / "out.xlsx", engine="fillxl", values={"filler": 42})
+
+    assert_well_formed(output)
+    sheet_xml = part_text(output, SHEET_PART)
+    assert 't="shared"' in sheet_xml
+    _assert_every_stub_has_a_covering_master(sheet_xml)
+
+
+def test_a_shared_formula_with_cached_results_stays_shared_after_saving(
+    tmp_path: Path,
+) -> None:
+    """The group keeps one master and its stubs; only the results go."""
+    template = _isolated_shared_template(
+        tmp_path / "template.xlsx",
+        dependants="5",
+        master='<f t="shared" ref="C2:C4" si="0">IF(A2&gt;0,A2,"")</f><v>7</v>',
+    )
+
+    output = fill(template, tmp_path / "out.xlsx", engine="fillxl", values={"filler": 42})
+
+    assert_well_formed(output)
+    sheet_xml = part_text(output, SHEET_PART)
+    _assert_every_stub_has_a_covering_master(sheet_xml)
+    assert sheet_xml.count('<f t="shared" si="0"/>') == 2
+    group = re.findall(r'<c r="C[234]">.*?</c>', sheet_xml)
+    assert len(group) == 3
+    assert all("<v" not in cell for cell in group)
+
+
+def test_restyling_a_cell_of_a_shared_formula_keeps_its_formula(tmp_path: Path) -> None:
+    """Restyling reads the cell after the group has been unshared."""
+    template = _isolated_shared_template(
+        tmp_path / "template.xlsx",
+        dependants="5",
+        master='<f t="shared" ref="C2:C4" si="0">IF(A2&gt;0,A2,"")</f><v>7</v>',
+    )
+    sheet = SheetPart(OoxmlPackage(template), SHEET_PART)
+
+    sheet.set_style(3, 3, "4")
+
+    xml = sheet.cell(3, 3)
+    assert xml is not None
+    assert 't="shared"' not in xml
+    assert sheet.formula(3, 3) == '=IF(A3>0,A3,"")'
+    assert sheet.formula(4, 3) == '=IF(A4>0,A4,"")'
+
+
+def test_writing_stale_shared_formula_xml_is_refused(tmp_path: Path) -> None:
+    """A shared stub is never what a caller of ``write_cell`` means to store."""
+    template = _isolated_shared_template(
+        tmp_path / "template.xlsx",
+        dependants="5",
+        master='<f t="shared" ref="C2:C4" si="0">IF(A2&gt;0,A2,"")</f><v>7</v>',
+    )
+    sheet = SheetPart(OoxmlPackage(template), SHEET_PART)
+
+    with pytest.raises(RuntimeError, match="C3"):
+        sheet.write_cell(3, 3, '<c r="C3"><f t="shared" si="0"/></c>')
 
 
 def test_a_shared_formula_group_outside_the_table_is_left_byte_identical(

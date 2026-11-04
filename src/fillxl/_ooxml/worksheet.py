@@ -351,8 +351,34 @@ class SheetPart:
         return f"{get_column_letter(column)}{row}"
 
     def write_cell(self, row: int, column: int, xml: str) -> None:
-        """Store the ``<c>`` element *xml* at *row*, *column*."""
+        """Store the ``<c>`` element *xml* at *row*, *column*.
+
+        A shared-formula stub is refused: every fill path unshares a group
+        before it edits one of its cells, so a stub arriving here was built
+        from a snapshot the engine has already superseded.
+        """
+        self._refuse_shared(xml, row, column)
         self._unshare_around(row, column)
+        self._replace_cell_xml(row, column, xml)
+
+    def _refuse_shared(self, xml: str, row: int, column: int) -> None:
+        """Raise when *xml* is a shared-formula stub about to overwrite a cell."""
+        tag = xmltext.start_tag(xml, "f")
+        if tag is None or xmltext.attribute(tag, "t") != "shared":
+            return
+        msg = (
+            f"Cannot write a shared formula to {self.reference(row, column)}: "
+            "a shared-formula group has to be unshared before one of its cells is edited."
+        )
+        raise RuntimeError(msg)
+
+    def _replace_cell_xml(self, row: int, column: int, xml: str) -> None:
+        """Store *xml* at *row*, *column* without touching shared-formula groups.
+
+        Removing a cached result never changes which cells belong to a group,
+        so a caller that only rewrites a value must not unshare — doing so
+        would rewrite XML built from the pre-unshare snapshot.
+        """
         entry = self._rows.get(row)
         if entry is None:
             entry = _Row(attributes="", prefix=self._prefix)
@@ -360,9 +386,7 @@ class SheetPart:
         previous = entry.cells.get(column)
         entry.cells[column] = xml
         entry.raw = None
-        if _is_array_cell(previous) or _is_array_cell(xml):
-            # Overwriting or deleting an anchor changes which cells are
-            # reserved, so checking only the new XML is not enough.
+        if _is_array_cell(previous) != _is_array_cell(xml):
             self._array_cache = None
         self._dirty()
 
@@ -392,6 +416,8 @@ class SheetPart:
 
     def set_style(self, row: int, column: int, style: str) -> None:
         """Give the cell at *row*, *column* the style index *style*."""
+        # Unsharing replaces the cell's XML, so read it afterwards.
+        self._unshare_around(row, column)
         xml = self.cell(row, column)
         if xml is None:
             self.write_cell(row, column, f'<c r="{self.reference(row, column)}" s="{style}"/>')
@@ -592,7 +618,7 @@ class SheetPart:
         for row, column, xml in list(self.iter_cells()):
             stripped = clear_cached_value(xml)
             if stripped != xml:
-                self.write_cell(row, column, stripped)
+                self._replace_cell_xml(row, column, stripped)
                 cleared += 1
         for cell_range in self.array_ranges():
             cleared += self._clear_spill_results(cell_range)
@@ -610,7 +636,7 @@ class SheetPart:
                     continue
                 stripped = strip_value(xml)
                 if stripped != xml:
-                    self.write_cell(row, column, stripped)
+                    self._replace_cell_xml(row, column, stripped)
                     cleared += 1
         return cleared
 
@@ -703,8 +729,48 @@ class SheetPart:
     def save(self) -> None:
         """Write the part back when it changed; leave it untouched otherwise."""
         if self._changed:
+            self._assert_shared_formulas_intact()
             self.package.set_text(self.part, self.to_xml())
             self._changed = False
+
+    def _assert_shared_formulas_intact(self) -> None:
+        """Refuse to save a sheet whose shared-formula groups lost their master.
+
+        A stub with no covering master still parses, so nothing else would
+        catch it: Excel reports "Removed Records: Formula" and silently drops
+        the cell's formula when the file is opened.
+        """
+        masters: dict[str, tuple[int, int, CellRange]] = {}
+        for row, column, xml in self.iter_cells():
+            tag = xmltext.start_tag(xml, "f")
+            if tag is None or xmltext.attribute(tag, "t") != "shared":
+                continue
+            si = xmltext.attribute(tag, "si")
+            ref = xmltext.attribute(tag, "ref")
+            if si is None or ref is None or xmltext.element_text(xml, "f") is None:
+                continue
+            masters.setdefault(si, (row, column, CellRange(ref)))
+        for row, column, xml in self.iter_cells():
+            tag = xmltext.start_tag(xml, "f")
+            if tag is None or xmltext.attribute(tag, "t") != "shared":
+                continue
+            si = xmltext.attribute(tag, "si")
+            if si is None or xmltext.element_text(xml, "f") is not None:
+                continue
+            master = masters.get(si)
+            if (
+                master is not None
+                and master[2].min_row <= row <= master[2].max_row
+                and master[2].min_col <= column <= master[2].max_col
+            ):
+                continue
+            msg = (
+                f"The template part {self.part} could not be edited safely: cell "
+                f"{self.reference(row, column)} belongs to shared formula {si}, which has "
+                "no covering master formula. Save the template in Excel again, or use "
+                "engine='win32com'. Please report this with the template."
+            )
+            raise RuntimeError(msg)
 
     def _render_row(self, number: int, row: _Row) -> str:
         attributes = xmltext.remove_attribute(row.attributes, "spans")

@@ -102,6 +102,18 @@ Three engines are available. `engine="auto"` (the default) picks one; pass
 - What `"auto"` does, exactly: `openpyxl`, unless Excel is required and
   available. It never picks `fillxl`.
 
+### How the `win32com` engine writes text
+
+Excel has one way to force a value to stay text — the cell's **quote prefix** —
+so the `win32com` engine writes every string with a leading `'`, which keeps
+values such as `00123` or `1/2` as text instead of letting Excel turn them into
+a number or a date. The quote itself is not part of the value, but Excel records
+the cell as "prefixed with an apostrophe". A user who later types a number into
+one of those filled cells therefore gets text, not a number: either clear the
+cell first (the prefix stays until the cell is cleared or reformatted), or
+write such columns with `engine="openpyxl"` or `engine="fillxl"`, which store
+strings as text without setting the prefix.
+
 `openpyxl` runs anywhere; `win32com` drives Microsoft Excel on Windows (pywin32
 installs with fillxl there) and keeps what openpyxl drops (modern charts,
 slicers, macro-heavy workbooks). `engine="fillxl"` is the third way: it needs

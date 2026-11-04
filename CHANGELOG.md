@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and save it as `.xlsx`, `.xlsm` or `.xlsb`, then fill that. `.xlsb` is still
   supported through `engine="win32com"`.
 
+### Documentation
+- The README and the backend guide now explain how `engine="win32com"` writes
+  strings: with a leading `'`, so Excel keeps values such as `00123` as text.
+  That also sets the cell's quote prefix, which means a number typed into the
+  cell later stays text until the cell is cleared.
+
 ### Added
 - `extend_data_validation` (default `True`): a data-validation range applied
   to a table column now grows and shrinks with the table in the `openpyxl` and

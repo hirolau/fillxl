@@ -175,6 +175,11 @@ fill(template="tpl.xlsm", output="out.xlsm", ..., engine="win32com")
 - Windows only
 - Requires a licensed Excel installation
 - Slower per-call overhead (Excel COM startup)
+- Strings are written with a leading `'`, Excel's marker for "keep this as
+  text".  The quote is not part of the value, but Excel records the cell as
+  quote-prefixed: a user who later types a number into that cell gets text.
+  Clear the cell first (or write the column with `openpyxl`/`fillxl`, which
+  store text without the prefix) if that matters.
 
 ### Security
 

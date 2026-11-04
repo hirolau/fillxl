@@ -65,8 +65,9 @@ copied, not rebuilt.
 - `.xlsx` and `.xlsm` only, and only in the same format: no `.xlsb`,
   no encrypted workbooks, no format conversion — those stay on
   `engine="win32com"`.
-- Modern charts (`chartEx`) are left untouched, so their ranges do not follow a
-  table resize.
+- Modern charts (`chartEx`) follow a table resize: the `<cx:f>` source of each
+  dimension and the cached `ptCount` of its levels are rewritten.  Sparklines
+  follow too, on whichever sheet they sit on.
 - Pivot tables are flagged for refresh on open; fillxl never pivots.
 - Pivot sources, defined names and data validations that cover a table body
   follow a resize, as they do in Excel. A built-in name (`_xlnm.Print_Area`,

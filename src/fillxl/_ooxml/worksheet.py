@@ -28,6 +28,7 @@ from fillxl._ooxml import xmltext
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
+    from fillxl._charts import TableChangeSpecs
     from fillxl._ooxml.package import OoxmlPackage
 
 _TAG = r"(?:[A-Za-z_][\w.\-]*:)?"
@@ -60,6 +61,8 @@ _SHEET_VIEW = xmltext.element_re("sheetView")
 # ``\b`` keeps this from matching ``<dataValidations>``, whose container is not
 # a validation itself.
 DATA_VALIDATION = xmltext.element_re("dataValidation")
+# ``\b`` keeps this from matching the ``<x14:sparklines>`` container.
+_SPARKLINE = xmltext.element_re("sparkline")
 
 # Where a missing <sheetViews> has to be inserted (ECMA-376 element order).
 WORKSHEET_VIEW_ANCHORS = ("sheetFormatPr", "cols", "sheetData")
@@ -583,6 +586,47 @@ class SheetPart:
 
         self._tail = DATA_VALIDATION.sub(replace, self._tail)
         return changes
+
+    def update_sparklines(self, spec: TableChangeSpecs) -> int:
+        """Point every sparkline that showed the table body at its new rows.
+
+        A sparkline's source lives in ``<xm:f>`` of its ``<x14:sparkline>``
+        element, in the sheet's ``extLst`` — the part of the sheet after
+        ``<sheetData>``.  A sparkline may sit on a sheet other than the
+        table's, which is why every sheet is asked.
+
+        Returns:
+            How many sparklines were rewritten.
+
+        """
+        from fillxl._charts import update_reference_text
+
+        changed = 0
+
+        def replace(match: re.Match[str]) -> str:
+            nonlocal changed
+            element = match.group(0)
+            formula = xmltext.element_re("f").search(element)
+            if formula is None:
+                return element
+            current = xmltext.element_text(formula.group(0), "f")
+            if current is None:
+                return element
+            updated = update_reference_text(current, spec)
+            if updated is None:
+                return element
+            changed += 1
+            return (
+                f"{element[: formula.start()]}"
+                f"{xmltext.replace_element_text(formula.group(0), 'f', updated)}"
+                f"{element[formula.end() :]}"
+            )
+
+        rewritten = _SPARKLINE.sub(replace, self._tail)
+        if changed:
+            self._tail = rewritten
+            self._dirty()
+        return changed
 
     def resize_validation_lists(self, resize: Callable[[str], str | None]) -> int:
         """Rewrite the list source of every data validation of the sheet.

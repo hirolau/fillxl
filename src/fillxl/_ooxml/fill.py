@@ -358,7 +358,11 @@ def fill_table(
 
     sheet.expand_dimension(plan.new_last_row)
     logger.debug("Table '%s' resized: %s -> %s", name, table.ref, plan.new_ref)
-    return plan.change_spec(table.sheet.name)
+    spec = plan.change_spec(table.sheet.name)
+    # A sparkline can sit on any sheet, so every sheet is asked.
+    for sheet_entry in workbook.worksheet_parts():
+        sheets.get(sheet_entry.part).update_sparklines(spec)
+    return spec
 
 
 def _calculated_columns(

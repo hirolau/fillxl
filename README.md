@@ -131,7 +131,8 @@ differs.
   `.xlsb` and converting between formats).
 - Encrypted workbooks cannot be opened.
 - Pivot tables are only flagged for refresh on open; fillxl cannot pivot.
-- `chartEx` ranges are not updated.
+- `chartEx` charts and sparklines that read a table's rows are updated with
+  the table, like their classic counterparts.
 - Pivot sources, defined names and data validations that cover a table body
   follow a resize, as they do in Excel. A built-in name (`_xlnm.Print_Area`, …)
   belongs to Excel and is reported with `UntrackedRangeWarning` instead of being

@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- `engine="fillxl"` now updates modern charts (`chartEx`: waterfall,
+  histogram, funnel, …) and sparklines when a table is resized. Their sources
+  live outside cell formulas — `<cx:f>` in the chart part and `<xm:f>` in the
+  sheet's `extLst` — so they kept showing the template's rows with no warning;
+  both are rewritten with the same reference rule as classic charts, and the
+  cached `ptCount` of each level is brought in step.
 - A table resize now rewrites the references that track it instead of only
   warning: defined names (global and sheet-scoped), pivot cache sources and
   data-validation list sources — including the x14 `<xm:f>` spelling — follow

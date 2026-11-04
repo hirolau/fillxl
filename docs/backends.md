@@ -129,8 +129,9 @@ dynamic arrays and their `xl/metadata.xml`, `cm`/`vm` cell metadata, slicers,
 
 - Reads and writes `.xlsx`/`.xlsm` only, and only in the same format: `.xlsb`,
   encrypted workbooks and format conversion stay on `win32com`
-- Modern charts (`chartEx`) are left untouched, so they do not follow a table
-  resize
+- Modern charts (`chartEx`) follow a table resize: their `<cx:f>` sources and
+  the cached `ptCount` of their levels are rewritten. Sparklines are rewritten
+  the same way, on every sheet.
 - Writes no cached formula results, and removes the ones the template stored on
   every sheet with formulas; the output asks Excel to recalculate on open, like
   the openpyxl engine

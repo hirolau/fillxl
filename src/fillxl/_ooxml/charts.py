@@ -7,9 +7,10 @@ data body are rewritten with the tested logic in
 :func:`fillxl._charts.update_reference_text`, and the cached point count is
 brought in step — a stale count makes Excel drop axis labels.
 
-Modern charts (``chartEx``) are left alone: their sources are not these
-``<c:f>`` references, and rewriting what the engine does not model is worse
-than leaving it untouched.
+Modern charts (``chartEx``: waterfall, histogram, funnel, …) keep their
+sources in ``<cx:f>`` elements of their own part, inside a ``<cx:numDim>`` or
+``<cx:strDim>``.  Those are rewritten by the same rule, and the cached
+``ptCount`` of every level is brought in step.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 CHART_PART = re.compile(r"^xl/charts/chart\d+\.xml$")
+CHART_EX_PART = re.compile(r"^xl/charts/chartEx\d+\.xml$")
 _TAG = r"(?:[A-Za-z_][\w.\-]*:)?"
 _REFERENCE_BLOCK = re.compile(
     rf"<{_TAG}(?P<kind>strRef|numRef|multiLvlStrRef)\b[^>]*?(?:/>|>.*?</{_TAG}(?P=kind)>)",
@@ -44,11 +46,22 @@ _DATA_SOURCE = re.compile(
 )
 _FORMULA = xmltext.element_re("f")
 _POINT_COUNT = re.compile(rf"<{_TAG}ptCount\b[^>]*?/>")
+# One dimension of a chartEx: its reference and the cached levels below it.
+_CHART_EX_DIMENSION = re.compile(
+    rf"<{_TAG}(?P<kind>numDim|strDim)\b[^>]*?(?:/>|>.*?</{_TAG}(?P=kind)>)",
+    re.S,
+)
+_CHART_EX_LEVEL = xmltext.start_tag_re("lvl")
 
 
 def chart_parts(package: OoxmlPackage) -> list[str]:
     """Every classic chart part of the package."""
     return [part for part in package.part_names if CHART_PART.match(part)]
+
+
+def chart_ex_parts(package: OoxmlPackage) -> list[str]:
+    """Every modern (``chartEx``) chart part of the package."""
+    return [part for part in package.part_names if CHART_EX_PART.match(part)]
 
 
 def update_chart_references(package: OoxmlPackage, spec: TableChangeSpecs) -> int:
@@ -70,7 +83,55 @@ def update_chart_references(package: OoxmlPackage, spec: TableChangeSpecs) -> in
             package.set_text(part, updated)
             logger.debug("Rewrote %d chart reference(s) in %s", count, part)
         changed += count
+    for part in chart_ex_parts(package):
+        text = package.text(part)
+        updated, count = _rewrite_chart_ex_part(text, spec)
+        if count:
+            package.set_text(part, updated)
+            logger.debug("Rewrote %d modern-chart reference(s) in %s", count, part)
+        changed += count
     return changed
+
+
+def _rewrite_chart_ex_part(text: str, spec: TableChangeSpecs) -> tuple[str, int]:
+    """*text* with a ``chartEx`` part's data sources rewritten, and how many.
+
+    Only ``<cx:numDim>`` and ``<cx:strDim>`` are considered.  A series name
+    lives in ``<cx:tx>`` and reads the header cell; a dimension whose
+    reference is laid out by row (``dir="row"``) spans columns, not body rows.
+    """
+    total = 0
+
+    def replace_dimension(match: re.Match[str]) -> str:
+        nonlocal total
+        block = match.group(0)
+        formula = _FORMULA.search(block)
+        if formula is None:
+            return block
+        tag = xmltext.start_tag(formula.group(0), "f")
+        if tag is not None and xmltext.attribute(tag, "dir") == "row":
+            return block
+        current = xmltext.element_text(formula.group(0), "f")
+        if current is None:
+            return block
+        updated = update_reference_text(current, spec)
+        if updated is None:
+            return block
+        total += 1
+        block = (
+            block[: formula.start()]
+            + xmltext.replace_element_text(formula.group(0), "f", updated)
+            + block[formula.end() :]
+        )
+        count = point_count(updated) if match.group("kind") == "numDim" else point_count_rows(
+            updated,
+        )
+        return _CHART_EX_LEVEL.sub(
+            lambda level: xmltext.set_tag_attribute(level.group(0), "ptCount", str(count)),
+            block,
+        )
+
+    return _CHART_EX_DIMENSION.sub(replace_dimension, text), total
 
 
 def _rewrite_part(text: str, spec: TableChangeSpecs) -> tuple[str, int]:

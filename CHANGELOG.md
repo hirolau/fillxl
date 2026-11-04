@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   supported through `engine="win32com"`.
 
 ### Added
+- `extend_data_validation` (default `True`): a data-validation range applied
+  to a table column now grows and shrinks with the table in the `openpyxl` and
+  `fillxl` engines, which is what Excel does on resize. A range outside the
+  table's columns is left alone; set the flag to `False` to keep the
+  template's ranges exactly as they are.
 - `engine="fillxl"`: a third backend that fills a workbook by editing the OOXML
   package itself instead of loading it into an object model. It needs no Excel
   (and no workbook model), runs on every platform, and rewrites only the parts a

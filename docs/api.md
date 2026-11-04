@@ -79,6 +79,7 @@ config = FillXLConfig(
 | `escape_formulas` | `bool` | `True` | Write strings starting with `=` as literal text instead of formulas. Disable only for trusted data that is meant to contain formulas. |
 | `refresh_pivot_tables` | `bool` | `True` | Refresh pivot caches after filling. |
 | `extend_conditional_formatting` | `bool` | `True` | Resize conditional formatting ranges with the table. |
+| `extend_data_validation` | `bool` | `True` | Resize data-validation ranges (dropdowns and other rules) with the table. |
 | `copy_table_styles` | `bool` | `True` | Copy the first data row's styles to new rows. |
 | `hide_underscore_sheets` | `bool` | `True` | Hide sheets whose names start with `_`. On by default, so opt out explicitly to keep such a sheet visible. |
 | `delete_sheets` | `Sequence[str] \| None` | `None` | Sheet names to delete (stored as a tuple). References to the deleted sheets are **not** rewritten; see below. |

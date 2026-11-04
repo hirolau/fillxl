@@ -135,6 +135,11 @@ class TestTableOptions:
         cfg = FillXLConfig()
         assert cfg.extend_conditional_formatting is True
 
+    def test_extend_data_validation_is_enabled_by_default(self) -> None:
+        """By default a dropdown over a table column stretches to cover new rows."""
+        cfg = FillXLConfig()
+        assert cfg.extend_data_validation is True
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 5.3 Sheet management options

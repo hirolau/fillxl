@@ -232,6 +232,7 @@ def populate_table(
     *,
     copy_style_in_tables: bool = True,
     extend_conditional_formatting: bool = True,
+    extend_data_validation: bool = True,
     escape_formulas: bool = False,
 ) -> TableChangeSpecs:
     """Populate an Excel table with tabular data.
@@ -245,6 +246,8 @@ def populate_table(
         copy_style_in_tables: If True, copy cell styles from first data row to new rows
         extend_conditional_formatting: If True, extend conditional formatting
             rules to cover new rows
+        extend_data_validation: If True, extend data-validation ranges to
+            cover new rows
         escape_formulas: If True, strings starting with ``=`` are written as
             literal text instead of becoming formulas.
 
@@ -416,6 +419,9 @@ def populate_table(
             old_body_last_row=geometry.body_last_row,
             table_last_row=plan.new_body_last_row,
         )
+
+    if extend_data_validation:
+        _extend_data_validations(worksheet, plan)
 
     return plan.change_spec(str(worksheet.title))
 
@@ -634,6 +640,41 @@ def _write_row(
         cell.value = snapshot.value
         if snapshot.data_type is not None:
             cell.data_type = snapshot.data_type
+
+
+def _extend_data_validations(worksheet: Worksheet, plan: TablePlan) -> None:
+    """Extend the ``sqref`` of the validations that track the table's height.
+
+    A dropdown applied to a table column has to reach the rows the fill adds;
+    Excel extends it, and :func:`range_tracks_table` is the rule Excel applies.
+    A validation that only happens to sit on the table's rows — outside its
+    columns, or on a different area of the sheet — is left alone.
+    """
+    geometry = plan.geometry
+    for validation in worksheet.data_validations.dataValidation:
+        areas = list(validation.sqref.ranges)
+        extended = False
+        for index, cell_range in enumerate(areas):
+            if not range_tracks_table(
+                cell_range,
+                table_start_column=geometry.first_col,
+                table_end_column=geometry.last_col,
+                table_top_row=geometry.top_row,
+                first_data_row=geometry.first_data_row,
+                old_body_last_row=geometry.body_last_row,
+                table_last_row=plan.new_body_last_row,
+            ):
+                continue
+            areas[index] = CellRange(
+                min_col=cell_range.min_col,
+                min_row=cell_range.min_row,
+                max_col=cell_range.max_col,
+                max_row=plan.new_body_last_row,
+            )
+            extended = True
+        if extended:
+            validation.sqref = " ".join(str(area) for area in areas)
+            logger.debug("Extended a data validation to %s", validation.sqref)
 
 
 def _extend_conditional_formatting(

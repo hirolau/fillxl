@@ -135,6 +135,7 @@ class OpenpyxlBackend:
             adapter,
             copy_style_in_tables=config.copy_table_styles,
             extend_conditional_formatting=config.extend_conditional_formatting,
+            extend_data_validation=config.extend_data_validation,
             escape_formulas=config.escape_formulas,
         )
 

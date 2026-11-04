@@ -345,6 +345,17 @@ def fill_table(
         for old_sqref, new_sqref in changes:
             logger.debug("Extended conditional formatting: %s -> %s", old_sqref, new_sqref)
 
+    if config.extend_data_validation:
+        for old_sqref, new_sqref in sheet.extend_data_validations(
+            table_start_column=geometry.first_col,
+            table_end_column=geometry.last_col,
+            table_top_row=geometry.top_row,
+            first_data_row=plan.first_data_row,
+            old_body_last_row=geometry.body_last_row,
+            table_last_row=plan.new_body_last_row,
+        ):
+            logger.debug("Extended data validation: %s -> %s", old_sqref, new_sqref)
+
     sheet.expand_dimension(plan.new_last_row)
     logger.debug("Table '%s' resized: %s -> %s", name, table.ref, plan.new_ref)
     return plan.change_spec(table.sheet.name)

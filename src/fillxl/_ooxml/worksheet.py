@@ -509,6 +509,81 @@ class SheetPart:
 
     # ── sheet features ─────────────────────────────────────────────────────
 
+    def extend_data_validations(
+        self,
+        *,
+        table_start_column: int,
+        table_end_column: int,
+        table_top_row: int,
+        first_data_row: int,
+        old_body_last_row: int,
+        table_last_row: int,
+    ) -> list[tuple[str, str]]:
+        """Resize the ``sqref`` of validations that track the table's height.
+
+        See :func:`fillxl._tables.range_tracks_table` for the rule.  Both
+        spellings are handled: the ``sqref`` attribute of ``<dataValidation>``
+        and the ``<xm:sqref>`` child of ``<x14:dataValidation>``.
+
+        Returns:
+            ``(old sqref, new sqref)`` for every changed validation.
+
+        """
+        from fillxl._tables import range_tracks_table
+
+        changes: list[tuple[str, str]] = []
+
+        def replace(match: re.Match[str]) -> str:
+            element = match.group(0)
+            sqref = xmltext.attribute(element, "sqref")
+            # x14 blocks hold their range in a child <xm:sqref> element.
+            in_child = False
+            if not sqref:
+                sqref = xmltext.element_text(element, "sqref")
+                in_child = sqref is not None
+            if not sqref:  # pragma: no cover - sqref is required
+                return element
+            areas = sqref.split()
+            resized: list[str] = []
+            extended = False
+            for area in areas:
+                try:
+                    cell_range = CellRange(area)
+                except ValueError:  # pragma: no cover - Excel writes valid ranges
+                    resized.append(area)
+                    continue
+                if range_tracks_table(
+                    cell_range,
+                    table_start_column=table_start_column,
+                    table_end_column=table_end_column,
+                    table_top_row=table_top_row,
+                    first_data_row=first_data_row,
+                    old_body_last_row=old_body_last_row,
+                    table_last_row=table_last_row,
+                ):
+                    resized.append(
+                        CellRange(
+                            min_col=cell_range.min_col,
+                            min_row=cell_range.min_row,
+                            max_col=cell_range.max_col,
+                            max_row=table_last_row,
+                        ).coord,
+                    )
+                    extended = True
+                else:
+                    resized.append(area)
+            if not extended:
+                return element
+            new_sqref = " ".join(resized)
+            changes.append((sqref, new_sqref))
+            self._dirty()
+            if in_child:
+                return xmltext.replace_element_text(element, "sqref", new_sqref)
+            return xmltext.set_tag_attribute(element, "sqref", new_sqref)
+
+        self._tail = DATA_VALIDATION.sub(replace, self._tail)
+        return changes
+
     def resize_validation_lists(self, resize: Callable[[str], str | None]) -> int:
         """Rewrite the list source of every data validation of the sheet.
 

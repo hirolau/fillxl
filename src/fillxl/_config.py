@@ -116,6 +116,8 @@ class FillXLConfig:
         refresh_pivot_tables: Whether to mark pivot caches for refresh on open.
         extend_conditional_formatting: Whether to extend conditional
             formatting rules when a table is resized.
+        extend_data_validation: Whether to extend data-validation ranges
+            (dropdowns and other rules) when a table is resized.
         copy_table_styles: Whether to copy existing table cell styles to new
             rows.
         hide_underscore_sheets: Whether to hide sheets starting with "_".
@@ -136,6 +138,7 @@ class FillXLConfig:
     escape_formulas: bool = field(default=True, validator=instance_of(bool))
     refresh_pivot_tables: bool = field(default=True, validator=instance_of(bool))
     extend_conditional_formatting: bool = field(default=True, validator=instance_of(bool))
+    extend_data_validation: bool = field(default=True, validator=instance_of(bool))
     copy_table_styles: bool = field(default=True, validator=instance_of(bool))
     hide_underscore_sheets: bool = field(default=True, validator=instance_of(bool))
     delete_sheets: tuple[str, ...] | None = field(default=None, converter=_to_sheet_tuple)

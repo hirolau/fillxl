@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- `engine="win32com"` reads the tables' calculated-column definitions straight
+  out of the package instead of loading the whole template into openpyxl while
+  Excel already has it open. The readings are pinned against openpyxl's for
+  every template in the test suite, and an unreadable package still logs the
+  same warning and falls back to detecting calculated columns from cell
+  formulas.
 - The `openpyxl` engine now checks the columns once, inside the table fill,
   right after it detects calculated columns and before it checks whether the
   table has room to grow. A column mismatch therefore comes first there too,

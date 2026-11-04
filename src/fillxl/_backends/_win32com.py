@@ -14,6 +14,7 @@ import logging
 import sys
 import threading
 import time
+import zipfile
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -28,7 +29,6 @@ from fillxl._formats import needs_temporal_format, temporal_format, temporal_for
 from fillxl._formulas import (
     BodyState,
     ColumnFormulaEvidence,
-    formula_definitions,
     resolve_formula,
     warn_about_ignored_formula_data,
 )
@@ -954,14 +954,31 @@ def _check_overflow_com(
 def _read_table_formula_definitions(
     path: Path | None,
 ) -> dict[str, dict[str, str]] | None:
-    """Every table's calculated-column definition texts, or ``None`` if unreadable."""
+    """Every table's calculated-column definition texts, or ``None`` if unreadable.
+
+    The table parts are read straight out of the package: Excel has the
+    workbook open, and loading it into openpyxl as well would be slow while
+    answering the same question.
+    """
     if path is None or path.suffix.lower() not in _OOXML_SUFFIXES:
         return None
-    import openpyxl
+    from fillxl._ooxml.package import OoxmlPackage
+    from fillxl._ooxml.tables import tables_on_sheet
+    from fillxl._ooxml.workbook import WorkbookPart
 
     try:
-        workbook = openpyxl.load_workbook(path)
-    except Exception:
+        package = OoxmlPackage(path)
+        workbook = WorkbookPart(package)
+        return {
+            table.display_name: {
+                column.name: _normalise_newlines(column.calculated_formula)
+                for column in table.columns()
+                if column.calculated_formula
+            }
+            for sheet in workbook.worksheet_parts()
+            for table in tables_on_sheet(package, sheet)
+        }
+    except (ValueError, KeyError, OSError, zipfile.BadZipFile):
         logger.warning(
             "Could not read table definitions from %s; calculated columns are "
             "detected from cell formulas only",
@@ -969,14 +986,11 @@ def _read_table_formula_definitions(
             exc_info=True,
         )
         return None
-    try:
-        return {
-            str(table.displayName or table.name): formula_definitions(table)
-            for worksheet in workbook.worksheets
-            for table in worksheet.tables.values()
-        }
-    finally:
-        workbook.close()
+
+
+def _normalise_newlines(text: str) -> str:
+    """*text* with CRLF and lone CR turned into LF, as an XML parser reads them."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _read_formula(cell: Any) -> str:  # noqa: ANN401

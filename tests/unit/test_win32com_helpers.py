@@ -6,7 +6,10 @@ where the interesting cases are: a headerless table has no header row at all.
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from fillxl._backends._win32com import _is_header_cell, _merged_regions_com
 
@@ -87,3 +90,63 @@ def test_reading_stops_at_the_first_merged_region() -> None:
 
     # The two corners build the range; the merged cell is the first one read.
     assert worksheet.cells_read == [(1, 1), (10, 5), (1, 1), (1, 2)]
+
+
+# -------------------------------------------------------------------------------
+# Calculated-column definitions are read from the package, not from openpyxl
+# -------------------------------------------------------------------------------
+
+_TESTS = Path(__file__).resolve().parents[1]
+_TEMPLATES = sorted(
+    path
+    for folder in (_TESTS / "assets", _TESTS / "fixtures")
+    for path in folder.glob("*")
+    if path.suffix.lower() in {".xlsx", ".xlsm"}
+)
+
+
+def _definitions_from_openpyxl(path: Path) -> dict[str, dict[str, str]] | None:
+    """The reading the function used to do, kept as the reference to compare with."""
+    import openpyxl
+
+    from fillxl._formulas import formula_definitions
+
+    try:
+        workbook = openpyxl.load_workbook(path)
+    except Exception:
+        return None
+    try:
+        return {
+            str(table.displayName or table.name): formula_definitions(table)
+            for worksheet in workbook.worksheets
+            for table in worksheet.tables.values()
+        }
+    finally:
+        workbook.close()
+
+
+@pytest.mark.parametrize("template", _TEMPLATES, ids=lambda path: path.name)
+def test_the_definitions_read_from_the_package_match_the_openpyxl_reading(
+    template: Path,
+) -> None:
+    """A whole workbook is no longer loaded just to read a table's columns."""
+    from fillxl._backends._win32com import _read_table_formula_definitions
+
+    assert _read_table_formula_definitions(template) == _definitions_from_openpyxl(template)
+
+
+def test_a_file_that_cannot_be_read_returns_none() -> None:
+    """A damaged package falls back to detecting calculated columns from cells."""
+    from fillxl._backends._win32com import _read_table_formula_definitions
+
+    assert _read_table_formula_definitions(Path("missing-file.xlsx")) is None
+
+
+def test_a_binary_template_is_not_read_for_table_definitions(tmp_path: Path) -> None:
+    """``.xlsb`` is not an OOXML package, so there is nothing to read."""
+    from fillxl._backends._win32com import _read_table_formula_definitions
+
+    binary = tmp_path / "template.xlsb"
+    binary.write_bytes(b"not a zip")
+
+    assert _read_table_formula_definitions(binary) is None

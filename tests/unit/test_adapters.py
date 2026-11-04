@@ -93,27 +93,15 @@ class TestTabularAdapter:
         with pytest.raises(TypeError, match="dict of scalars"):
             TabularAdapter({"a": 1, "b": 2})
 
-    def test_adapter_columns_raises_runtime_error_when_not_initialized(self) -> None:
-        """Verify .columns on an uninitialized adapter raises RuntimeError."""
+    def test_the_constructor_is_the_only_way_to_set_columns_and_rows(self) -> None:
+        """Detection always assigns both, so the properties are plain reads."""
         from fillxl._adapters import TabularAdapter
 
-        # Create an adapter that bypasses successful type detection
-        # by starting with _columns=None
-        adapter = object.__new__(TabularAdapter)
-        adapter._columns = None
-        adapter._rows = None
-        with pytest.raises(RuntimeError, match="Columns not initialized"):
-            _ = adapter.columns
+        adapter = TabularAdapter([{"a": 1}])
 
-    def test_adapter_rows_raises_runtime_error_when_not_initialized(self) -> None:
-        """Verify .rows on an uninitialized adapter raises RuntimeError."""
-        from fillxl._adapters import TabularAdapter
-
-        adapter = object.__new__(TabularAdapter)
-        adapter._columns = None
-        adapter._rows = None
-        with pytest.raises(RuntimeError, match="Rows not initialized"):
-            _ = adapter.rows
+        assert adapter.columns == ["a"]
+        assert adapter.rows == [[1]]
+        assert adapter._columns is adapter.columns
 
     def test_adapter_accepts_a_dict_of_numpy_arrays(self) -> None:
         """dict[str, np.ndarray] is column-oriented data like dict[str, list]."""

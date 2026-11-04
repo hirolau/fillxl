@@ -176,12 +176,12 @@ class TabularAdapter:
 
         """
         self.data = data
-        self._columns: list[str] | None = None
-        self._rows: list[Sequence[Any]] | None = None
-        self._detect_type()
+        self._columns: list[str]
+        self._rows: list[Sequence[Any]]
+        self._columns, self._rows = self._detect_type()
 
-    def _detect_type(self) -> None:
-        """Detect the type of data and prepare column names and rows."""
+    def _detect_type(self) -> tuple[list[str], list[Sequence[Any]]]:
+        """Detect the type of data and return its column names and rows."""
         data = self.data
 
         # Try pandas DataFrame
@@ -192,51 +192,46 @@ class TabularAdapter:
                     f"{_index_description(data.index)} is not written to Excel; "
                     "call df.reset_index() to include it.",
                 )
-            self._columns = _normalize_column_names(data.columns)
-            self._rows = list(data.itertuples(index=False, name=None))
-            logger.debug("Detected pandas DataFrame with %d columns", len(self._columns))
-            return
+            columns = _normalize_column_names(data.columns)
+            rows = list(data.itertuples(index=False, name=None))
+            logger.debug("Detected pandas DataFrame with %d columns", len(columns))
+            return columns, rows
 
         # Try polars DataFrame
         pl = sys.modules.get("polars")
         if pl is not None and isinstance(data, pl.DataFrame):
-            self._columns = _normalize_column_names(data.columns)
-            self._rows = list(data.iter_rows())
-            logger.debug("Detected polars DataFrame with %d columns", len(self._columns))
-            return
+            columns = _normalize_column_names(data.columns)
+            rows = list(data.iter_rows())
+            logger.debug("Detected polars DataFrame with %d columns", len(columns))
+            return columns, rows
 
         # Try duckdb Relation
         duckdb = sys.modules.get("duckdb")
         if duckdb is not None and isinstance(data, duckdb.DuckDBPyRelation):
-            self._columns = _normalize_column_names(data.columns)
-            self._rows = [tuple(row) for row in data.fetchall()]
-            logger.debug("Detected duckdb Relation with %d columns", len(self._columns))
-            return
+            columns = _normalize_column_names(data.columns)
+            rows = [tuple(row) for row in data.fetchall()]
+            logger.debug("Detected duckdb Relation with %d columns", len(columns))
+            return columns, rows
 
         # Empty payloads are valid: they mean "no rows" (and, for an empty
         # list, no schema).  The table is cleared instead of raising a
         # misleading TypeError.
         if isinstance(data, list) and not data:
-            self._columns = []
-            self._rows = []
             logger.debug("Detected empty list (no rows, no columns)")
-            return
+            return [], []
 
         # Try list[dict]
         if isinstance(data, list) and isinstance(data[0], dict):
             keys = _ordered_key_union(data)
-            self._columns = _normalize_column_names(keys)
-            self._rows = [[row.get(key) for key in keys] for row in data]
+            columns = _normalize_column_names(keys)
             logger.debug("Detected list[dict] with %d columns", len(keys))
-            return
+            return columns, [[row.get(key) for key in keys] for row in data]
 
         # Try dict[str, column] — column values may be lists, tuples, numpy
         # arrays, pandas/polars Series, or anything else sequence-like.
         if isinstance(data, dict) and not data:
-            self._columns = []
-            self._rows = []
             logger.debug("Detected empty dict (no rows, no columns)")
-            return
+            return [], []
 
         if isinstance(data, dict):
             scalars = [str(key) for key, value in data.items() if not _is_column_values(value)]
@@ -249,14 +244,14 @@ class TabularAdapter:
                 raise TypeError(msg)
             if not scalars:
                 keys = list(data)
-                self._columns = _normalize_column_names(keys)
                 # Materialise each column positionally: list(Series) ignores
                 # a non-default index, and this also handles arrays/tuples.
                 column_values = [list(data[key]) for key in keys]
                 _check_column_lengths(keys, column_values)
-                self._rows = [list(row) for row in zip(*column_values, strict=True)]
                 logger.debug("Detected dict[str, column] with %d columns", len(keys))
-                return
+                return _normalize_column_names(keys), [
+                    list(row) for row in zip(*column_values, strict=True)
+                ]
             msg = (
                 "A dict of scalars is not tabular data. Pass it as values= to fill named "
                 "cells, or wrap every value in a list to make a one-row table."
@@ -278,9 +273,6 @@ class TabularAdapter:
     @property
     def columns(self) -> list[str]:
         """Get column names."""
-        if self._columns is None:
-            msg = "Columns not initialized"
-            raise RuntimeError(msg)
         return self._columns
 
     @property
@@ -291,7 +283,4 @@ class TabularAdapter:
         read repeatedly — a one-shot iterator would silently yield nothing on
         the second access.
         """
-        if self._rows is None:
-            msg = "Rows not initialized"
-            raise RuntimeError(msg)
         return self._rows

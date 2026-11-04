@@ -20,7 +20,7 @@ from fillxl import FillXLConfig
 from tests._engines import _fill_output, _win32com_available
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
     from typing import Any
 
@@ -110,7 +110,7 @@ def test_turning_off_data_validation_extension_leaves_dropdowns_as_they_were(
 
 
 @contextlib.contextmanager
-def _excel() -> Iterator[Any]:
+def _excel() -> Generator[Any]:
     """A hidden Excel instance for the duration of one test."""
     if not _win32com_available():
         pytest.skip("win32com backend requires Windows and Excel")

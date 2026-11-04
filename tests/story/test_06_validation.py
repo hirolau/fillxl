@@ -403,13 +403,12 @@ class TestValidateColumnsFunction:
             strategy="warn",
         )
 
-    def test_the_deprecated_drop_strategy_accepts_extra_and_missing_columns(self) -> None:
-        """'drop' is an alias of 'none' and accepts the same mismatches."""
-        validate_columns(
-            table_columns=["A", "B"],
-            data_columns=["B", "C"],
-            strategy="drop",
-        )
+    def test_the_deprecated_drop_strategy_is_stored_as_none(self) -> None:
+        """'drop' is no longer part of the type; the config maps it to 'none'."""
+        with pytest.warns(DeprecationWarning, match="use 'none'"):
+            config = FillXLConfig(column_validation_strategy="drop")
+
+        assert config.column_validation_strategy == "none"
 
     def test_strict_raises_when_columns_differ(self) -> None:
         """'strict' raises ValueError on any mismatch."""

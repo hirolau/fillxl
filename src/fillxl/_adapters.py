@@ -209,9 +209,9 @@ class TabularAdapter:
         duckdb = sys.modules.get("duckdb")
         if duckdb is not None and isinstance(data, duckdb.DuckDBPyRelation):
             columns = _normalize_column_names(data.columns)
-            rows = [tuple(row) for row in data.fetchall()]
+            duckdb_rows: list[Sequence[Any]] = [tuple(row) for row in data.fetchall()]
             logger.debug("Detected duckdb Relation with %d columns", len(columns))
-            return columns, rows
+            return columns, duckdb_rows
 
         # Empty payloads are valid: they mean "no rows" (and, for an empty
         # list, no schema).  The table is cleared instead of raising a

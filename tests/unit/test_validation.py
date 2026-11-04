@@ -30,11 +30,6 @@ def test_validate_columns_strict_raises_on_mismatch() -> None:
         validate_columns(["A", "B"], ["A", "C"], "strict")
 
 
-def test_validate_columns_drop_accepts_extra_and_missing_columns() -> None:
-    """Drop strategy accepts extra and missing columns without raising."""
-    validate_columns(["A", "B"], ["A", "C", "D"], "drop")
-
-
 def test_the_warn_strategy_emits_one_warning_that_names_both_column_sets() -> None:
     """A mismatch is the caller's to act on, so it is a warning and not a log line."""
     with pytest.warns(FillXLWarning) as caught:
@@ -105,15 +100,6 @@ def test_validate_columns_all_but_formulas_strict_raises_for_missing_column() ->
 def test_validate_columns_none_skips_validation_entirely() -> None:
     """'none' skips validation regardless of mismatch."""
     validate_columns(["A", "B"], ["X", "Y", "Z"], "none")
-
-
-def test_the_deprecated_drop_strategy_behaves_like_none(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """The two names are the same fill; only the logging used to differ."""
-    caplog.set_level("DEBUG")
-    validate_columns(["A", "B"], ["A", "C", "D"], "drop")
-    assert caplog.records == []
 
 
 def test_validate_columns_still_checks_data_with_rows_but_no_columns() -> None:

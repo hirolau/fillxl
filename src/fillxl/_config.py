@@ -34,7 +34,10 @@ def _column_strategy(value: str) -> ColumnValidationStrategy:
         'strict'
         >>> _column_strategy("all_but_formulas")
         'all_but_formulas'
-        >>> _column_strategy("drop")  # doctest: +ELLIPSIS
+        >>> import warnings
+        >>> with warnings.catch_warnings():
+        ...     warnings.simplefilter("ignore", DeprecationWarning)
+        ...     _column_strategy("drop")
         'none'
         >>> _column_strategy("bogus")
         Traceback (most recent call last):

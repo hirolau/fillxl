@@ -7,7 +7,6 @@ Only the attributes and elements fillxl changes are touched; the rest of
 from __future__ import annotations
 
 import logging
-import posixpath
 import re
 from typing import TYPE_CHECKING
 
@@ -227,10 +226,6 @@ class WorkbookPart:
                 ),
             )
         return entries
-
-    def sheet_titles(self) -> list[str]:
-        """The names of every sheet, in tab order."""
-        return [sheet.name for sheet in self.sheets()]
 
     def sheet(self, name: str) -> SheetEntry | None:
         """The sheet called *name*, matching exactly first and then ignoring case.
@@ -481,8 +476,3 @@ class WorkbookPart:
 
         updated = _SHEET.sub(keep, text[block.start() : block.end()])
         return text[: block.start()] + updated + text[block.end() :]
-
-    def sheet_relative_path(self, entry: SheetEntry) -> str:
-        """The sheet part name as it is written in ``workbook.xml.rels``."""
-        folder = posixpath.dirname(self.part)
-        return posixpath.relpath(entry.part, folder) if folder else entry.part

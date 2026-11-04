@@ -619,10 +619,10 @@ def _numpy_scalar_to_python(value: Any) -> Any:  # noqa: ANN401
 # ==============================================================================
 # Backend-facing helpers
 #
-# ``prepare_cell_value`` and ``prepare_com_value`` are the two entry points the
-# backends use.  Keeping them here guarantees that both backends see exactly
-# the same value for the same input — including the win32com quirk that COM
-# applies the local timezone offset to naive datetimes.
+# ``prepare_cell_value`` and ``com_value_from_normalized`` are the two entry
+# points the backends use.  Keeping them here guarantees that both backends see
+# exactly the same value for the same input — including the win32com quirk that
+# COM applies the local timezone offset to naive datetimes.
 # ==============================================================================
 
 
@@ -848,11 +848,10 @@ def prepare_table_cell(
     return value
 
 
-def prepare_com_value(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
-    """Prepare *value* for writing through the win32com backend.
+def com_value_from_normalized(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
+    """Prepare an already normalised *value* for writing through the win32com backend.
 
-    Applies the same normalisation as :func:`prepare_cell_value`, then takes
-    care of two COM-specific behaviours:
+    Two COM-specific behaviours are handled here:
 
     * Datetimes are marked as UTC.  COM converts naive datetimes using the
       local timezone, which shifts the serial number Excel stores; marking
@@ -864,39 +863,17 @@ def prepare_com_value(value: Any, *, escape_formulas: bool = False) -> Any:  # n
       openpyxl keeps them as text.  Strings starting with ``=`` are left alone
       so they stay formulas, unless *escape_formulas* is set.
 
-    Args:
-        value: Raw value from user data.
-        escape_formulas: If True, strings starting with ``=`` are stored as
-            literal text instead of becoming formulas.
-
-    Returns:
-        A value suitable for assigning to a COM ``Range``.
-
-    Examples:
-        >>> import datetime as dt
-        >>> prepare_com_value(3.14)
-        3.14
-        >>> prepare_com_value("00123")
-        "'00123"
-        >>> prepare_com_value("=1+1")
-        '=1+1'
-        >>> prepare_com_value("=1+1", escape_formulas=True)
-        "'=1+1"
-        >>> prepare_com_value(dt.datetime(2025, 6, 15, 14, 30)).isoformat()
-        '2025-06-15T14:30:00+00:00'
-
-    """
-    return com_value_from_normalized(prepare_cell_value(value), escape_formulas=escape_formulas)
-
-
-def com_value_from_normalized(value: Any, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
-    """The COM-specific part of :func:`prepare_com_value` for an already normalised value.
-
     Integers outside the 32-bit range are handed over as floats: pywin32
     marshals a wider Python int as VT_I8 or fails outright, while Excel holds
     every number as a double anyway.
 
     Examples:
+        >>> com_value_from_normalized("00123")
+        "'00123"
+        >>> com_value_from_normalized("=1+1")
+        '=1+1'
+        >>> com_value_from_normalized("=1+1", escape_formulas=True)
+        "'=1+1"
         >>> com_value_from_normalized(dt.date(2025, 6, 15)).isoformat()
         '2025-06-15T00:00:00+00:00'
         >>> com_value_from_normalized(2**31)

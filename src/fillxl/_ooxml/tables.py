@@ -9,7 +9,6 @@ table, so it is never touched.
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING
 
 from attrs import define
@@ -40,15 +39,11 @@ class TableColumnInfo:
         name: Column name as Excel shows it (escaped characters decoded).
         calculated_formula: ``<calculatedColumnFormula>`` text without ``=``,
             or ``None`` for a plain data column.
-        totals_function: ``totalsRowFunction`` such as ``sum``, or ``None``.
-        totals_label: ``totalsRowLabel`` such as ``Total``, or ``None``.
 
     """
 
     name: str
     calculated_formula: str | None = None
-    totals_function: str | None = None
-    totals_label: str | None = None
 
 
 class TablePart:
@@ -126,8 +121,6 @@ class TablePart:
                         element,
                         "calculatedColumnFormula",
                     ),
-                    totals_function=xmltext.attribute(element, "totalsRowFunction"),
-                    totals_label=xmltext.attribute(element, "totalsRowLabel"),
                 ),
             )
         return columns
@@ -203,9 +196,3 @@ def find_table(package: OoxmlPackage, sheets: list[SheetEntry], name: str) -> Ta
                 return table
     msg = f"Table '{name}' not found in workbook"
     raise KeyError(msg)
-
-
-def table_part_names(package: OoxmlPackage) -> list[str]:
-    """Every table part of the package, in part order."""
-    pattern = re.compile(r"^xl/tables/[^/]+\.xml$")
-    return [part for part in package.part_names if pattern.match(part)]

@@ -688,13 +688,6 @@ class SheetPart:
         self._tail = _CONDITIONAL_FORMATTING.sub(replace, self._tail)
         return changes
 
-    def conditional_formatting_sqrefs(self) -> list[str]:
-        """The ``sqref`` of every conditional-formatting block, in file order."""
-        return [
-            xmltext.attribute(match.group(0), "sqref") or ""
-            for match in _CONDITIONAL_FORMATTING.finditer(self._head + self._tail)
-        ]
-
     # ── writing the part back ──────────────────────────────────────────────
 
     def to_xml(self) -> str:

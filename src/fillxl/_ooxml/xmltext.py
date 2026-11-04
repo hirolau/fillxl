@@ -269,11 +269,3 @@ def replace_element_text(xml: str, name: str, text: str) -> str:
         return xml
     replacement = element[: opening_end + 1] + escape_text(text) + element[closing_start:]
     return f"{xml[: match.start()]}{replacement}{xml[match.end() :]}"
-
-
-def replace_start_tag(xml: str, name: str, tag: str) -> str:
-    """*xml* with the start tag of its first *name* element replaced by *tag*."""
-    match = start_tag_re(name).search(xml)
-    if match is None:
-        return xml
-    return f"{xml[: match.start()]}{tag}{xml[match.end() :]}"

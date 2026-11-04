@@ -443,8 +443,6 @@ def test_a_table_reports_its_geometry_and_columns(tmp_path: Path) -> None:
     assert geometry.totals_rows == 1
     columns = table.columns()
     assert [column.name for column in columns] == ["Region", "Amount", "Double"]
-    assert columns[0].totals_label == "Total"
-    assert columns[1].totals_function == "sum"
     assert columns[2].calculated_formula == "[@Amount]*2"
 
 

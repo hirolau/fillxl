@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import warnings
 from decimal import Decimal
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -21,12 +22,17 @@ from fillxl._normalize import (
     check_named_cell_scalar,
     check_nonfinite_value,
     check_table_cell_scalar,
+    com_value_from_normalized,
     is_formula_string,
     normalize_value,
     prepare_cell_value,
-    prepare_com_value,
     reset_tz_warning_state,
 )
+
+
+def _prepare_for_com(value: object, *, escape_formulas: bool = False) -> Any:  # noqa: ANN401
+    """What the win32com backend hands to COM for *value*."""
+    return com_value_from_normalized(prepare_cell_value(value), escape_formulas=escape_formulas)
 
 
 class TestNumpyScalars:
@@ -129,7 +135,7 @@ class TestPandasSentinels:
 
     def test_a_pandas_timestamp_is_prepared_for_com_as_a_datetime(self) -> None:
         """COM cannot marshal pd.Timestamp, so it is converted."""
-        prepared = prepare_com_value(pd.Timestamp("2025-06-15 14:30"))
+        prepared = _prepare_for_com(pd.Timestamp("2025-06-15 14:30"))
         assert prepared == dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.UTC)
 
 
@@ -138,13 +144,11 @@ class TestValueNormalisation:
 
     def test_a_date_stays_a_date_until_it_reaches_excel(self) -> None:
         """Excel has no date type, but the two engines need to tell them apart."""
-        from fillxl._normalize import prepare_com_value
-
         result = normalize_value(dt.date(2025, 12, 25))
 
         assert result == dt.date(2025, 12, 25)
         assert not isinstance(result, dt.datetime)
-        assert prepare_com_value(result).isoformat() == "2025-12-25T00:00:00+00:00"
+        assert _prepare_for_com(result).isoformat() == "2025-12-25T00:00:00+00:00"
 
     def test_time_becomes_a_fraction_of_a_day(self) -> None:
         """Excel stores a time as the part of a day that has elapsed."""
@@ -264,24 +268,24 @@ class TestComValuePreparation:
     )
     def test_text_is_marked_as_literal_with_an_apostrophe(self, text: str) -> None:
         """Excel's apostrophe prefix keeps the string exactly as provided."""
-        assert prepare_com_value(text) == "'" + text
+        assert _prepare_for_com(text) == "'" + text
 
     def test_a_formula_string_stays_a_formula_by_default(self) -> None:
         """Both backends turn "=1+1" into a formula unless escaping is on."""
-        assert prepare_com_value("=1+1") == "=1+1"
+        assert _prepare_for_com("=1+1") == "=1+1"
 
     def test_a_formula_string_is_escaped_when_requested(self) -> None:
-        assert prepare_com_value("=1+1", escape_formulas=True) == "'=1+1"
+        assert _prepare_for_com("=1+1", escape_formulas=True) == "'=1+1"
 
     def test_numbers_none_and_booleans_are_left_alone(self) -> None:
-        assert prepare_com_value(42) == 42
-        assert prepare_com_value(3.5) == 3.5
-        assert prepare_com_value(True) is True
-        assert prepare_com_value(None) is None
+        assert _prepare_for_com(42) == 42
+        assert _prepare_for_com(3.5) == 3.5
+        assert _prepare_for_com(True) is True
+        assert _prepare_for_com(None) is None
 
     def test_datetimes_are_marked_as_utc(self) -> None:
         """COM would otherwise shift the serial number by the local offset."""
-        prepared = prepare_com_value(dt.datetime(2025, 6, 15, 14, 30))
+        prepared = _prepare_for_com(dt.datetime(2025, 6, 15, 14, 30))
         assert prepared == dt.datetime(2025, 6, 15, 14, 30, tzinfo=dt.UTC)
 
     def test_the_openpyxl_preparation_leaves_text_and_datetimes_alone(self) -> None:
@@ -514,10 +518,10 @@ class TestComIntegerWidth:
     """pywin32 cannot marshal a Python int wider than 32 bits reliably."""
 
     def test_an_integer_beyond_int32_is_handed_over_as_a_float(self) -> None:
-        assert prepare_com_value(5_000_000_000) == 5e9
+        assert _prepare_for_com(5_000_000_000) == 5e9
 
     def test_an_integer_that_fits_stays_an_integer(self) -> None:
-        assert prepare_com_value(2**31 - 1) == 2**31 - 1
+        assert _prepare_for_com(2**31 - 1) == 2**31 - 1
 
 
 class TestNonFiniteNumbers:

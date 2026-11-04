@@ -166,10 +166,6 @@ class OoxmlPackage:
         self._dropped.discard(part)
         self._dirty.add(part)
 
-    def is_changed(self, part: str) -> bool:
-        """Whether *part* was rewritten (as opposed to copied verbatim)."""
-        return part in self._dirty
-
     def shared_strings(self) -> list[str]:
         """The texts of ``xl/sharedStrings.xml``, read on first use.
 

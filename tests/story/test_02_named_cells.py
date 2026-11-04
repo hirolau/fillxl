@@ -140,23 +140,6 @@ class TestNamedCellErrors:
         finally:
             wb.close()
 
-    def test_unknown_named_cells_are_skipped_when_allow_missing_is_true(
-        self,
-        named_cell_template: Path,
-    ) -> None:
-        """The internal function can be told to skip missing names gracefully."""
-        wb = openpyxl.load_workbook(named_cell_template)
-        try:
-            # Should not raise
-            populate_named_cells(
-                wb,
-                {"nonexistent": "value", "my_cell": "updated"},
-                allow_missing=True,
-            )
-            assert wb["Sheet1"]["A1"].value == "updated"
-        finally:
-            wb.close()
-
     def test_a_warning_is_raised_when_a_named_cell_has_no_destinations(self) -> None:
         """A defined name holding a constant (not a range) has no cell destination."""
         from openpyxl.workbook.defined_name import DefinedName

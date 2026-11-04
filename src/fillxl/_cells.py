@@ -199,7 +199,6 @@ def populate_named_cells(
     workbook: Workbook,
     cells: dict[str, Any],
     *,
-    allow_missing: bool = False,
     escape_formulas: bool = False,
 ) -> None:
     """Populate named cells with scalar values.
@@ -207,12 +206,11 @@ def populate_named_cells(
     Args:
         workbook: openpyxl Workbook instance
         cells: Dictionary mapping named cell names to values
-        allow_missing: If False, raise error if named cell is not found
         escape_formulas: If True, strings starting with ``=`` are written as
             literal text instead of becoming formulas.
 
     Raises:
-        KeyError: If a named cell is not found and allow_missing is False
+        KeyError: If a named cell is not found
         ValueError: If the name points at a table header row, which cannot be
             renamed without desynchronising the table's column.
 
@@ -220,9 +218,6 @@ def populate_named_cells(
     for name, value in cells.items():
         defined_name = find_defined_name(workbook, name)
         if defined_name is None:
-            if allow_missing:
-                warn_user(f"Named cell {name!r} not found in workbook, nothing was written")
-                continue
             msg = f"Named cell '{name}' not found in workbook"
             raise KeyError(msg)
 

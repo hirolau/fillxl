@@ -13,10 +13,12 @@ without touching them.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING
 
 from attrs import define, field
+from openpyxl.formula.tokenizer import TokenizerError
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
 
@@ -53,6 +55,8 @@ _MERGE_CELL = xmltext.element_re("mergeCell")
 _ROW_REFERENCE = re.compile(r"^\$?(?P<column>[A-Za-z]{1,3})\$?(?P<row>\d+)$")
 _HAS_FORMULA = re.compile(rf"<{_TAG}f\b")
 _HIDDEN_ATTRIBUTE = re.compile(r'\s+hidden\s*=\s*"[^"]*"')
+
+logger = logging.getLogger(__name__)
 
 
 def column_index(letters: str) -> int:
@@ -510,10 +514,23 @@ class SheetPart:
         return None
 
     def formula_cells(self) -> Iterator[tuple[int, int, str]]:
-        """Yield ``(row, column, formula)`` for every cell that holds a formula."""
+        """Yield ``(row, column, formula)`` for every cell that holds a formula.
+
+        A shared member's text comes from ``shift_relative``, which tokenises
+        the master's formula.  One formula Excel wrote but openpyxl cannot
+        read is skipped rather than failing the whole fill; a group that has
+        to be rewritten raises later, in :meth:`unshare`.
+        """
         for number in sorted(self._rows):
             for column in sorted(self._rows[number].cells):
-                text = self.formula(number, column)
+                try:
+                    text = self.formula(number, column)
+                except TokenizerError:
+                    logger.debug(
+                        "Cannot read the formula in %s; leaving it alone",
+                        self.reference(number, column),
+                    )
+                    continue
                 if text is not None:
                     yield number, column, text
 
@@ -556,11 +573,19 @@ class SheetPart:
             xml = self.cell(row, column)
             if xml is None:  # pragma: no cover - members always exist
                 continue
-            moved = shift_relative(
-                f"={text}",
-                rows=row - master_row,
-                columns=column - master_column,
-            )
+            try:
+                moved = shift_relative(
+                    f"={text}",
+                    rows=row - master_row,
+                    columns=column - master_column,
+                )
+            except TokenizerError as exc:
+                msg = (
+                    f"Cannot rewrite the shared formula in {self.reference(row, column)}: "
+                    f"the fillxl engine cannot read its master formula {text!r}. "
+                    "Use engine='win32com' to fill this template."
+                )
+                raise ValueError(msg) from exc
             self.write_cell(row, column, _plain_formula(xml, moved.removeprefix("=")))
 
     def unshare_range(

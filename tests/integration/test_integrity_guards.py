@@ -19,12 +19,15 @@ from typing import TYPE_CHECKING, Any
 import openpyxl
 import pytest
 from openpyxl.formatting.rule import CellIsRule
+from openpyxl.formula import Tokenizer
+from openpyxl.formula.tokenizer import TokenizerError
 from openpyxl.styles import PatternFill
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.table import Table, TableColumn, TableFormula
 
 from fillxl import CellValueError, FillXLWarning, UntrackedRangeWarning, fill
 from tests._engines import ENGINES, _fill_output, _win32com_available
+from tests.parity.builders import table_template
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -340,6 +343,85 @@ def test_a_formula_that_tracks_the_table_shrinks_with_it(
         "Other!A1": "=SUM(Data!B4:B4)",
         "name=BodyName": "Data!$A$4:$B$4",
     }
+
+
+def _template_with_an_unreadable_formula(path: Path) -> Path:
+    """A table plus an unrelated sheet whose formula openpyxl cannot tokenize."""
+    template = table_template(path, body=(("A", 1),), name="Sales")
+    workbook = openpyxl.load_workbook(template)
+    broken = workbook.create_sheet("Broken")
+    broken["A1"] = '=SUM(B1:B2)+"unterminated'
+    workbook.save(template)
+    workbook.close()
+    return template
+
+
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_an_unreadable_formula_on_another_sheet_does_not_stop_the_fill(
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """A formula the tokenizer rejects is not a reason to lose the whole fill."""
+    template = _template_with_an_unreadable_formula(tmp_path / "template.xlsx")
+    with pytest.raises(TokenizerError):
+        Tokenizer('=SUM(B1:B2)+"unterminated')
+
+    output = _fill_output(
+        template,
+        tmp_path / "out.xlsx",
+        engine,
+        tables={"Sales": [{"fund": "A", "nav": 1}, {"fund": "B", "nav": 2}]},
+    )
+
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert workbook["Data"]["B3"].value == 2
+        assert workbook["Broken"]["A1"].value == '=SUM(B1:B2)+"unterminated'
+    finally:
+        workbook.close()
+
+
+def _apostrophe_summary_template(path: Path) -> Path:
+    """A table on ``Bob's Data`` with a summary formula on another sheet."""
+    workbook = openpyxl.Workbook()
+    data = workbook.active
+    data.title = "Bob's Data"
+    data["A3"], data["B3"] = "fund", "nav"
+    data["A4"], data["B4"] = "A", 1
+    data.add_table(
+        Table(
+            displayName="Sales",
+            ref="A3:B4",
+            tableColumns=[TableColumn(id=1, name="fund"), TableColumn(id=2, name="nav")],
+        ),
+    )
+    other = workbook.create_sheet("Other")
+    other["A1"] = "=SUM('Bob''s Data'!B4:B4)"
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_a_summary_formula_on_another_sheet_still_follows_the_table(
+    tmp_path: Path,
+    engine: Engine,
+) -> None:
+    """The pre-filter must not skip an apostrophe in the table's sheet name."""
+    template = _apostrophe_summary_template(tmp_path / "template.xlsx")
+
+    output = _fill_output(
+        template,
+        tmp_path / "out.xlsx",
+        engine,
+        tables={"Sales": [{"fund": "A", "nav": 1}, {"fund": "B", "nav": 2}]},
+    )
+
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert workbook["Other"]["A1"].value == "=SUM('Bob''s Data'!B4:B5)"
+    finally:
+        workbook.close()
 
 
 @contextlib.contextmanager

@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- A formula the tokenizer cannot read no longer aborts a whole fill. Only the
+  formulas that could possibly track the resized table are tokenised, and one
+  that still cannot be read is skipped with a debug log instead of raising; a
+  shared-formula group that has to be rewritten now says which cell and master
+  formula defeat the fillxl engine, and suggests `engine='win32com'`.
 - A table that would grow past Excel's last row is now refused with a
   `ValueError` that names the table, the row count and the sheet limit, before
   anything is written, on every engine. Previously the offline engines wrote

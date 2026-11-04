@@ -337,6 +337,40 @@ def shift_relative_rows(formula: str, offset: int) -> str:
     return shift_relative(formula, rows=offset)
 
 
+def may_track_table(formula: str, *, table_sheet: str, formula_sheet: str) -> bool:
+    """Whether *formula* could hold a range that tracks the table on *table_sheet*.
+
+    Tokenising every formula of a workbook is both slow and brittle — one
+    formula openpyxl cannot read would stop a fill that has nothing to do with
+    it.  A formula that cannot possibly track the table is skipped before the
+    tokenizer sees it: it needs a ``:`` to hold a range, and a formula on
+    another sheet has to mention that sheet.
+
+    A sheet name with an apostrophe is written quoted, with the apostrophe
+    doubled (``'Bob''s Data'``), which is what the ``replace`` produces.
+
+    Examples:
+        >>> may_track_table("=A1*2", table_sheet="Data", formula_sheet="Data")
+        False
+        >>> may_track_table("=SUM(B4:B4)", table_sheet="Data", formula_sheet="Other")
+        False
+        >>> may_track_table("=SUM(B4:B4)", table_sheet="Data", formula_sheet="data")
+        True
+        >>> may_track_table(
+        ...     "=SUM('Bob''s Data'!B4:B4)",
+        ...     table_sheet="Bob's Data",
+        ...     formula_sheet="Other",
+        ... )
+        True
+
+    """
+    if ":" not in formula:
+        return False
+    if formula_sheet.casefold() == table_sheet.casefold():
+        return True
+    return table_sheet.replace("'", "''").casefold() in formula.casefold()
+
+
 def extend_table_ranges(
     formula: str,
     *,

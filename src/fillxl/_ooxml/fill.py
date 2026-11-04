@@ -17,6 +17,7 @@ import datetime as dt
 import logging
 from typing import TYPE_CHECKING, Any
 
+from openpyxl.formula.tokenizer import TokenizerError
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.datetime import MAC_EPOCH, WINDOWS_EPOCH
 from openpyxl.worksheet.cell_range import CellRange
@@ -28,6 +29,7 @@ from fillxl._formulas import (
     ColumnFormulaEvidence,
     classify_body,
     extend_table_ranges,
+    may_track_table,
     resolve_formula,
     shift_relative_rows,
     sole_reference,
@@ -732,15 +734,32 @@ def _resize_adjacent_formulas(
             )
             if in_body:
                 continue
-            updated = extend_table_ranges(
+            formula_sheet = _sheet_title(workbook, sheet.part)
+            if not may_track_table(
                 formula,
-                sheet_title=table_sheet,
-                formula_sheet=_sheet_title(workbook, sheet.part),
-                first_col=geometry.first_col,
-                last_col=geometry.last_col,
-                old_body=(geometry.first_data_row, geometry.body_last_row),
-                new_body=(plan.first_data_row, plan.new_body_last_row),
-            )
+                table_sheet=table_sheet,
+                formula_sheet=formula_sheet,
+            ):
+                continue
+            try:
+                updated = extend_table_ranges(
+                    formula,
+                    sheet_title=table_sheet,
+                    formula_sheet=formula_sheet,
+                    first_col=geometry.first_col,
+                    last_col=geometry.last_col,
+                    old_body=(geometry.first_data_row, geometry.body_last_row),
+                    new_body=(plan.first_data_row, plan.new_body_last_row),
+                )
+            except TokenizerError:
+                # A formula openpyxl cannot read is not one this fill can
+                # rewrite; failing the whole fill over it would be worse.
+                logger.debug(
+                    "Cannot read the formula in %s!%s; leaving it alone",
+                    formula_sheet,
+                    sheet.reference(row, column),
+                )
+                continue
             if updated is not None:
                 logger.debug("Resized formula %s -> %s", formula, updated)
                 sheet.set_formula(row, column, updated)

@@ -46,7 +46,7 @@ lists what else changed.
 | Template → output | Engine |
 |-------------------|--------|
 | `.xlsx` → `.xlsx`, `.xlsm` → `.xlsm` | `openpyxl` — no Excel needed |
-| `.xlsb`/`.xls` template, or a different output format | `win32com`, when Excel automation is available |
+| `.xlsb` template, or a different output format | `win32com`, when Excel automation is available |
 | the same, without Excel | `openpyxl`, whose error explains what is missing |
 
 Pass `engine="win32com"` explicitly to drive Microsoft Excel through COM — that

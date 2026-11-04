@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking changes
+- **`.xls` (Excel 97-2003) is no longer supported**, by any engine nor as a
+  template or an output. BIFF8 cannot hold the features fillxl exists to
+  preserve (dynamic arrays, slicers, `chartEx`, rich data, …), and reading it
+  needs Excel anyway, so a fill that names a `.xls` path is refused with a
+  `ValueError` before anything is opened. **Migration:** open the file in Excel
+  and save it as `.xlsx`, `.xlsm` or `.xlsb`, then fill that. `.xlsb` is still
+  supported through `engine="win32com"`.
+
 ### Added
 - `engine="fillxl"`: a third backend that fills a workbook by editing the OOXML
   package itself instead of loading it into an object model. It needs no Excel
@@ -16,8 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `xl/metadata.xml` and cell metadata, slicers, timelines, `chartEx`, rich data,
   embedded objects and VBA. `on_lossy` stays silent for this engine because
   nothing is lost — if anything were, it would say so. It reads and writes
-  `.xlsx`/`.xlsm` in the same format; `.xlsb`, `.xls`, encrypted workbooks and
-  format conversion are refused with an error that names `engine="win32com"`.
+  `.xlsx`/`.xlsm` in the same format; `.xlsb`, encrypted workbooks and format
+  conversion are refused with an error that names `engine="win32com"`.
   A table that would grow into an array (spill) range is refused rather than
   overwriting part of a formula, including when the spill's results are blank.
 - `on_lossy` now reports `xl/metadata.xml`, the part that carries spilling and
@@ -48,10 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   openpyxl engine), not only on the table's sheet. Sheets without formulas stay
   byte-for-byte, and a named-cell fill clears the shipped-file caches too.
 - `win32com` no longer reports a VBA loss for conversions that keep macros
-  (`.xlsm`/`.xlsb` to `.xls`, `.xlsb` to `.xlsm`): only an `.xlsx` output cannot
-  hold a VBA project. The flag now comes from `Workbook.HasVBProject` before
-  `SaveAs`, so an `.xls` template's macros are covered too, and an `.xls` output
-  reports the features BIFF8 really drops (dynamic arrays, slicers, `chartEx`).
+  (`.xlsb` to `.xlsm`): only an `.xlsx` output cannot hold a VBA project. The
+  flag now comes from `Workbook.HasVBProject` before `SaveAs`.
 - `engine="fillxl"` failed on shapes a surgical editor has to understand but
   openpyxl cannot write: shared formulas (`<f t="shared">`, which made a
   calculated column stored the way Excel stores it look like data and could
@@ -93,12 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or a shared formula was unshared, silently pointing the copied formula at
   another name. Only operands inside the grid (16 384 × 1 048 576) count as
   references now, so the openpyxl and fillxl engines agree with Excel.
-- win32com: saving a fill as `.xls` no longer truncates silently — rows past
-  65 536 or columns past 256 are refused with a `ValueError` before `SaveAs`,
-  because Excel's compatibility checker is disabled during a fill. A format
-  change now reports what the new format cannot hold (a `.xlsm` template saved
-  as `.xlsx` loses its VBA project) through `on_lossy`, which used to be a
-  no-op for that engine.
+- win32com: a format change now reports what the new format cannot hold (a
+  `.xlsm` template saved as `.xlsx` loses its VBA project) through `on_lossy`,
+  which used to be a no-op for that engine.
 - A table fill shows the rows it writes: a filter the template was saved with
   is cleared and body rows hidden by hand are unhidden in all three engines.
   Before, the filled rows stayed invisible and a `SUBTOTAL(109, …)` totals row
@@ -118,7 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `engine="fillxl"` is documented as experimental and opt-in: `engine="auto"`
-  never selects it, and the README lists its limits (no `.xlsb`/`.xls` or
+  never selects it, and the README lists its limits (no `.xlsb` or
   format conversion, no encrypted files, pivot tables only flagged for refresh,
   `chartEx` ranges untouched, pivot sources and data validations unaffected)
   and a "Cached values" section: the engine does not calculate, so the file

@@ -251,29 +251,6 @@ def _conversion_warnings(caught: list[warnings.WarningMessage]) -> list[str]:
 
 
 @pytest.mark.win32com
-def test_a_macro_template_saved_as_xls_reports_what_biff8_drops(
-    tmp_path: Path,
-) -> None:
-    """.xls keeps macros, so VBA is not a loss -- but dynamic arrays are.
-
-    The message must name the features the format really cannot hold, and must
-    not claim a VBA loss the file does not have.
-    """
-    from tests._engines import _fill_output
-
-    template = _vba_template(tmp_path)
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        _fill_output(template, tmp_path / "out.xls", "win32com")
-
-    messages = _conversion_warnings(caught)
-    assert messages, "an .xls output should report what it cannot hold"
-    assert any("cell metadata" in message for message in messages)
-    assert not any("VBA" in message for message in messages)
-
-
-@pytest.mark.win32com
 def test_an_xlsb_template_saved_as_xlsm_loses_nothing(
     tmp_path: Path,
     excel: Any,  # noqa: ANN401
@@ -293,22 +270,3 @@ def test_an_xlsb_template_saved_as_xlsm_loses_nothing(
         _fill_output(template, tmp_path / "out.xlsm", "win32com")
 
     assert _conversion_warnings(caught) == []
-
-
-@pytest.mark.win32com
-def test_an_xls_template_can_still_lose_its_macros_to_xlsx(
-    tmp_path: Path,
-    excel: Any,  # noqa: ANN401
-) -> None:
-    """A BIFF8 template cannot be read part by part, so COM has to say it has VBA."""
-    from tests._engines import _fill_output
-
-    template = _converted(
-        _vba_template(tmp_path),
-        suffix=".xls",
-        file_format=56,
-        excel=excel,
-    )
-
-    with pytest.warns(LossyTemplateWarning, match="VBA project"):
-        _fill_output(template, tmp_path / "out.xlsx", "win32com")

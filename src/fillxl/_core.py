@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fillxl._backend import get_backend, resolve_engine
+from fillxl._backend import get_backend, reject_xls_paths, resolve_engine
 from fillxl._config import FillXLConfig
 from fillxl._normalize import reset_tz_warning_state
 
@@ -64,7 +64,7 @@ def fill(
         engine: ``"openpyxl"``, ``"fillxl"``, ``"win32com"`` or ``"auto"``
             (default).  ``"auto"`` uses openpyxl for ``.xlsx``/``.xlsm``
             templates saved in the same format, and Excel (win32com) when it is
-            needed and available: ``.xlsb``/``.xls`` templates, or a different
+            needed and available: ``.xlsb`` templates, or a different
             output format.  ``"fillxl"`` edits the OOXML package itself: no
             Excel, and no template feature lost.  It is experimental and
             opt-in — ``"auto"`` never selects it — and it only handles
@@ -105,6 +105,9 @@ def fill(
 
     template_path = Path(template)
     output_path = Path(output)
+    # An unsupported format is refused before the template is looked at, so the
+    # message is about the format and not a missing file.
+    reject_xls_paths(template_path, output_path)
     if not template_path.exists():
         msg = f"Template file not found: {template_path}"
         raise FileNotFoundError(msg)

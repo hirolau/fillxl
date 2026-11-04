@@ -37,6 +37,7 @@ def main() -> None:
     dummy_dir = OUTPUT / "other_formats" / "_dummy"
     dummy_dir.mkdir(parents=True, exist_ok=True)
     dummy_files = {}
+    # .xls is refused by every engine; the rest are formats no engine writes.
     for ext in [".xls", ".xltx", ".xltm", ".csv", ".txt", ".zip", ".ods", ".pdf"]:
         p = dummy_dir / f"dummy{ext}"
         if not p.exists():

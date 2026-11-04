@@ -275,10 +275,8 @@ def check_conversion_losses(
 
     Excel writes back everything it read, but the format it wrote to may have
     no room for it: an ``.xlsm`` template saved as ``.xlsx`` loses its VBA
-    project, and ``.xls`` loses dynamic arrays, slicers, ``chartEx`` and the
-    rest of the newer feature set.  Nothing warns about that on its own --
-    Excel's compatibility checker is silenced along with the other alerts
-    during a fill.
+    project.  Nothing warns about that on its own -- Excel's compatibility
+    checker is silenced along with the other alerts during a fill.
 
     Args:
         template: The template the workbook was filled from.
@@ -286,8 +284,7 @@ def check_conversion_losses(
         policy: The ``on_lossy`` policy.
         engine: Engine name for the message.
         has_vba: Whether the filled workbook has a VBA project, when the
-            backend can say so.  A BIFF8 (``.xls``) template cannot be read by
-            :func:`feature_counts`, so this is the only way to see its macros.
+            backend can say so.
 
     """
     if policy == "ignore" or template.suffix.lower() == output.suffix.lower():
@@ -299,8 +296,6 @@ def check_conversion_losses(
         # things the output cannot hold are reported: a part that is gone from
         # the output but was never there either is not a loss.
         lost = find_lost_features(template, output)
-    elif output_suffix == ".xls":
-        lost = _features_biff8_cannot_hold(template)
     # A binary OOXML output (``.xlsb``) holds the same feature set as the XML
     # formats; comparing parts by name would report every XML part as lost.
     vba = _vba_loss(template, output_suffix, has_vba=has_vba)
@@ -316,38 +311,10 @@ def check_conversion_losses(
     _apply_lossy_policy(msg, policy)
 
 
-# BIFF8 (``.xls``) has no room for the newer parts, but it does hold macros,
-# pictures, shapes, external links, embedded objects and its own form controls.
-_BIFF8_KEEPS = frozenset(
-    {
-        _VBA_LABEL,
-        "images (xl/media)",
-        "shapes and text boxes",
-        "connector shapes",
-        "grouped shapes",
-        "pictures",
-        "external links",
-        "embedded objects (OLE)",
-        "form controls",
-        "ActiveX controls",
-    },
-)
-
-
-def _features_biff8_cannot_hold(template: Path) -> list[str]:
-    """Template features an ``.xls`` output drops, as ``label (n lost)`` strings."""
-    return [
-        f"{label} ({count} lost)"
-        for label, count in sorted(feature_counts(template).items())
-        if label not in _BIFF8_KEEPS
-    ]
-
-
 def _vba_loss(template: Path, output_suffix: str, *, has_vba: bool | None) -> str | None:
     """The VBA loss for *output_suffix*, or ``None`` when the format keeps macros.
 
-    Only ``.xlsx`` cannot hold a VBA project: ``.xls``, ``.xlsm`` and ``.xlsb``
-    all can.
+    Only ``.xlsx`` cannot hold a VBA project: ``.xlsm`` and ``.xlsb`` both can.
     """
     if output_suffix != ".xlsx":
         return None

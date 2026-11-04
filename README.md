@@ -85,8 +85,14 @@ matter, and every format produces the same workbook.
 | Template → output | Engine used |
 |-------------------|-------------|
 | `.xlsx` → `.xlsx`, `.xlsm` → `.xlsm` | `openpyxl` (no Excel needed) |
-| `.xlsb`/`.xls` template, or a format conversion | `win32com` when Excel is available |
+| `.xlsb` template, or a format conversion | `win32com` when Excel is available |
 | anything else, without Excel | `openpyxl`, whose error says what is missing |
+
+> **`.xls` (Excel 97-2003) is no longer supported.** No engine reads or writes
+> it: BIFF8 cannot hold the features fillxl exists to preserve, and reading it
+> needs Excel anyway. A fill whose template or output ends in `.xls` is refused
+> before anything is opened. Open the file in Excel and save it as `.xlsx`,
+> `.xlsm` or `.xlsb`.
 
 Three engines are available, and `engine=` selects one explicitly:
 
@@ -116,7 +122,7 @@ differs.
 **Its limits:**
 
 - `.xlsx` and `.xlsm` only, with no format conversion (use `win32com` for
-  `.xlsb`, `.xls` and converting between formats).
+  `.xlsb` and converting between formats).
 - Encrypted workbooks cannot be opened.
 - Pivot tables are only flagged for refresh on open; fillxl cannot pivot.
 - `chartEx` ranges are not updated.

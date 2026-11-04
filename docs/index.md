@@ -37,7 +37,7 @@ fill(..., engine="win32com")   # Windows + Excel (maximum fidelity)
 ```
 
 `"auto"` uses openpyxl for `.xlsx`/`.xlsm` templates saved in the same format,
-and Excel when it is needed (`.xlsb`/`.xls` templates, format conversion) and
+and Excel when it is needed (`.xlsb` templates, format conversion) and
 available. `"fillxl"` is opt-in and experimental; [The fillxl
 engine](fillxl-engine.md) describes what it does. Every engine writes the same
 values for the same template and data; [Backends](backends.md) lists what still

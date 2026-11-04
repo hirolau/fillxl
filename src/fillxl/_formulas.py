@@ -483,7 +483,7 @@ class ColumnFormulaEvidence(NamedTuple):
         name: Column name.
         definition: ``calculatedColumnFormula`` text without ``=``, or ``None``.
         definitions_known: ``False`` when the file format hides definitions
-            (``.xlsb``/``.xls`` read through COM).
+            (``.xlsb`` read through COM).
         body_state: What the template body cells of this column hold.
         body_formula: Formula of the first body cell including ``=`` (COM only;
             openpyxl passes ``None`` and writes the definition instead).

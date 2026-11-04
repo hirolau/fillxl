@@ -1,8 +1,9 @@
-"""Chapter 15 — Custom Excel Formats (.xlsm, .xlsb, .xls, etc.).
+"""Chapter 15 — Custom Excel Formats (.xlsm, .xlsb, etc.).
 =========================================================
 
 fillxl supports ``.xlsx`` and macro-enabled ``.xlsm`` with the openpyxl
-backend.  Binary ``.xlsb`` and legacy ``.xls`` require win32com.
+backend.  Binary ``.xlsb`` requires win32com.  Legacy ``.xls`` (BIFF8) is not
+supported by any engine and is refused with a clear error.
 
 * openpyxl raises :class:`ValueError` for any other template format, and it
   never converts between formats.
@@ -45,7 +46,7 @@ class TestOpenpyxlRejectsUnsupportedFormats:
 
     @pytest.mark.parametrize(
         "ext",
-        [".xls", ".xltx", ".xltm", ".csv", ".txt", ".zip", ".ods", ".pdf"],
+        [".xltx", ".xltm", ".csv", ".txt", ".zip", ".ods", ".pdf"],
     )
     def test_openpyxl_rejects_any_non_xlsx_extension(self, tmp_path: Path, ext: str) -> None:
         """Even made-up files with non-.xlsx extensions raise ValueError."""

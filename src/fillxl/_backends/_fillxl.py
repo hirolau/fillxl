@@ -33,8 +33,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Only zip-based OOXML workbooks: .xlsb is binary OOXML and .xls is BIFF8, and
-# an encrypted .xlsx is not a zip at all.  All three stay on engine="win32com".
+# Only zip-based OOXML workbooks: .xlsb is binary OOXML, and an encrypted
+# .xlsx is not a zip at all.  Both stay on engine="win32com".
 _FILLXL_SUFFIXES = (".xlsx", ".xlsm")
 
 
@@ -86,7 +86,7 @@ class FillxlBackend:
         if suffix not in _FILLXL_SUFFIXES:
             msg = (
                 f"File type '{suffix}' is not supported by the fillxl engine "
-                "(supported: .xlsx, .xlsm). Use engine='win32com' for .xlsb, .xls "
+                "(supported: .xlsx, .xlsm). Use engine='win32com' for .xlsb "
                 "and format conversion."
             )
             raise ValueError(msg)

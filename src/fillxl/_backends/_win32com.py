@@ -79,7 +79,6 @@ _FILE_FORMATS: dict[str, int] = {
     ".xlsx": 51,  # xlOpenXMLWorkbook
     ".xlsm": 52,  # xlOpenXMLWorkbookMacroEnabled
     ".xlsb": 50,  # xlExcel12
-    ".xls": 56,  # xlExcel8
 }
 
 
@@ -107,7 +106,7 @@ class Win32ComBackend:
         self._com_initialized = False
         self._com_thread: int | None = None
         # Whether the workbook being saved had a VBA project, read before SaveAs
-        # because a BIFF8 template's parts cannot be inspected afterwards.
+        # because check_output() runs after the workbook is closed.
         self._saved_with_vba: bool | None = None
         # Excel's calculation mode before this fill; restored before SaveAs.
         self._previous_calculation: int | None = None
@@ -577,12 +576,8 @@ class Win32ComBackend:
         if self._previous_calculation is not None:
             self._app.Calculation = self._previous_calculation
             self._previous_calculation = None
-        if suffix == ".xls":
-            # Excel's compatibility checker is silenced during a fill, so it
-            # would drop the overflow without a word.
-            _refuse_truncation_to_xls(self._workbook, abs_path)
-        # Read before SaveAs: a BIFF8 file cannot be inspected afterwards, and
-        # check_output() runs after close().
+        # Read before SaveAs: check_output() runs after close(), when the
+        # workbook can no longer be asked.
         self._saved_with_vba = _com_has_vba(self._workbook)
         logger.debug("Saving workbook to %s (format %d)", abs_path, file_format)
         self._workbook.SaveAs(str(abs_path), FileFormat=file_format)
@@ -616,8 +611,7 @@ class Win32ComBackend:
 
         Excel writes back every feature it read, so a save to the template's
         own format loses nothing.  A save to another format can: the VBA
-        project never survives an ``.xlsx`` output, and ``.xls`` cannot hold
-        dynamic arrays or most of the newer feature set.
+        project never survives an ``.xlsx`` output.
         """
         check_conversion_losses(
             template,
@@ -724,46 +718,12 @@ def _com_has_totals_row(list_obj: Any) -> bool:  # noqa: ANN401
     return bool(getattr(list_obj, "ShowTotals", False))
 
 
-# ``.xls`` is BIFF8: 65 536 rows by 256 columns.  Everything outside that grid
-# is dropped when Excel saves, and the compatibility checker that would say so
-# is disabled for the fill.
-_XLS_MAX_ROWS = 65_536
-_XLS_MAX_COLUMNS = 256
-
-
 def _com_has_vba(workbook: Any) -> bool | None:  # noqa: ANN401
     """Whether *workbook* carries a VBA project, or ``None`` when it cannot say."""
     try:
         return bool(workbook.HasVBProject)
     except Exception:  # pragma: no cover - a workbook always has the property
         return None
-
-
-def _refuse_truncation_to_xls(workbook: Any, output: Path) -> None:  # noqa: ANN401
-    """Raise when the workbook does not fit in an ``.xls`` grid.
-
-    Args:
-        workbook: The COM workbook about to be saved.
-        output: The destination path, for the message.
-
-    Raises:
-        ValueError: If any sheet uses more rows or columns than BIFF8 holds.
-
-    """
-    for sheet in workbook.Worksheets:
-        used = sheet.UsedRange
-        last_row = int(used.Row) + int(used.Rows.Count) - 1
-        last_column = int(used.Column) + int(used.Columns.Count) - 1
-        if last_row <= _XLS_MAX_ROWS and last_column <= _XLS_MAX_COLUMNS:
-            continue
-        msg = (
-            f"Cannot save '{output.name}' as .xls: sheet '{sheet.Name}' uses "
-            f"{last_row} rows and {last_column} columns, but .xls holds only "
-            f"{_XLS_MAX_ROWS} rows and {_XLS_MAX_COLUMNS} columns. Everything "
-            "outside that grid would be dropped without a warning. Save as "
-            ".xlsx, .xlsm or .xlsb instead."
-        )
-        raise ValueError(msg)
 
 
 def _show_filled_rows_com(list_obj: Any, worksheet: Any, plan: TablePlan) -> None:  # noqa: ANN401

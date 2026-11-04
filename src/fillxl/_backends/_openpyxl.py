@@ -76,7 +76,7 @@ class OpenpyxlBackend:
         if ext not in _OPENPYXL_SUFFIXES:
             msg = (
                 f"File type '{ext}' is not supported by the openpyxl backend "
-                "(supported: .xlsx, .xlsm). Use engine='win32com' for .xlsb and .xls."
+                "(supported: .xlsx, .xlsm). Use engine='win32com' for .xlsb."
             )
             raise ValueError(msg)
 

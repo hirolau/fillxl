@@ -9,7 +9,7 @@ under *Feature support* below.
 
 `engine="auto"` (the default) uses `openpyxl` for `.xlsx`/`.xlsm` templates
 saved in the same format, and `win32com` when openpyxl cannot do the job
-(`.xlsb`/`.xls` templates, format conversion) and Excel is available. A format
+(`.xlsb` templates, format conversion) and Excel is available. A format
 the selected engine cannot write is refused **before the template is loaded**,
 not after the fill has run:
 
@@ -17,8 +17,12 @@ not after the fill has run:
 |---|---|---|---|---|
 | `.xlsx` → `.xlsx` | openpyxl | yes | yes | yes |
 | `.xlsm` → `.xlsm` | openpyxl (VBA kept) | yes | yes (VBA kept) | yes |
-| `.xlsx` → `.xlsm` / `.xlsb` / `.xls` | Excel if available, else an error | refused | refused | yes |
-| `.xlsb` / `.xls` → anything | Excel if available, else an error | refused | refused | yes |
+| `.xlsx` → `.xlsm` / `.xlsb` | Excel if available, else an error | refused | refused | yes |
+| `.xlsb` → anything | Excel if available, else an error | refused | refused | yes |
+
+Legacy `.xls` (BIFF8) is refused by every engine, before the template is
+opened: BIFF8 cannot hold the features fillxl exists to preserve, and reading
+it needs Excel anyway.
 
 ## Comparison
 
@@ -80,7 +84,7 @@ fill(template="tpl.xlsx", output="out.xlsx", ..., engine="openpyxl")
 
 ### Limitations
 
-- Does **not** support `.xlsb` or legacy `.xls`
+- Does **not** support `.xlsb` or legacy `.xls` (no engine supports `.xls`)
 - Drops some modern chart types (e.g., sunburst, treemap), slicers and other
   parts; `on_lossy` reports what was lost as `LossyTemplateWarning`
 - No dynamic array formula support: a template with spilled ranges loses both
@@ -122,7 +126,7 @@ dynamic arrays and their `xl/metadata.xml`, `cm`/`vm` cell metadata, slicers,
 ### Limitations
 
 - Reads and writes `.xlsx`/`.xlsm` only, and only in the same format: `.xlsb`,
-  `.xls`, encrypted workbooks and format conversion stay on `win32com`
+  encrypted workbooks and format conversion stay on `win32com`
 - Modern charts (`chartEx`) are left untouched, so they do not follow a table
   resize
 - Writes no cached formula results, and removes the ones the template stored on
@@ -187,7 +191,6 @@ The save format is inferred from the output suffix, so macros survive:
 | `.xlsx` | macro-free workbook |
 | `.xlsm` | macro-enabled workbook (keeps `vbaProject.bin`) |
 | `.xlsb` | binary workbook |
-| `.xls` | legacy workbook |
 
 Any other suffix raises `ValueError` instead of silently writing a different
 format.

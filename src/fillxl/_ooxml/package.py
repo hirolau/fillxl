@@ -90,13 +90,13 @@ class OoxmlPackage:
 
         Raises:
             ValueError: If the file is not a ZIP package (an encrypted
-                workbook, or a binary ``.xls``/``.xlsb`` file).
+                workbook, or a binary ``.xlsb`` file).
 
         """
         if not zipfile.is_zipfile(path):
             msg = (
-                f"{path} is not an OOXML (zip) workbook. Password-protected workbooks, "
-                ".xls and .xlsb files cannot be filled by the fillxl engine; use "
+                f"{path} is not an OOXML (zip) workbook. Password-protected workbooks "
+                "and .xlsb files cannot be filled by the fillxl engine; use "
                 "engine='win32com' instead."
             )
             raise ValueError(msg)

@@ -131,7 +131,7 @@ class Backend(Protocol):
 
 _KNOWN_ENGINES: frozenset[str] = frozenset(get_args(Engine))
 _OPENPYXL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
-_WIN32COM_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xlsb", ".xls"})
+_WIN32COM_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xlsb"})
 _FILLXL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
 
 
@@ -139,12 +139,38 @@ def _win32com_available() -> bool:
     return sys.platform == "win32" and importlib.util.find_spec("win32com") is not None
 
 
+_XLS_MESSAGE = (
+    "fillxl does not support .xls (Excel 97-2003) files. Open the file in Excel and "
+    "save it as .xlsx, .xlsm or .xlsb."
+)
+
+
+def reject_xls_paths(*paths: Path) -> None:
+    """Raise when any of *paths* is a ``.xls`` file.
+
+    BIFF8 cannot hold the features fillxl exists to preserve, and Excel is
+    needed to read it, so the request is refused before anything is opened.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> reject_xls_paths(Path("t.xlsx"), Path("o.xlsx"))
+        >>> reject_xls_paths(Path("t.xls"))  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: fillxl does not support .xls (Excel 97-2003) files. ... t.xls.
+
+    """
+    for path in paths:
+        if path.suffix.lower() == ".xls":
+            raise ValueError(f"{_XLS_MESSAGE} Offending path: {path}.")
+
+
 def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngine:
     """The engine that will fill *template* into *output*.
 
     ``"auto"`` picks openpyxl when it can do the job: an ``.xlsx``/``.xlsm``
     template saved in the same format.  Otherwise it picks win32com when Excel
-    automation is available (``.xlsb``/``.xls`` templates, format conversion).
+    automation is available (``.xlsb`` templates, format conversion).
 
     ``"fillxl"`` edits the OOXML package itself: no Excel, and no feature loss.
     It reads and writes ``.xlsx``/``.xlsm`` only, in the same format.
@@ -174,6 +200,7 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
         known = ", ".join(sorted(_KNOWN_ENGINES))
         msg = f"Unknown engine {engine!r}. Known engines: {known}."
         raise ValueError(msg)
+    reject_xls_paths(template, output)
     if engine == "win32com":
         _require_excel_output(output)
         return engine
@@ -216,10 +243,10 @@ def _require_excel_output(output: Path, *, engine: str = "win32com") -> None:
     if engine == "auto":
         msg = (
             f"engine='auto' chose win32com, which cannot write {what}. Use one of: "
-            ".xlsx, .xlsm, .xlsb or .xls, or name an .xlsx output to stay on openpyxl."
+            ".xlsx, .xlsm or .xlsb, or name an .xlsx output to stay on openpyxl."
         )
     else:
-        msg = f"The win32com engine cannot write {what}. Use one of: .xlsx, .xlsm, .xlsb or .xls."
+        msg = f"The win32com engine cannot write {what}. Use one of: .xlsx, .xlsm or .xlsb."
     raise ValueError(msg)
 
 
@@ -233,10 +260,10 @@ def _require_fillxl_output(template: Path, output: Path) -> None:
         Traceback (most recent call last):
             ...
         ValueError: The fillxl engine cannot write a '.xlsb' file...
-        >>> _require_fillxl_output(Path("t.xls"), Path("o.xls"))  # doctest: +ELLIPSIS
+        >>> _require_fillxl_output(Path("t.xlsb"), Path("o.xlsb"))  # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
-        ValueError: The fillxl engine cannot read a '.xls' template...
+        ValueError: The fillxl engine cannot read a '.xlsb' template...
 
     """
     template_suffix = template.suffix.lower()
@@ -244,7 +271,7 @@ def _require_fillxl_output(template: Path, output: Path) -> None:
     if template_suffix not in _FILLXL_SUFFIXES:
         msg = (
             f"The fillxl engine cannot read a '{template_suffix}' template "
-            "(it reads .xlsx and .xlsm). Use engine='win32com' for .xlsb and .xls, "
+            "(it reads .xlsx and .xlsm). Use engine='win32com' for .xlsb, "
             "or save the template as .xlsx."
         )
         raise ValueError(msg)

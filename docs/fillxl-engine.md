@@ -62,7 +62,7 @@ copied, not rebuilt.
 
 ## What it does not do
 
-- `.xlsx` and `.xlsm` only, and only in the same format: no `.xlsb`, no `.xls`,
+- `.xlsx` and `.xlsm` only, and only in the same format: no `.xlsb`,
   no encrypted workbooks, no format conversion — those stay on
   `engine="win32com"`.
 - Modern charts (`chartEx`) are left untouched, so their ranges do not follow a

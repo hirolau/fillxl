@@ -27,6 +27,7 @@ from fillxl._adapters import TabularAdapter
 from fillxl._cells import header_write_error, name_destinations, named_cell_target
 from fillxl._formats import needs_temporal_format, temporal_format
 from fillxl._formulas import (
+    CellKind,
     ColumnFormulaEvidence,
     classify_body,
     extend_table_ranges,
@@ -392,7 +393,7 @@ def _calculated_columns(
     return formulas
 
 
-def _cell_kind(sheet: SheetPart, row: int, column: int) -> Any:  # noqa: ANN401
+def _cell_kind(sheet: SheetPart, row: int, column: int) -> CellKind:
     """What a template body cell holds: a formula, a value, or nothing."""
     xml = sheet.cell(row, column)
     if xml is None:

@@ -66,6 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plan; behaviour is unchanged.
 
 ### Fixed
+- `engine="fillxl"` now inserts a missing element only where it belongs at the
+  top level. Anchor lookups ignored namespace prefixes, so a workbook without
+  `<calcPr>` could get one inserted inside an `<extLst>`, before a
+  `<x14:pivotCaches>` look-alike — invalid output. The same fix covers the
+  sheet-view anchors and the `fonts` anchor used when a number format is added.
 - `engine="win32com"` reads the tables' calculated-column definitions straight
   out of the package instead of loading the whole template into openpyxl while
   Excel already has it open. The readings are pinned against openpyxl's for

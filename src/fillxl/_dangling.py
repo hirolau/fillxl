@@ -12,7 +12,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from fillxl._charts import _unquote_sheet_name, chart_references
+from fillxl._charts import chart_references
+from fillxl._utils import unquote_sheet_name
 from fillxl._warnings import DanglingReferenceWarning, warn_user
 
 if TYPE_CHECKING:
@@ -58,7 +59,7 @@ def names_deleted_sheet(text: object, deleted: set[str]) -> bool:
     # A sheet name inside a string literal is data, not a reference.
     formula = _STRING_LITERAL.sub('""', text)
     return any(
-        _unquote_sheet_name(match.group(0)[:-1]).lower() in deleted
+        unquote_sheet_name(match.group(0)[:-1]).lower() in deleted
         for match in _SHEET_REFERENCE.finditer(formula)
     )
 

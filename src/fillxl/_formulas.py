@@ -24,7 +24,7 @@ from openpyxl.formula.tokenizer import TokenizerError
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
 
-from fillxl._utils import table_column_name
+from fillxl._utils import table_column_name, unquote_sheet_name
 from fillxl._warnings import warn_user
 
 if TYPE_CHECKING:
@@ -126,10 +126,7 @@ def a1_reference(operand: str) -> tuple[str | None, str] | None:
     prefix, refs = _split_sheet(operand)
     if not prefix:
         return None, refs
-    title = prefix[:-1]
-    if title.startswith("'") and title.endswith("'"):
-        title = title[1:-1].replace("''", "'")
-    return title, refs
+    return unquote_sheet_name(prefix[:-1]), refs
 
 
 def sole_reference(text: str) -> tuple[str | None, str] | None:
@@ -204,10 +201,7 @@ def _sheet_matches(prefix: str, sheet_title: str) -> bool:
     """
     if not prefix:
         return False
-    name = prefix[:-1]
-    if name.startswith("'") and name.endswith("'"):
-        name = name[1:-1].replace("''", "'")
-    return name.casefold() == sheet_title.casefold()
+    return unquote_sheet_name(prefix[:-1]).casefold() == sheet_title.casefold()
 
 
 def _replace_rows(refs: str, first_row: int, last_row: int) -> str:

@@ -17,7 +17,8 @@ from openpyxl.utils.escape import unescape
 from openpyxl.worksheet.worksheet import Worksheet
 
 import fillxl
-from fillxl._charts import REFERENCE_RE, _unquote_sheet_name
+from fillxl._charts import REFERENCE_RE
+from fillxl._utils import unquote_sheet_name
 
 _MISSING = object()
 _SERIES_PARTS = ("cat", "val", "xVal", "yVal")
@@ -72,7 +73,7 @@ def pytest_collection_modifyitems(
 def _normalize_references(text: str) -> str:
     """Write every sheet reference unquoted so Excel's quoting choices don't matter."""
     return REFERENCE_RE.sub(
-        lambda match: f"{_unquote_sheet_name(match['sheet'])}!{match['area']}", text
+        lambda match: f"{unquote_sheet_name(match['sheet'])}!{match['area']}", text
     )
 
 

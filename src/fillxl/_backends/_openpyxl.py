@@ -22,6 +22,7 @@ from fillxl._sheets import (
     warn_sheet_not_found,
 )
 from fillxl._tables import populate_table
+from fillxl._types import OPENPYXL_SUFFIXES
 from fillxl._validation import ColumnValidationStrategy, validate_columns
 
 if TYPE_CHECKING:
@@ -32,8 +33,6 @@ if TYPE_CHECKING:
     from fillxl._lossy import OnLossy
 
 logger = logging.getLogger(__name__)
-
-_OPENPYXL_SUFFIXES = (".xlsx", ".xlsm")
 
 
 class OpenpyxlBackend:
@@ -73,7 +72,7 @@ class OpenpyxlBackend:
         logger.debug("Loading workbook from %s", path)
 
         ext = path.suffix.lower()
-        if ext not in _OPENPYXL_SUFFIXES:
+        if ext not in OPENPYXL_SUFFIXES:
             msg = (
                 f"File type '{ext}' is not supported by the openpyxl backend "
                 "(supported: .xlsx, .xlsm). Use engine='win32com' for .xlsb."

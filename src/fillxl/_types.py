@@ -26,3 +26,9 @@ PathLike: TypeAlias = Union[str, "Path"]
 # Backend engine selection
 Engine: TypeAlias = Literal["auto", "openpyxl", "win32com", "fillxl"]
 ConcreteEngine: TypeAlias = Literal["openpyxl", "win32com", "fillxl"]
+
+# The formats each engine reads and writes, checked before a fill starts and
+# again by the backend itself, so direct backend use cannot slip past.
+OPENPYXL_SUFFIXES: frozenset[str] = frozenset({".xlsx", ".xlsm"})
+FILLXL_SUFFIXES: frozenset[str] = frozenset({".xlsx", ".xlsm"})
+WIN32COM_SUFFIXES: frozenset[str] = frozenset({".xlsx", ".xlsm", ".xlsb"})

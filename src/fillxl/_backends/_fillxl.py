@@ -22,6 +22,7 @@ from fillxl._ooxml.styles import StylesPart
 from fillxl._ooxml.workbook import WorkbookPart
 from fillxl._ooxml.worksheet import SheetStore
 from fillxl._sheets import first_remaining, require_a_visible_sheet, warn_sheet_not_found
+from fillxl._types import FILLXL_SUFFIXES
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -32,10 +33,6 @@ if TYPE_CHECKING:
     from fillxl._lossy import OnLossy
 
 logger = logging.getLogger(__name__)
-
-# Only zip-based OOXML workbooks: .xlsb is binary OOXML, and an encrypted
-# .xlsx is not a zip at all.  Both stay on engine="win32com".
-_FILLXL_SUFFIXES = (".xlsx", ".xlsm")
 
 
 class FillxlBackend:
@@ -83,7 +80,7 @@ class FillxlBackend:
 
         """
         suffix = path.suffix.lower()
-        if suffix not in _FILLXL_SUFFIXES:
+        if suffix not in FILLXL_SUFFIXES:
             msg = (
                 f"File type '{suffix}' is not supported by the fillxl engine "
                 "(supported: .xlsx, .xlsm). Use engine='win32com' for .xlsb "

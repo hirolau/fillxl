@@ -11,7 +11,13 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Any, Protocol, get_args, runtime_checkable
 
-from fillxl._types import ConcreteEngine, Engine
+from fillxl._types import (
+    FILLXL_SUFFIXES,
+    OPENPYXL_SUFFIXES,
+    WIN32COM_SUFFIXES,
+    ConcreteEngine,
+    Engine,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -130,9 +136,6 @@ class Backend(Protocol):
 
 
 _KNOWN_ENGINES: frozenset[str] = frozenset(get_args(Engine))
-_OPENPYXL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
-_WIN32COM_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xlsb"})
-_FILLXL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
 
 
 def _win32com_available() -> bool:
@@ -143,6 +146,24 @@ _XLS_MESSAGE = (
     "fillxl does not support .xls (Excel 97-2003) files. Open the file in Excel and "
     "save it as .xlsx, .xlsm or .xlsb."
 )
+
+
+def _require_known_engine(engine: str) -> None:
+    """Raise unless *engine* is one of the names :data:`Engine` allows.
+
+    Examples:
+        >>> _require_known_engine("openpyxl")
+        >>> _require_known_engine("bogus")
+        Traceback (most recent call last):
+            ...
+        ValueError: Unknown engine 'bogus'. Known engines: auto, fillxl, openpyxl, win32com.
+
+    """
+    if engine in _KNOWN_ENGINES:
+        return
+    known = ", ".join(sorted(_KNOWN_ENGINES))
+    msg = f"Unknown engine {engine!r}. Known engines: {known}."
+    raise ValueError(msg)
 
 
 def reject_xls_paths(*paths: Path) -> None:
@@ -196,10 +217,7 @@ def resolve_engine(engine: Engine, template: Path, output: Path) -> ConcreteEngi
         ValueError: The openpyxl engine cannot write a '.xlsb' file ...
 
     """
-    if engine not in _KNOWN_ENGINES:
-        known = ", ".join(sorted(_KNOWN_ENGINES))
-        msg = f"Unknown engine {engine!r}. Known engines: {known}."
-        raise ValueError(msg)
+    _require_known_engine(engine)
     reject_xls_paths(template, output)
     if engine == "win32com":
         _require_excel_output(output)
@@ -237,7 +255,7 @@ def _require_excel_output(output: Path, *, engine: str = "win32com") -> None:
 
     """
     suffix = output.suffix.lower()
-    if suffix in _WIN32COM_SUFFIXES:
+    if suffix in WIN32COM_SUFFIXES:
         return
     what = f"a '{suffix}' file" if suffix else "a file without an extension"
     if engine == "auto":
@@ -268,7 +286,7 @@ def _require_fillxl_output(template: Path, output: Path) -> None:
     """
     template_suffix = template.suffix.lower()
     output_suffix = output.suffix.lower()
-    if template_suffix not in _FILLXL_SUFFIXES:
+    if template_suffix not in FILLXL_SUFFIXES:
         msg = (
             f"The fillxl engine cannot read a '{template_suffix}' template "
             "(it reads .xlsx and .xlsm). Use engine='win32com' for .xlsb, "
@@ -288,7 +306,7 @@ def _require_fillxl_output(template: Path, output: Path) -> None:
 def _needs_excel(template: Path, output: Path) -> bool:
     """Whether openpyxl cannot turn *template* into *output*."""
     suffix = template.suffix.lower()
-    return suffix not in _OPENPYXL_SUFFIXES or output.suffix.lower() != suffix
+    return suffix not in OPENPYXL_SUFFIXES or output.suffix.lower() != suffix
 
 
 def _reject_impossible_output(template: Path, output: Path) -> None:
@@ -296,7 +314,7 @@ def _reject_impossible_output(template: Path, output: Path) -> None:
     if not _needs_excel(template, output):
         return
     suffix = template.suffix.lower()
-    if suffix not in _OPENPYXL_SUFFIXES:
+    if suffix not in OPENPYXL_SUFFIXES:
         msg = (
             f"The openpyxl engine cannot read a '{suffix}' template "
             "(it reads .xlsx and .xlsm). Use engine='win32com', which needs Windows "
@@ -326,10 +344,7 @@ def get_backend(engine: Engine) -> Backend:
         ValueError: If the engine name is unknown.
 
     """
-    if engine not in _KNOWN_ENGINES:
-        known = ", ".join(sorted(_KNOWN_ENGINES))
-        msg = f"Unknown engine {engine!r}. Known engines: {known}."
-        raise ValueError(msg)
+    _require_known_engine(engine)
 
     if engine in ("auto", "openpyxl"):
         from fillxl._backends._openpyxl import OpenpyxlBackend

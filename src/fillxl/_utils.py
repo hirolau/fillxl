@@ -56,6 +56,26 @@ def col_to_excel(col: int) -> str:
     return result
 
 
+def unquote_sheet_name(text: str) -> str:
+    """*text* without the quotes Excel puts around a sheet name.
+
+    Excel quotes a name that is not a plain word and doubles a quote inside
+    it, so ``'Bob''s Data'`` is the sheet ``Bob's Data``.
+
+    Examples:
+        >>> unquote_sheet_name("'My Sheet'")
+        'My Sheet'
+        >>> unquote_sheet_name("'It''s'")
+        "It's"
+        >>> unquote_sheet_name("Data")
+        'Data'
+
+    """
+    if len(text) >= 2 and text.startswith("'") and text.endswith("'"):
+        return text[1:-1].replace("''", "'")
+    return text
+
+
 def workbook_uses_1904(workbook: Workbook) -> bool:
     """Whether *workbook* counts days from 1904-01-01 (the Mac date system).
 

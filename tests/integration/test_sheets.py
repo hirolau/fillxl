@@ -10,7 +10,7 @@ import openpyxl
 import pytest
 from openpyxl.workbook.protection import WorkbookProtection
 
-from fillxl import Engine, FillXLConfig, FillXLWarning, fill
+from fillxl import DanglingReferenceWarning, Engine, FillXLConfig, FillXLWarning, fill
 from tests._engines import ENGINES, _fill_output
 from tests.ooxml._patch import patch_part
 from tests.parity.builders import chart_sheet_first_template, sheets_template
@@ -234,6 +234,43 @@ def test_deleting_an_unreferenced_sheet_says_nothing(tmp_path: Path) -> None:
             tmp_path / "out.xlsx",
             hide_underscore_sheets=False,
             delete_sheets=["Nothing"],
+        )
+
+    assert not [item for item in caught if item.category is DanglingReferenceWarning]
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_deleting_a_sheet_that_a_report_formula_reads_warns_with_every_engine(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    """Excel turns the reference into ``#REF!``; the fill has to say so."""
+    template = _report_that_reads_raw_data(tmp_path / "template.xlsx")
+
+    with pytest.warns(DanglingReferenceWarning, match="Report!A1"):
+        _fill_output(
+            template,
+            tmp_path / "out.xlsx",
+            engine,
+            config=FillXLConfig(hide_underscore_sheets=False, delete_sheets=["RawData"]),
+        )
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_deleting_a_sheet_nothing_refers_to_is_silent(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    """A sheet nobody reads from is deleted without a word."""
+    template = sheets_template(tmp_path / "template.xlsx", "Report", "Notes", "Old")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _fill_output(
+            template,
+            tmp_path / "out.xlsx",
+            engine,
+            config=FillXLConfig(hide_underscore_sheets=False, delete_sheets=["Old"]),
         )
 
     assert not [item for item in caught if item.category is DanglingReferenceWarning]

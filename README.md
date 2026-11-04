@@ -196,8 +196,8 @@ the saved file must contain computed values.
 - A totals row that holds an A1 formula (`=SUM(B2:B2)`) is resized with the
   body, like a formula anywhere else that tracked the table.
 - `delete_sheets` does not rewrite formulas, charts, names or pivots that point
-  at the deleted sheet; fillxl warns with `DanglingReferenceWarning` because
-  Excel shows `#REF!` there.
+  at the deleted sheet; every engine warns with `DanglingReferenceWarning`
+  because Excel shows `#REF!` there.
 - `hide_underscore_sheets` is **on** by default, so a sheet named `_data` is
   hidden unless you opt out. Hiding or deleting every sheet raises, because
   Excel requires one visible sheet — set `hide_underscore_sheets=False` for a

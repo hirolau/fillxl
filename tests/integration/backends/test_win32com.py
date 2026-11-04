@@ -738,3 +738,181 @@ class TestWin32ComOverflowGuard:
             assert wb["Data"]["A10"].value == "row9"
         finally:
             wb.close()
+
+# -------------------------------------------------------------------------------
+# Dangling references before a delete (CI-safe, fake COM)
+# -------------------------------------------------------------------------------
+
+
+class _FakeAreas:
+    """The ``Areas`` collection of a multi-area ``SpecialCells`` result."""
+
+    def __init__(self, *areas: object) -> None:
+        self._areas = list(areas)
+
+    @property
+    def Count(self) -> int:  # noqa: N802
+        return len(self._areas)
+
+    def __call__(self, index: int) -> object:
+        return self._areas[index - 1]
+
+
+class _FakeArea:
+    def __init__(self, formula: object, row: int, column: int) -> None:
+        self.Formula = formula
+        self.Row = row
+        self.Column = column
+
+
+class _FakeSpecialCells:
+    def __init__(self, *areas: object) -> None:
+        self.Areas = _FakeAreas(*areas)
+
+
+class _FakeUsedRange:
+    def __init__(self, *areas: object, raising: bool = False) -> None:
+        self._areas = areas
+        self._raising = raising
+
+    def SpecialCells(self, kind: int) -> _FakeSpecialCells:  # noqa: N802
+        if self._raising:
+            raise OSError("no formulas here")
+        return _FakeSpecialCells(*self._areas)
+
+
+class _FakeFormulaSheet:
+    def __init__(self, used_range: _FakeUsedRange) -> None:
+        self.UsedRange = used_range
+
+
+def test_formula_locations_name_the_sheet_and_cell_without_dollars() -> None:
+    """Every formula that reads the deleted sheet is reported as Sheet!A1."""
+    from fillxl._backends._win32com import _formula_locations
+
+    sheet = _FakeFormulaSheet(
+        _FakeUsedRange(
+            _FakeArea(
+                (("=SUM(RawData!B2:B2)", "=SUM(Other!B2)"), ("ok", "=RawData!A1*2")),
+                row=4,
+                column=3,
+            ),
+        ),
+    )
+
+    assert _formula_locations(sheet, "Report", {"rawdata"}) == ["Report!C4", "Report!D5"]
+
+
+def test_formula_locations_are_empty_when_the_sheet_has_no_formulas() -> None:
+    """``SpecialCells`` raises for a sheet without formulas; that is not an error."""
+    from fillxl._backends._win32com import _formula_locations
+
+    sheet = _FakeFormulaSheet(_FakeUsedRange(raising=True))
+
+    assert _formula_locations(sheet, "Report", {"rawdata"}) == []
+
+
+def test_formula_locations_read_a_single_cell_formula_as_a_string() -> None:
+    """A one-cell area returns its formula as a plain string, not a tuple."""
+    from fillxl._backends._win32com import _formula_locations
+
+    sheet = _FakeFormulaSheet(_FakeUsedRange(_FakeArea("=RawData!A1", row=2, column=2)))
+
+    assert _formula_locations(sheet, "Report", {"rawdata"}) == ["Report!B2"]
+
+
+class _FakeSeries:
+    def __init__(self, formula: object) -> None:
+        self.Formula = formula
+
+
+class _FakeSeriesCollection:
+    def __init__(self, *series: object) -> None:
+        self._series = list(series)
+
+    @property
+    def Count(self) -> int:  # noqa: N802
+        return len(self._series)
+
+    def __call__(self, index: int) -> object:
+        return self._series[index - 1]
+
+
+class _FakeChart:
+    def __init__(self, *series: object) -> None:
+        self._series = _FakeSeriesCollection(*series)
+
+    def SeriesCollection(self) -> _FakeSeriesCollection:  # noqa: N802
+        return self._series
+
+
+def test_a_chart_that_reads_the_deleted_sheet_is_noticed() -> None:
+    """A series formula names the sheet like any other formula."""
+    from fillxl._backends._win32com import _chart_mentions
+
+    chart = _FakeChart(_FakeSeries("=SERIES(,RawData!$A$2:$A$4,1)"))
+
+    assert _chart_mentions(chart, {"rawdata"}) is True
+
+
+def test_a_modern_chart_without_a_series_formula_does_not_crash_the_check() -> None:
+    """A ``chartEx`` series has no SERIES() formula; Excel handles its sources."""
+    from fillxl._backends._win32com import _chart_mentions
+
+    class _NoFormula:
+        @property
+        def Formula(self) -> str:  # noqa: N802
+            raise AttributeError("no formula on a modern chart")
+
+    assert _chart_mentions(_FakeChart(_NoFormula()), {"rawdata"}) is False
+
+
+class _FakePivot:
+    def __init__(self, source: object) -> None:
+        self._source = source
+
+    def PivotCache(self) -> object:  # noqa: N802
+        source = self._source
+
+        class _Cache:
+            SourceData = source
+
+        return _Cache()
+
+
+class _FakePivotTables:
+    def __init__(self, *pivots: object) -> None:
+        self._pivots = list(pivots)
+
+    @property
+    def Count(self) -> int:  # noqa: N802
+        return len(self._pivots)
+
+    def __call__(self, index: int) -> object:
+        return self._pivots[index - 1]
+
+
+class _FakePivotSheet:
+    def __init__(self, *pivots: object) -> None:
+        self._pivots = _FakePivotTables(*pivots)
+
+    def PivotTables(self) -> _FakePivotTables:  # noqa: N802
+        return self._pivots
+
+
+def test_a_pivot_built_on_the_deleted_sheet_is_noticed() -> None:
+    """``SourceData`` is R1C1 text, which still spells the sheet name."""
+    from fillxl._backends._win32com import _pivot_mentions
+
+    sheet = _FakePivotSheet(_FakePivot("'RawData'!R1C1:R10C3"))
+
+    assert _pivot_mentions(sheet, {"rawdata"}) is True
+
+
+def test_a_pivot_built_on_a_table_is_not_mistaken_for_a_sheet_reference() -> None:
+    """A table source names no sheet, so nothing is reported."""
+    from fillxl._backends._win32com import _pivot_mentions
+
+    sheet = _FakePivotSheet(_FakePivot("Sales"))
+
+    assert _pivot_mentions(sheet, {"rawdata"}) is False

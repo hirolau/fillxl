@@ -149,7 +149,7 @@ def warn_dangling_references(deleted: Sequence[str], locations: Sequence[str]) -
     listed = ", ".join(shown) + (f" and {remaining} more" if remaining else "")
     warn_user(
         f"Deleted {noun} {sheets}, which {verb} still referenced by: {listed}. "
-        "openpyxl does not rewrite references, so Excel shows #REF! there. "
+        "References to a deleted sheet show #REF! in Excel. "
         "Update or remove those formulas, charts, names and pivots, or keep the sheet.",
         DanglingReferenceWarning,
     )

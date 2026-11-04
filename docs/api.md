@@ -190,11 +190,11 @@ typo cannot delete the wrong sheet.
 - `veryHidden` sheets stay `veryHidden`, and chart sheets can be deleted or
   activated.
 - `delete_sheets` removes the sheet and nothing else: formulas, chart series,
-  defined names and pivot caches that refer to it still name it. The openpyxl
-  engine cannot rewrite them, so it warns with `DanglingReferenceWarning`
-  instead of shipping a report that opens with `#REF!`. Update those references
-  yourself, or keep the sheet (`engine="win32com"` lets Excel rewrite them to
-  `#REF!` in place).
+  defined names and pivot caches that refer to it still name it, and Excel shows
+  `#REF!` where they do. Every engine warns with `DanglingReferenceWarning` —
+  `win32com` included, where the warning is based on the workbook's state
+  before Excel deletes the sheet. Update those references yourself, or keep the
+  sheet.
 
 ### Defined names
 

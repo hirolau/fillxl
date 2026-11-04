@@ -17,11 +17,13 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
 
 from fillxl._adapters import TabularAdapter
 from fillxl._cells import header_write_error, name_destinations, named_cell_target
 from fillxl._charts import TableChangeSpecs, split_formula_arguments, update_reference_text
+from fillxl._dangling import names_deleted_sheet, warn_dangling_references
 from fillxl._formats import needs_temporal_format, temporal_format, temporal_format_runs
 from fillxl._formulas import (
     BodyState,
@@ -69,6 +71,7 @@ _XL_FILL_FORMATS = 3
 _MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
 _RPC_E_CHANGED_MODE = -2147417850
 _XL_CALCULATION_MANUAL = -4135
+_XL_CELL_TYPE_FORMULAS = -4123
 
 _OOXML_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xltx", ".xltm"})
 
@@ -518,6 +521,9 @@ class Win32ComBackend:
             return
         visible = self._visible_sheet_names()
         require_a_visible_sheet(visible, present, "Deleting")
+        # Excel rewrites the references to #REF! as it deletes, so the
+        # locations have to be collected while they still read the sheet.
+        locations = self._dangling_locations(present)
         if str(self._workbook.ActiveSheet.Name) in present:
             self._workbook.Sheets(first_remaining(visible, present)).Activate()
         for name in present:
@@ -527,6 +533,35 @@ class Win32ComBackend:
                 msg = f"Could not delete sheet '{name}': {exc}"
                 raise RuntimeError(msg) from exc
             logger.debug("Deleted sheet '%s'", name)
+        warn_dangling_references(present, locations)
+
+    def _dangling_locations(self, deleted: Sequence[str]) -> list[str]:
+        """Locations on the remaining sheets that still name a sheet in *deleted*."""
+        names = {name.lower() for name in deleted}
+        found: list[str] = []
+        for sheet in self._workbook.Worksheets:
+            title = str(sheet.Name)
+            if title.lower() in names:
+                continue
+            found.extend(_formula_locations(sheet, title, names))
+            try:
+                chart_objects = sheet.ChartObjects()
+            except Exception:  # pragma: no cover - every worksheet has the collection
+                chart_objects = None
+            if chart_objects is not None and any(
+                _chart_mentions(chart_objects(index).Chart, names)
+                for index in range(1, int(chart_objects.Count) + 1)
+            ):
+                found.append(f"a chart on {title!r}")
+            if _pivot_mentions(sheet, names):
+                found.append(f"a pivot table on {title!r}")
+        for chart_sheet in self._workbook.Charts:
+            if _chart_mentions(chart_sheet, names):
+                found.append(f"a chart on {str(chart_sheet.Name)!r}")
+        for defined in self._workbook.Names:
+            if names_deleted_sheet(str(defined.RefersTo), names):
+                found.append(f"the defined name {str(defined.Name)!r}")
+        return found
 
     def set_active_sheet(self, name: str) -> None:
         """Set the active (displayed) sheet."""
@@ -635,6 +670,72 @@ class Win32ComBackend:
 
 
 # ── Standalone helpers ──────────────────────────────────────────────────────
+
+
+def _formula_locations(sheet: Any, title: str, deleted: set[str]) -> list[str]:  # noqa: ANN401
+    """``Sheet!A1`` for every formula of *sheet* that names a deleted sheet.
+
+    ``SpecialCells`` raises when the sheet holds no formula at all.  Reading
+    ``.Formula`` per area gives a 2-D tuple, which is much faster than asking
+    Excel about one cell at a time.
+    """
+    try:
+        cells = sheet.UsedRange.SpecialCells(_XL_CELL_TYPE_FORMULAS)
+    except Exception:
+        return []
+    found: list[str] = []
+    areas = cells.Areas
+    for index in range(1, int(areas.Count) + 1):
+        area = areas(index)
+        values = area.Formula
+        if isinstance(values, str):
+            values = ((values,),)
+        top, left = int(area.Row), int(area.Column)
+        for row_offset, row_values in enumerate(values):
+            for column_offset, value in enumerate(row_values):
+                if names_deleted_sheet(value, deleted):
+                    found.append(
+                        f"{title}!{get_column_letter(left + column_offset)}{top + row_offset}",
+                    )
+    return found
+
+
+def _chart_mentions(chart: Any, deleted: set[str]) -> bool:  # noqa: ANN401
+    """Whether any series of *chart* reads from a deleted sheet."""
+    try:
+        series = chart.SeriesCollection()
+    except Exception:  # pragma: no cover - a chart without a series collection
+        return False
+    for index in range(1, int(series.Count) + 1):
+        try:
+            formula = str(series(index).Formula)
+        except Exception:
+            # A modern (chartEx) series has no SERIES() formula; Excel keeps
+            # its sources itself and rewrites them on save.
+            continue
+        if names_deleted_sheet(formula, deleted):
+            return True
+    return False
+
+
+def _pivot_mentions(sheet: Any, deleted: set[str]) -> bool:  # noqa: ANN401
+    """Whether a pivot table on *sheet* reads from a deleted sheet.
+
+    ``SourceData`` is an R1C1 string that still spells the sheet as
+    ``RawData!``, which is what the shared matcher understands.
+    """
+    try:
+        pivots = sheet.PivotTables()
+    except Exception:  # pragma: no cover - every worksheet has the collection
+        return False
+    for index in range(1, int(pivots.Count) + 1):
+        try:
+            source = pivots(index).PivotCache().SourceData
+        except Exception:
+            continue
+        if names_deleted_sheet(source, deleted):
+            return True
+    return False
 
 
 def _com_is_visible(sheet: Any) -> bool:  # noqa: ANN401

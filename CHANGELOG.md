@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- `engine="win32com"` now warns with `DanglingReferenceWarning` when
+  `delete_sheets` removes a sheet that formulas, charts, pivots or defined
+  names still read, as the other engines already did. The locations are
+  collected before Excel deletes the sheet, because Excel rewrites them to
+  `#REF!` in place. The warning text no longer mentions openpyxl: references to
+  a deleted sheet show `#REF!` in Excel, whichever engine produced the file.
 - `engine="fillxl"` now updates modern charts (`chartEx`: waterfall,
   histogram, funnel, …) and sparklines when a table is resized. Their sources
   live outside cell formulas — `<cx:f>` in the chart part and `<xm:f>` in the

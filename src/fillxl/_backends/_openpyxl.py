@@ -122,7 +122,7 @@ class OpenpyxlBackend:
         # expensive data (e.g. a DuckDB relation) is only read once.
         adapter = TabularAdapter(data)
 
-        return populate_table(
+        spec = populate_table(
             workbook,
             name,
             adapter,
@@ -132,14 +132,11 @@ class OpenpyxlBackend:
             escape_formulas=config.escape_formulas,
             column_validation_strategy=config.column_validation_strategy,
         )
+        self._update_charts(spec)
+        return spec
 
-    def update_charts(self, spec: TableChangeSpecs) -> None:
-        """Update chart data ranges after a table resize.
-
-        Args:
-            spec: The table dimension change to reflect in charts.
-
-        """
+    def _update_charts(self, spec: TableChangeSpecs) -> None:
+        """Point the charts that showed the table at its new rows."""
         update_chart_data_ranges(spec, self._require_workbook())
 
     def set_pivot_refresh(self) -> None:

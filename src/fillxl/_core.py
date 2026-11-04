@@ -147,8 +147,7 @@ def fill(
                 for name, value in named_values.items():
                     backend.fill_named_cell(name, value, cfg)
                 for table_name, data in table_data.items():
-                    spec = backend.fill_table(table_name, data, cfg)
-                    backend.update_charts(spec)
+                    backend.fill_table(table_name, data, cfg)
                 if cfg.refresh_pivot_tables:
                     backend.set_pivot_refresh()
                 if cfg.hide_underscore_sheets:

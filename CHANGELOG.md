@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Changed
+- Each backend now updates its charts inside `fill_table`, so a fill can no
+  longer resize a table and leave the charts behind by forgetting a second
+  call. `update_charts` is gone from the `Backend` protocol; the engines keep
+  the chart code as a private helper.
 - Hiding, deleting and activating a sheet now share one set of planners in
   `fillxl._sheets` (`plan_hide`, `plan_delete`, `plan_activate`), so the three
   engines cannot drift apart on which sheet is refused, which one becomes

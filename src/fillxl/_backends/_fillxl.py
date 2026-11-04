@@ -145,15 +145,12 @@ class FillxlBackend:
 
         """
         package, workbook, sheets, styles = self._require_session()
-        return fill_table(package, workbook, name, data, config, sheets=sheets, styles=styles)
+        spec = fill_table(package, workbook, name, data, config, sheets=sheets, styles=styles)
+        self._update_charts(spec)
+        return spec
 
-    def update_charts(self, spec: TableChangeSpecs) -> None:
-        """Update chart data ranges after a table resize.
-
-        Args:
-            spec: The table dimension change to reflect in charts.
-
-        """
+    def _update_charts(self, spec: TableChangeSpecs) -> None:
+        """Point the charts that showed the table at its new rows."""
         package, _ = self._require_workbook()
         update_chart_references(package, spec)
 

@@ -72,16 +72,8 @@ class Backend(Protocol):
 
         Returns:
             A :class:`TableChangeSpecs` describing the table's old and new
-            dimensions (so chart references can be updated).
-
-        """
-        ...
-
-    def update_charts(self, spec: TableChangeSpecs) -> None:
-        """Update chart data ranges after a table resize.
-
-        Args:
-            spec: The table dimension change to reflect in charts.
+            dimensions.  The charts that follow the table have already been
+            updated by the time this returns.
 
         """
         ...

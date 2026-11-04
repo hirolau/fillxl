@@ -14,7 +14,6 @@ import pytest
 
 from fillxl._backend import Backend
 from fillxl._backends._openpyxl import OpenpyxlBackend
-from fillxl._charts import TableChangeSpecs
 
 
 class TestBackendProtocol:
@@ -22,8 +21,8 @@ class TestBackendProtocol:
 
     def test_backend_protocol_defines_the_full_interface(self) -> None:
         """The Backend protocol has load, fill_named_cell, fill_table,
-        update_charts, set_pivot_refresh, hide_sheets, delete_sheets,
-        set_active_sheet, save, and close.
+        set_pivot_refresh, hide_sheets, delete_sheets, set_active_sheet,
+        save, and close — a table fill updates the charts itself.
         """
         from fillxl._backend import Backend
 
@@ -31,7 +30,6 @@ class TestBackendProtocol:
             "load",
             "fill_named_cell",
             "fill_table",
-            "update_charts",
             "set_pivot_refresh",
             "hide_sheets",
             "delete_sheets",
@@ -109,11 +107,9 @@ class TestOpenpyxlBackendRuntimeErrorGuards:
         with pytest.raises(RuntimeError, match="No workbook loaded"):
             backend.fill_table("test", [], FillXLConfig())
 
-    def test_update_charts_raises_when_not_loaded(self) -> None:
-        """Calling update_charts before load raises RuntimeError."""
-        backend = OpenpyxlBackend()
-        with pytest.raises(RuntimeError, match="No workbook loaded"):
-            backend.update_charts(TableChangeSpecs("Sheet1", 1, 1, 2, 2, 3))
+    def test_a_chart_update_is_not_part_of_the_public_interface(self) -> None:
+        """Charts follow the table inside fill_table; there is nothing to call."""
+        assert not hasattr(OpenpyxlBackend, "update_charts")
 
     def test_set_pivot_refresh_raises_when_not_loaded(self) -> None:
         """Calling set_pivot_refresh before load raises RuntimeError."""

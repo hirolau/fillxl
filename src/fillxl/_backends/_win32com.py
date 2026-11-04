@@ -408,16 +408,14 @@ class Win32ComBackend:
         # ListObject rewrites them itself.  Verified: Excel does not insert
         # rows (content below stays put), it moves the references.  The
         # engines that write into empty cells cannot, and warn instead.
-        return plan.change_spec(str(worksheet.Name))
+        spec = plan.change_spec(str(worksheet.Name))
+        self._update_charts(spec)
+        return spec
 
-    def update_charts(self, spec: TableChangeSpecs) -> None:
+    def _update_charts(self, spec: TableChangeSpecs) -> None:
         """Point chart series that show the resized table at its new rows.
 
         Covers charts embedded in worksheets and charts on their own chart sheet.
-
-        Args:
-            spec: The table dimension change to reflect in charts.
-
         """
         self._ensure_workbook()
         for chart in self._iter_charts():

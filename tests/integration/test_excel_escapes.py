@@ -109,7 +109,6 @@ def _read_value(app: Any, path: Path, cell: str) -> object:  # noqa: ANN401
 def test_text_that_looks_like_an_excel_escape_is_written_as_typed(
     engine: Engine,
     tmp_path: Path,
-
 ) -> None:
     """``a_x0041_b`` must not reach Excel as ``aAb``."""
     template = _template(tmp_path / "template.xlsx")
@@ -133,7 +132,6 @@ def test_text_that_looks_like_an_excel_escape_is_written_as_typed(
 def test_named_text_that_looks_like_an_excel_escape_is_written_as_typed(
     engine: Engine,
     tmp_path: Path,
-
 ) -> None:
     """The same rule for a named cell."""
     template = _named_template(tmp_path / "template.xlsx")

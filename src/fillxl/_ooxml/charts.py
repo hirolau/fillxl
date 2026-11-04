@@ -123,8 +123,12 @@ def _rewrite_chart_ex_part(text: str, spec: TableChangeSpecs) -> tuple[str, int]
             + xmltext.replace_element_text(formula.group(0), "f", updated)
             + block[formula.end() :]
         )
-        count = point_count(updated) if match.group("kind") == "numDim" else point_count_rows(
-            updated,
+        count = (
+            point_count(updated)
+            if match.group("kind") == "numDim"
+            else point_count_rows(
+                updated,
+            )
         )
         return _CHART_EX_LEVEL.sub(
             lambda level: xmltext.set_tag_attribute(level.group(0), "ptCount", str(count)),

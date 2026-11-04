@@ -739,6 +739,7 @@ class TestWin32ComOverflowGuard:
         finally:
             wb.close()
 
+
 # -------------------------------------------------------------------------------
 # Dangling references before a delete (CI-safe, fake COM)
 # -------------------------------------------------------------------------------

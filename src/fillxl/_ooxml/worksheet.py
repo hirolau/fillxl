@@ -793,14 +793,14 @@ class SheetPart:
     ) -> list[tuple[str, str]]:
         """Resize conditional-formatting areas that track the table's height.
 
-        See :func:`fillxl._tables.cf_range_tracks_table` for the rule.  The
+        See :func:`fillxl._tables.range_tracks_table` for the rule.  The
         element's ``sqref`` is the only thing rewritten inside it.
 
         Returns:
             ``(old sqref, new sqref)`` for every changed block.
 
         """
-        from fillxl._tables import cf_range_tracks_table
+        from fillxl._tables import range_tracks_table
 
         changes: list[tuple[str, str]] = []
 
@@ -823,7 +823,7 @@ class SheetPart:
                 except ValueError:  # pragma: no cover - Excel writes valid ranges
                     resized.append(area)
                     continue
-                if cf_range_tracks_table(
+                if range_tracks_table(
                     cell_range,
                     table_start_column=table_start_column,
                     table_end_column=table_end_column,

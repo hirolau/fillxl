@@ -1254,8 +1254,8 @@ def _extend_conditional_formatting_com(
     old_data_last_row: int,
     last_data_row: int,
 ) -> None:
-    """Resize CF ranges that track the table (see :func:`cf_range_tracks_table`)."""
-    from fillxl._tables import cf_range_tracks_table
+    """Resize CF ranges that track the table (see :func:`range_tracks_table`)."""
+    from fillxl._tables import range_tracks_table
 
     conditions = worksheet.Cells.FormatConditions
     for index in range(1, conditions.Count + 1):
@@ -1271,7 +1271,7 @@ def _extend_conditional_formatting_com(
                 max_col=area.Column + area.Columns.Count - 1,
                 max_row=area.Row + area.Rows.Count - 1,
             )
-            if cf_range_tracks_table(
+            if range_tracks_table(
                 bounds,
                 table_start_column=start_col,
                 table_end_column=end_col,

@@ -393,6 +393,23 @@ def test_excel_resizes_the_pivot_source_itself(tmp_path: Path, pivot_template: P
     assert _pivot_source(output) == ("Sales Data", "A1:E7")
 
 
+@pytest.mark.excel
+def test_excel_resizes_the_validation_list_source_itself(tmp_path: Path) -> None:
+    """The last checkbox in the Excel column: a dropdown over the body follows it."""
+    template = _table_template(tmp_path / "template.xlsx")
+    workbook = openpyxl.load_workbook(template)
+    worksheet = workbook["Data"]
+    validation = DataValidation(type="list", formula1="Data!$A$2:$A$2", allow_blank=True)
+    worksheet.add_data_validation(validation)
+    validation.add("C2")
+    workbook.save(template)
+    workbook.close()
+
+    output = _fill_output(template, tmp_path / "out.xlsx", "win32com", tables={"Sales": ROWS})
+
+    assert _first_validation_formula(output) == "$A$2:$A$3"
+
+
 @pytest.mark.parametrize("engine", ALL_ENGINES)
 def test_a_name_inside_the_table_is_left_alone(engine: Engine, tmp_path: Path) -> None:
     """A single named cell is not a body-wide range, so there is nothing stale."""

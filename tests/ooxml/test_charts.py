@@ -18,6 +18,8 @@ from openpyxl.chart.error_bar import ErrorBars
 from openpyxl.chart.series import SeriesLabel
 
 from fillxl import fill
+from fillxl._charts import TableChangeSpecs
+from fillxl._ooxml.charts import _rewrite_part
 from tests.ooxml._build import body_rows, table_template
 from tests.ooxml._patch import part_text
 
@@ -59,6 +61,34 @@ def test_custom_error_bars_follow_the_table_when_it_grows(tmp_path: Path) -> Non
     chart = part_text(output, CHART_PART)
     assert _reference(chart, "plus") == "Data!$C$2:$C$5"
     assert _reference(chart, "minus") == "Data!$C$2:$C$5"
+
+
+def test_a_self_closing_data_source_does_not_reach_into_the_next_series() -> None:
+    """``<c:cat/>`` has no content, so the next ``</c:cat>`` is another series'."""
+    chart = (
+        "<c:chartSpace><c:chart><c:plotArea><c:barChart>"
+        '<c:ser><c:idx val="0"/><c:cat/>'
+        "<c:val><c:numRef><c:f>Data!$C$2:$C$2</c:f>"
+        '<c:numCache><c:ptCount val="1"/></c:numCache></c:numRef></c:val></c:ser>'
+        '<c:ser><c:idx val="1"/>'
+        "<c:tx><c:strRef><c:f>Data!$C$2</c:f></c:strRef></c:tx>"
+        "<c:cat><c:strRef><c:f>Other!$A$1:$A$2</c:f>"
+        '<c:strCache><c:ptCount val="2"/></c:strCache></c:strRef></c:cat>'
+        "<c:val><c:numRef><c:f>Other!$B$1:$B$2</c:f>"
+        '<c:numCache><c:ptCount val="2"/></c:numCache></c:numRef></c:val></c:ser>'
+        "</c:barChart></c:plotArea></c:chart></c:chartSpace>"
+    )
+    spec = TableChangeSpecs("Data", 1, 3, 3, 2, 5)
+
+    updated, count = _rewrite_part(chart, spec)
+
+    assert count == 1
+    assert "Data!$C$2:$C$5" in updated
+    assert _series(updated)[1] == _series(chart)[1]
+
+
+def _series(chart_xml: str) -> list[str]:
+    return re.findall(r"<c:ser>.*?</c:ser>", chart_xml, re.S)
 
 
 def _reference(chart_xml: str, element: str) -> str:

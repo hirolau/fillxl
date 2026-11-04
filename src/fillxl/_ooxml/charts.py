@@ -33,9 +33,13 @@ _REFERENCE_BLOCK = re.compile(
     rf"<{_TAG}(?P<kind>strRef|numRef|multiLvlStrRef)\b[^>]*?(?:/>|>.*?</{_TAG}(?P=kind)>)",
     re.S,
 )
+# The lazy ``[^>]*?`` lets the ``/>`` alternative win on a self-closing
+# ``<c:cat/>``; a greedy ``[^>]*`` would swallow the ``/``, take the ``>``
+# branch and run on to the next series' closing tag, rewriting references
+# that belong to it.
 _DATA_SOURCE = re.compile(
-    rf"<{_TAG}(?P<source>cat|val|xVal|yVal|bubbleSize|plus|minus)\b[^>]*>"
-    rf".*?</{_TAG}(?P=source)>",
+    rf"<{_TAG}(?P<source>cat|val|xVal|yVal|bubbleSize|plus|minus)\b[^>]*?"
+    rf"(?:/>|>.*?</{_TAG}(?P=source)>)",
     re.S,
 )
 _FORMULA = xmltext.element_re("f")

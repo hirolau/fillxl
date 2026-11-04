@@ -258,7 +258,8 @@ def check_lossy(
     else:
         msg = (
             f"The {engine} engine did not preserve these template features: {features}. "
-            "Use engine='win32com' to keep them, or set on_lossy='ignore'."
+            "Use engine='fillxl' to keep them without Excel, or engine='win32com' if "
+            "calculated values are also needed; set on_lossy='ignore' to stop this report."
         )
     _apply_lossy_policy(msg, policy)
 

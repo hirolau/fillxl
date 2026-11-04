@@ -80,27 +80,27 @@ matter, and every format produces the same workbook.
 
 ## Choosing an engine
 
-`engine="auto"` (the default) picks the engine that can do the job:
+Three engines are available. `engine="auto"` (the default) picks one; pass
+`engine=` to choose explicitly.
 
-| Template → output | Engine used |
-|-------------------|-------------|
-| `.xlsx` → `.xlsx`, `.xlsm` → `.xlsm` | `openpyxl` (no Excel needed) |
-| `.xlsb` template, or a format conversion | `win32com` when Excel is available |
-| anything else, without Excel | `openpyxl`, whose error says what is missing |
+| | `openpyxl` | `fillxl` | `win32com` |
+|---|---|---|---|
+| Runs on | Any OS | Any OS | Windows with Excel |
+| Needs Excel | No | No | Yes |
+| Keeps modern features (dynamic arrays, slicers, chartEx, rich data…) | No; losses are reported via `on_lossy` | Yes | Yes |
+| Formula results in the saved file | None; Excel recalculates on open | None; cached results are cleared and Excel recalculates on open | Yes, calculated by Excel |
+| Pivot tables | Marked to refresh on open | Marked to refresh on open | Refreshed now |
+| Formats | `.xlsx` → `.xlsx`, `.xlsm` → `.xlsm` | Same as openpyxl | `.xlsx`, `.xlsm`, `.xlsb`, with conversion between them |
+| Status | Stable | Experimental, opt-in | Stable |
 
-> **`.xls` (Excel 97-2003) is no longer supported.** No engine reads or writes
-> it: BIFF8 cannot hold the features fillxl exists to preserve, and reading it
-> needs Excel anyway. A fill whose template or output ends in `.xls` is refused
-> before anything is opened. Open the file in Excel and save it as `.xlsx`,
-> `.xlsm` or `.xlsb`.
-
-Three engines are available, and `engine=` selects one explicitly:
-
-| Engine | Needs Excel | Keeps spilled arrays and everything else |
-|--------|:---:|---|
-| `openpyxl` (default) | no | drops parts the object model cannot hold |
-| `fillxl` (experimental) | no | **yes** — edits the OOXML package, never rewrites what it does not understand |
-| `win32com` | yes | yes (Windows, Excel required) |
+- On Linux or in CI with a simple template: use `"auto"` (it picks `openpyxl`).
+- On Linux with modern features in the template: use `engine="fillxl"`. The
+  file opens correctly in Excel. Tools that cannot calculate (pandas reading
+  the output, previewers) see blank formula results.
+- When the saved file must contain calculated values, or for `.xlsb` or format
+  conversion: use `engine="win32com"`.
+- What `"auto"` does, exactly: `openpyxl`, unless Excel is required and
+  available. It never picks `fillxl`.
 
 `openpyxl` runs anywhere; `win32com` drives Microsoft Excel on Windows (pywin32
 installs with fillxl there) and keeps what openpyxl drops (modern charts,
@@ -111,6 +111,12 @@ only the parts a fill has to change. All engines write the same values for the
 same template and data; the
 [Backends](https://hirolau.github.io/fillxl/backends/) page lists what still
 differs.
+
+> **`.xls` (Excel 97-2003) is no longer supported.** No engine reads or writes
+> it: BIFF8 cannot hold the features fillxl exists to preserve, and reading it
+> needs Excel anyway. A fill whose template or output ends in `.xls` is refused
+> before anything is opened. Open the file in Excel and save it as `.xlsx`,
+> `.xlsm` or `.xlsb`.
 
 > **`engine="fillxl"` is experimental and opt-in.** `engine="auto"` never
 > selects it, so a fill only uses it when you ask for it. It keeps spilled

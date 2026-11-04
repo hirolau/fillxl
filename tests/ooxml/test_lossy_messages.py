@@ -1,7 +1,8 @@
 """A lost feature means something different for each engine.
 
 The openpyxl engine is expected to drop what its object model cannot hold, so
-the advice is "use win32com".  The fillxl engine copies every part it does not
+the advice names the engine that keeps the features without Excel and the one
+that also calculates.  The fillxl engine copies every part it does not
 understand, so losing one is a bug in fillxl, and the message has to say so.
 """
 
@@ -28,8 +29,12 @@ def test_a_fillxl_lossy_report_is_described_as_a_bug(tmp_path: Path) -> None:
         check_lossy(template, output, "warn", engine="fillxl")
 
 
-def test_the_openpyxl_lossy_wording_is_unchanged(tmp_path: Path) -> None:
-    """The openpyxl advice stays exactly as it was."""
+def test_the_openpyxl_loss_report_points_at_both_fix_engines(tmp_path: Path) -> None:
+    """fillxl keeps the features without Excel; win32com also calculates.
+
+    Advising win32com alone is useless on Linux, where most fills that need a
+    modern template run.
+    """
     template = build_spill_template(tmp_path / "template.xlsx")
     output = table_template(tmp_path / "output.xlsx", rows=1)
 
@@ -38,4 +43,5 @@ def test_the_openpyxl_lossy_wording_is_unchanged(tmp_path: Path) -> None:
 
     message = str(caught[0].message)
     assert message.startswith("The openpyxl engine did not preserve")
-    assert message.endswith("Use engine='win32com' to keep them, or set on_lossy='ignore'.")
+    assert "engine='fillxl'" in message
+    assert "engine='win32com'" in message

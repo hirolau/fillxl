@@ -125,6 +125,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `warnings.simplefilter("error", fillxl.FillXLWarning)` as well. `"drop"` is
   deprecated: it is accepted for one release, warns with a `DeprecationWarning`
   and behaves like `"none"`, which produced the same fill.
+- `engine="fillxl"` writing a named cell over a shared-formula group left the
+  group's other cells with an empty `<f t="shared" si="…"/>` and no master, so
+  Excel asked to repair the workbook. Any cell written or deleted now expands
+  its group first, and a group's dependents get the formula moved to their own
+  position (they kept the master's text before).
+- `win32com` raised `AttributeError` when a named cell sat inside a headerless
+  table: it read `HeaderRowRange` without checking `ShowHeaders`. Such a cell is
+  never a header cell now.
+- `active_sheet` was matched case-sensitively by the `openpyxl` and `win32com`
+  engines and case-insensitively by `fillxl`; all three now find `"report"` in
+  `"Report"`, and a name that matches two sheets only by case warns "not found"
+  everywhere instead of picking one.
+- `engine="fillxl"` silently kept a relationship it was asked to remove when
+  the `.rels` part had not been read yet, because the lazy read cache was
+  mistaken for the list of parts that exist.
+- A date before 1904-01-01 in a `date1904` workbook is now refused: it became a
+  negative serial that Excel shows as `####`. The first valid day in that date
+  system is 1904-01-01.
+- The OOXML text helpers only understood double-quoted attributes: a
+  single-quoted attribute read back as missing, and setting it appended a
+  duplicate. Both quote styles are read, replaced in place and removed now, and
+  the malformed-XML error describes the template part and suggests re-saving it
+  or `engine="win32com"` instead of calling itself a bug.
+- `win32com` scanned every cell of an overflow area through COM to collect
+  merged ranges it then refused the fill on; it stops at the first one.
+- `engine="fillxl"` matched a self-closing `<c:cat/>` on to the next series'
+  `</c:cat>`, so a reference in that series (a series name, for instance) could
+  be rewritten as if it belonged to the first one.
+- The openpyxl `on_lossy` report now suggests `engine="fillxl"` for keeping the
+  features without Excel, and `engine="win32com"` only if calculated values are
+  also needed.
+
+### Removed
+- `_normalize.prepare_com_value`, `xmltext.replace_start_tag`,
+  `WorkbookPart.sheet_titles`, `WorkbookPart.sheet_relative_path`,
+  `_ooxml.tables.table_part_names`, `SheetPart.conditional_formatting_sqrefs`,
+  `OoxmlPackage.is_changed`, the `totals_function`/`totals_label` fields of
+  `TableColumnInfo`, and the `allow_missing` parameter of
+  `populate_named_cells` — none had a caller. `.xls` support and the BIFF8 code
+  paths behind it went with the format (see *Breaking changes*).
 
 ### Changed
 - `engine="fillxl"` is documented as experimental and opt-in: `engine="auto"`

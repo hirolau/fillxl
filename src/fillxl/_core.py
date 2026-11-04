@@ -61,16 +61,26 @@ def fill(
         output: Path where the filled output will be saved.
         values: Mapping of named cell / defined name to scalar values.
         tables: Mapping of Excel table names to tabular data.
-        engine: ``"openpyxl"``, ``"fillxl"``, ``"win32com"`` or ``"auto"``
-            (default).  ``"auto"`` uses openpyxl for ``.xlsx``/``.xlsm``
-            templates saved in the same format, and Excel (win32com) when it is
-            needed and available: ``.xlsb`` templates, or a different
-            output format.  ``"fillxl"`` edits the OOXML package itself: no
-            Excel, and no template feature lost.  It is experimental and
-            opt-in — ``"auto"`` never selects it — and it only handles
-            ``.xlsx``/``.xlsm``, writes no calculated values, and leaves
-            ``chartEx``, pivot sources and data validations alone; see the
-            README for the full list.
+        engine: Which engine fills the workbook (see *Choosing an engine* in
+            the README).
+
+            - ``"auto"`` (default): ``openpyxl``, unless Excel is required and
+              available.  It never picks ``fillxl``.
+            - ``"openpyxl"``: runs on any OS without Excel; drops modern
+              features (losses are reported via ``on_lossy``); writes no
+              cached formula results, so Excel recalculates on open; pivot
+              tables are marked to refresh on open; ``.xlsx`` → ``.xlsx`` and
+              ``.xlsm`` → ``.xlsm``.
+            - ``"fillxl"``: runs on any OS without Excel and is experimental
+              and opt-in; keeps modern features (dynamic arrays, slicers,
+              ``chartEx``, rich data, …); writes no cached formula results and
+              clears the cached ones, so Excel recalculates on open; pivot
+              tables are marked to refresh on open; same formats as
+              ``openpyxl``.
+            - ``"win32com"``: Windows with Excel; keeps modern features;
+              saves formula results calculated by Excel; refreshes pivot
+              tables now; ``.xlsx``, ``.xlsm`` and ``.xlsb``, with conversion
+              between them.
         config: Configuration options.  Uses :class:`FillXLConfig` defaults
             if not provided.
 

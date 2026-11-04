@@ -23,7 +23,7 @@ import openpyxl
 import pytest
 
 from fillxl._backend import Backend, get_backend
-from fillxl._types import Engine
+from fillxl._types import ConcreteEngine
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 10.1 The Backend factory
@@ -33,14 +33,12 @@ from fillxl._types import Engine
 class TestBackendFactory:
     """get_backend() maps engine names to backend implementations."""
 
-    def test_get_backend_returns_openpyxl_backend_for_auto(
+    def test_get_backend_refuses_auto_because_it_is_resolved_first(
         self,
     ) -> None:
-        """'auto' (the default) maps to openpyxl."""
-        from fillxl._backends._openpyxl import OpenpyxlBackend
-
-        backend = get_backend("auto")
-        assert isinstance(backend, OpenpyxlBackend)
+        """'auto' never reaches the factory: resolve_engine() has chosen by then."""
+        with pytest.raises(ValueError, match="concrete engine"):
+            get_backend(cast("ConcreteEngine", "auto"))
 
     def test_get_backend_returns_openpyxl_backend_for_openpyxl(
         self,
@@ -77,10 +75,10 @@ class TestBackendFactory:
             # Intentionally passing invalid engine name to test error handling
             get_backend(cast(Any, "xlwings"))
 
-    @pytest.mark.parametrize("engine", ["auto", "openpyxl", "win32com", "fillxl"])
+    @pytest.mark.parametrize("engine", ["openpyxl", "win32com", "fillxl"])
     def test_known_engine_name_returns_a_valid_backend(self, engine: str) -> None:
-        """Every known engine name returns a backend implementing the protocol."""
-        backend = get_backend(cast(Engine, engine))
+        """Every concrete engine name returns a backend implementing the protocol."""
+        backend = get_backend(cast("ConcreteEngine", engine))
         assert isinstance(backend, Backend)
 
 

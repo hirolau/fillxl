@@ -32,9 +32,12 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class Backend(Protocol):
-    """Protocol that all Excel backends must implement.
+    """What a fill needs from an engine.
 
-    This is the seam where future backends (com32, xlwings, etc.) will plug in.
+    Three engines implement it: ``openpyxl`` (an object model, lossy),
+    ``fillxl`` (surgical edits of the OOXML package) and ``win32com`` (drives
+    Microsoft Excel).  Each one turns :func:`fillxl.fill`'s steps into that
+    engine's own operations; the fill itself decides what to write.
     """
 
     def load(self, path: Path) -> None:
@@ -128,6 +131,7 @@ class Backend(Protocol):
 
 
 _KNOWN_ENGINES: frozenset[str] = frozenset(get_args(Engine))
+_CONCRETE_ENGINES: frozenset[str] = frozenset(get_args(ConcreteEngine))
 
 
 def _win32com_available() -> bool:
@@ -321,24 +325,30 @@ def _reject_impossible_output(template: Path, output: Path) -> None:
     raise ValueError(msg)
 
 
-def get_backend(engine: Engine) -> Backend:
-    """Return a :class:`Backend` implementation for *engine*.
+def get_backend(engine: ConcreteEngine) -> Backend:
+    """Return the :class:`Backend` implementation for *engine*.
 
     Args:
-        engine: Engine name (``"auto"``, ``"openpyxl"``, ``"fillxl"``, or
-            ``"win32com"``).
+        engine: A concrete engine name: ``"openpyxl"``, ``"fillxl"`` or
+            ``"win32com"``.  ``"auto"`` is turned into one of these by
+            :func:`resolve_engine` before a fill builds a backend.
 
     Returns:
         A backend instance ready to load workbooks.
 
     Raises:
-        NotImplementedError: If the engine is not implemented yet.
-        ValueError: If the engine name is unknown.
+        ValueError: If the engine name is unknown, or is ``"auto"``.
 
     """
     _require_known_engine(engine)
+    if engine not in _CONCRETE_ENGINES:
+        msg = (
+            "get_backend() needs a concrete engine; 'auto' is resolved by "
+            "resolve_engine() before a backend is created."
+        )
+        raise ValueError(msg)
 
-    if engine in ("auto", "openpyxl"):
+    if engine == "openpyxl":
         from fillxl._backends._openpyxl import OpenpyxlBackend
 
         return OpenpyxlBackend()
@@ -353,6 +363,6 @@ def get_backend(engine: Engine) -> Backend:
 
         return FillxlBackend()
 
-    # All known engine names are handled above — this line is unreachable.
+    # All concrete engine names are handled above — this line is unreachable.
     msg = f"Unhandled engine {engine!r}"
     raise AssertionError(msg)  # pragma: no cover

@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Changed
+- `get_backend` now takes a concrete engine name only. `engine="auto"` is
+  resolved by `resolve_engine` before a backend is built, so the factory no
+  longer carries a second, unreachable `"auto"` branch; the `Backend` protocol
+  docstring describes the three engines instead of future ones.
 - Each backend now updates its charts inside `fill_table`, so a fill can no
   longer resize a table and leave the charts behind by forgetting a second
   call. `update_charts` is gone from the `Backend` protocol; the engines keep

@@ -11,7 +11,9 @@ from attrs.validators import in_, instance_of
 from fillxl._lossy import OnLossy
 from fillxl._validation import ColumnValidationStrategy
 
-_KNOWN_STRATEGIES: frozenset[str] = frozenset(get_args(ColumnValidationStrategy))
+# ``"drop"`` was removed from the type but is still accepted for one release,
+# so a template or a script that names it keeps working and hears why not.
+_KNOWN_STRATEGIES: frozenset[str] = frozenset(get_args(ColumnValidationStrategy)) | {"drop"}
 
 
 def _column_strategy(value: str) -> ColumnValidationStrategy:

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Breaking changes
+- `"drop"` is no longer part of the `ColumnValidationStrategy` type. Passing
+  `column_validation_strategy="drop"` still works for one release: it warns with
+  a `DeprecationWarning` and is stored as `"none"`, which produces the same
+  fill. Type checkers will now flag the name.
 - **`.xls` (Excel 97-2003) is no longer supported**, by any engine nor as a
   template or an output. BIFF8 cannot hold the features fillxl exists to
   preserve (dynamic arrays, slicers, `chartEx`, rich data, …), and reading it

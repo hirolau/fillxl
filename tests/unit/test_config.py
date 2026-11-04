@@ -25,19 +25,27 @@ class TestConfigValidation:
         assert config.column_validation_strategy == "none"
 
     def test_the_accepted_strategy_names_come_from_the_literal_type(self) -> None:
-        """The validator and the ColumnValidationStrategy Literal cannot drift."""
+        """The validator accepts the type's names plus the deprecated 'drop'."""
         from typing import get_args
 
         from fillxl._config import _KNOWN_STRATEGIES
         from fillxl._validation import ColumnValidationStrategy
 
-        assert frozenset(get_args(ColumnValidationStrategy)) == _KNOWN_STRATEGIES
+        assert _KNOWN_STRATEGIES == frozenset(get_args(ColumnValidationStrategy)) | {"drop"}
         for strategy in get_args(ColumnValidationStrategy):
-            if strategy == "drop":
-                with pytest.warns(DeprecationWarning):
-                    FillXLConfig(column_validation_strategy=strategy)
-                continue
             FillXLConfig(column_validation_strategy=strategy)
+
+    def test_drop_is_still_accepted_although_the_type_no_longer_has_it(self) -> None:
+        """The type is the contract; the deprecated name survives one release."""
+        from typing import get_args
+
+        from fillxl._validation import ColumnValidationStrategy
+
+        assert "drop" not in get_args(ColumnValidationStrategy)
+        with pytest.warns(DeprecationWarning):
+            assert FillXLConfig(column_validation_strategy="drop").column_validation_strategy == (
+                "none"
+            )
 
 
 class TestFrozenConfigAttributes:

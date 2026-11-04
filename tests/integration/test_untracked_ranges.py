@@ -1,9 +1,11 @@
-"""A fill warns about references it cannot resize.
+"""A fill rewrites the references that track a table, and warns about the rest.
 
-Charts and A1 formulas that track a table body are rewritten.  A defined name,
-a data-validation list and a pivot cache source are not — they live outside
-cell formulas — so a fill reports them instead of letting a report quietly
-show the template's rows.
+A defined name, a data-validation list and a pivot cache source hold the same
+rectangle a formula does, in places outside the cell grid.  The offline engines
+rewrite those that cover exactly the table's old body or whole table; a
+built-in name (``_xlnm.Print_Area``, …) is Excel's own, so a fill reports it
+instead of guessing, and anything else that still covers the old rows is
+reported too.
 """
 
 from __future__ import annotations
@@ -19,13 +21,22 @@ from openpyxl.worksheet.table import Table, TableColumn
 
 from fillxl import Engine, UntrackedRangeWarning
 from tests._engines import _fill_output
-from tests.ooxml._patch import patch_part
+from tests.ooxml._patch import part_text, patch_part
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 ROWS = [{"Name": "north", "Value": 1}, {"Name": "south", "Value": 2}]
 ALL_ENGINES = ["openpyxl", "win32com", "fillxl"]
+
+
+def _defined_name_text(path: Path, name: str) -> str:
+    """The definition text of a workbook-global name in *path*."""
+    workbook = openpyxl.load_workbook(path)
+    try:
+        return str(workbook.defined_names[name].attr_text)
+    finally:
+        workbook.close()
 
 
 def _table_template(path: Path) -> Path:
@@ -48,15 +59,60 @@ def _table_template(path: Path) -> Path:
 
 
 @pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
-def test_a_defined_name_that_covers_the_body_is_reported(engine: Engine, tmp_path: Path) -> None:
+def test_a_named_range_over_the_table_body_follows_the_table(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    """A name over the body has to cover the rows the fill wrote."""
     template = _table_template(tmp_path / "template.xlsx")
     workbook = openpyxl.load_workbook(template)
     workbook.defined_names.add(DefinedName("SalesBody", attr_text="Data!$A$2:$B$2"))
     workbook.save(template)
     workbook.close()
 
-    with pytest.warns(UntrackedRangeWarning, match="SalesBody"):
-        _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        output = _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+
+    assert not [record for record in caught if record.category is UntrackedRangeWarning]
+    assert _defined_name_text(output, "SalesBody") == "Data!$A$2:$B$3"
+
+
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_a_named_range_over_the_whole_table_follows_the_table_including_its_header(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    """A range over header plus body keeps its header and grows by the new rows."""
+    template = _table_template(tmp_path / "template.xlsx")
+    workbook = openpyxl.load_workbook(template)
+    workbook.defined_names.add(DefinedName("SalesAll", attr_text="Data!$A$1:$B$2"))
+    workbook.save(template)
+    workbook.close()
+
+    output = _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+
+    assert _defined_name_text(output, "SalesAll") == "Data!$A$1:$B$3"
+
+
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_a_named_range_that_only_overlaps_the_table_is_left_alone(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    """A range one row past the body was never tracking it, so it is not guessed at."""
+    template = _table_template(tmp_path / "template.xlsx")
+    workbook = openpyxl.load_workbook(template)
+    workbook.defined_names.add(DefinedName("SalesWide", attr_text="Data!$A$2:$B$3"))
+    workbook.save(template)
+    workbook.close()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        output = _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+
+    assert _defined_name_text(output, "SalesWide") == "Data!$A$2:$B$3"
+    assert not [record for record in caught if record.category is UntrackedRangeWarning]
 
 
 def test_the_excel_engine_resizes_the_name_itself(tmp_path: Path) -> None:
@@ -80,7 +136,10 @@ def test_the_excel_engine_resizes_the_name_itself(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
-def test_a_sheet_scoped_name_over_the_body_is_reported(engine: Engine, tmp_path: Path) -> None:
+def test_a_sheet_scoped_name_over_the_body_follows_the_table(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
     """A name scoped to a sheet is not in the workbook's own collection."""
     template = _table_template(tmp_path / "template.xlsx")
     workbook = openpyxl.load_workbook(template)
@@ -91,12 +150,17 @@ def test_a_sheet_scoped_name_over_the_body_is_reported(engine: Engine, tmp_path:
     workbook.save(template)
     workbook.close()
 
-    with pytest.warns(UntrackedRangeWarning, match="LocalBody"):
-        _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+    output = _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert str(workbook["Data"].defined_names["LocalBody"].attr_text) == "Data!$A$2:$B$3"
+    finally:
+        workbook.close()
 
 
 @pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
-def test_a_name_on_a_sheet_with_an_apostrophe_is_reported(
+def test_a_name_on_a_sheet_with_an_apostrophe_follows_the_table(
     engine: Engine,
     tmp_path: Path,
 ) -> None:
@@ -111,8 +175,9 @@ def test_a_name_on_a_sheet_with_an_apostrophe_is_reported(
     workbook.save(template)
     workbook.close()
 
-    with pytest.warns(UntrackedRangeWarning, match="Bob's Data"):
-        _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+    output = _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+
+    assert _defined_name_text(output, "SalesBody") == "'Bob''s Data'!$A$2:$B$3"
 
 
 @pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
@@ -145,8 +210,22 @@ def test_whole_row_and_whole_column_names_do_not_break_a_resize(
         workbook.close()
 
 
+def _first_validation_formula(path: Path) -> str:
+    """The first list source of the sheet's first data validation."""
+    workbook = openpyxl.load_workbook(path)
+    try:
+        validation = workbook["Data"].data_validations.dataValidation[0]
+        return str(validation.formula1)
+    finally:
+        workbook.close()
+
+
 @pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
-def test_a_validation_list_over_the_body_is_reported(engine: Engine, tmp_path: Path) -> None:
+def test_a_dropdown_that_reads_its_list_from_a_table_column_offers_every_filled_value(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    """A list over one table column grows with the column."""
     template = _table_template(tmp_path / "template.xlsx")
     workbook = openpyxl.load_workbook(template)
     worksheet = workbook["Data"]
@@ -156,12 +235,13 @@ def test_a_validation_list_over_the_body_is_reported(engine: Engine, tmp_path: P
     workbook.save(template)
     workbook.close()
 
-    with pytest.warns(UntrackedRangeWarning, match="data validation"):
-        _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+    output = _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+
+    assert _first_validation_formula(output) == "Data!$A$2:$A$3"
 
 
 @pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
-def test_a_same_sheet_validation_list_is_reported_without_crashing(
+def test_a_same_sheet_validation_list_follows_the_table(
     engine: Engine,
     tmp_path: Path,
 ) -> None:
@@ -179,12 +259,13 @@ def test_a_same_sheet_validation_list_is_reported_without_crashing(
     workbook.save(template)
     workbook.close()
 
-    with pytest.warns(UntrackedRangeWarning, match="data validation"):
-        output = _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+    output = _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
 
     workbook = openpyxl.load_workbook(output)
     try:
         assert workbook["Data"]["A3"].value == "south"
+        validation = workbook["Data"].data_validations.dataValidation[0]
+        assert validation.formula1 == "$A$2:$A$3"
     finally:
         workbook.close()
 
@@ -225,7 +306,7 @@ X14_VALIDATION = (
 )
 
 
-def test_an_x14_validation_list_is_reported_by_fillxl(tmp_path: Path) -> None:
+def test_an_x14_validation_list_follows_the_table_in_the_fillxl_engine(tmp_path: Path) -> None:
     """The reference of an ``extLst`` validation is markup, not plain text."""
     template = _table_template(tmp_path / "template.xlsx")
     patch_part(
@@ -234,8 +315,82 @@ def test_an_x14_validation_list_is_reported_by_fillxl(tmp_path: Path) -> None:
         lambda xml: xml.replace("</worksheet>", f"{X14_VALIDATION}</worksheet>"),
     )
 
-    with pytest.warns(UntrackedRangeWarning, match="data validation"):
-        _fill_output(template, tmp_path / "out.xlsx", "fillxl", tables={"Sales": ROWS})
+    output = _fill_output(template, tmp_path / "out.xlsx", "fillxl", tables={"Sales": ROWS})
+
+    sheet_xml = part_text(output, SHEET_PART)
+    assert "<xm:f>Data!$A$2:$B$3</xm:f>" in sheet_xml
+
+
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_a_print_area_over_the_table_is_left_alone_and_reported(
+    engine: Engine,
+    tmp_path: Path,
+) -> None:
+    """``_xlnm.`` names belong to Excel; guessing at them would be worse than a warning."""
+    template = _table_template(tmp_path / "template.xlsx")
+    workbook = openpyxl.load_workbook(template)
+    workbook["Data"].print_area = "$A$1:$B$2"
+    workbook.save(template)
+    workbook.close()
+
+    with pytest.warns(UntrackedRangeWarning, match="Print_Area"):
+        output = _fill_output(template, tmp_path / "out.xlsx", engine, tables={"Sales": ROWS})
+
+    workbook = openpyxl.load_workbook(output)
+    try:
+        assert str(workbook["Data"].print_area).replace(" ", "") == "'Data'!$A$1:$B$2"
+    finally:
+        workbook.close()
+
+
+PIVOT_ROWS = [
+    {"Region": "North", "Product": "Widgets", "Sales Rep": "Alice", "Quarter": "Q3", "Amount": 100},
+    {"Region": "South", "Product": "Gadgets", "Sales Rep": "Bob", "Quarter": "Q3", "Amount": 200},
+    {"Region": "East", "Product": "Widgets", "Sales Rep": "Carol", "Quarter": "Q3", "Amount": 300},
+    {"Region": "West", "Product": "Gadgets", "Sales Rep": "Dave", "Quarter": "Q4", "Amount": 400},
+    {"Region": "North", "Product": "Widgets", "Sales Rep": "Eve", "Quarter": "Q4", "Amount": 500},
+    {"Region": "South", "Product": "Gadgets", "Sales Rep": "Frank", "Quarter": "Q4", "Amount": 600},
+]
+
+
+def _pivot_source(path: Path) -> tuple[str, str]:
+    """``(sheet, ref)`` of the first pivot cache's worksheet source."""
+    workbook = openpyxl.load_workbook(path)
+    try:
+        source = workbook["Pivot Analysis"]._pivots[0].cache.cacheSource.worksheetSource
+        return str(source.sheet), str(source.ref)
+    finally:
+        workbook.close()
+
+
+@pytest.mark.parametrize("engine", ["openpyxl", "fillxl"])
+def test_a_pivot_built_on_the_table_rows_covers_the_filled_rows_after_saving(
+    engine: Engine,
+    tmp_path: Path,
+    pivot_template: Path,
+) -> None:
+    """A pivot marked for refresh reads its cache source, so that source has to move."""
+    output = _fill_output(
+        pivot_template,
+        tmp_path / "out.xlsx",
+        engine,
+        tables={"SalesData": PIVOT_ROWS},
+    )
+
+    assert _pivot_source(output) == ("Sales Data", "A1:E7")
+
+
+@pytest.mark.excel
+def test_excel_resizes_the_pivot_source_itself(tmp_path: Path, pivot_template: Path) -> None:
+    """Excel's ListObject.Resize rewrites the pivot source, so the warning would be false."""
+    output = _fill_output(
+        pivot_template,
+        tmp_path / "out.xlsx",
+        "win32com",
+        tables={"SalesData": PIVOT_ROWS},
+    )
+
+    assert _pivot_source(output) == ("Sales Data", "A1:E7")
 
 
 @pytest.mark.parametrize("engine", ALL_ENGINES)

@@ -51,7 +51,7 @@ differently and the difference is described below.
 | Formula results recalculated before saving | differs — recalc on open | differs — recalc on open | yes |
 | Cached results on a fill | dropped | dropped (every formula sheet) | computed |
 | Summary formulas and A1 totals formulas follow a resize | yes | yes | yes (Excel does it) |
-| Pivot sources, defined names, validation lists follow a resize | warns — `UntrackedRangeWarning` | warns — `UntrackedRangeWarning` | yes (Excel does it) |
+| Pivot sources, defined names, validation lists follow a resize | yes | yes | yes (Excel does it) |
 | Hidden rows shown and table filters cleared by a fill | yes | yes | yes |
 | Sheet hiding, deletion and activation | yes | yes | yes |
 | Spilled dynamic arrays (`SEQUENCE`, `FILTER`, `SORT`, …) and cell metadata | differs — lost | yes | yes |
@@ -93,7 +93,9 @@ fill(template="tpl.xlsx", output="out.xlsx", ..., engine="openpyxl")
   recalculates on open. Use `engine="win32com"` when the saved file must
   already contain computed values.
 - Pivot sources, defined names and validation lists that cover a table body are
-  not resized; the fill warns with `UntrackedRangeWarning` instead.
+  resized with the table. Built-in names (`_xlnm.Print_Area`,
+  `_xlnm._FilterDatabase`, …) belong to Excel and are left alone, with an
+  `UntrackedRangeWarning` so the stale range is never silent.
 - Deleting a sheet leaves formulas, charts, names and pivots that refer to it
   pointing at a sheet that no longer exists, and warns
   (`DanglingReferenceWarning`) rather than rewriting them.
@@ -133,7 +135,8 @@ dynamic arrays and their `xl/metadata.xml`, `cm`/`vm` cell metadata, slicers,
   every sheet with formulas; the output asks Excel to recalculate on open, like
   the openpyxl engine
 - Pivot sources, defined names and validation lists that cover a table body are
-  not resized — it warns with `UntrackedRangeWarning` instead
+  resized with the table; a built-in name (`_xlnm.`) is left alone and reported
+  with `UntrackedRangeWarning`
 - Deleting a sheet leaves formulas, charts, names and pivots that refer to it
   pointing at a sheet that no longer exists, and warns
   (`DanglingReferenceWarning`) rather than rewriting them

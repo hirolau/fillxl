@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Fixed
+- A table resize now rewrites the references that track it instead of only
+  warning: defined names (global and sheet-scoped), pivot cache sources and
+  data-validation list sources — including the x14 `<xm:f>` spelling — follow
+  the table's rows in the `openpyxl` and `fillxl` engines, as they do when
+  Excel resizes a table. `UntrackedRangeWarning` is now reserved for what a
+  fill must not touch: built-in names such as `_xlnm.Print_Area` and ranges it
+  could not rewrite. The `openpyxl` engine also reports a print area that
+  covers the old table; it used to miss it.
 - `engine="fillxl"` writes each worksheet once, at save time, instead of
   re-rendering it after every named cell and table it fills. Worksheets are now
   read and written only through the session's sheet store, so hiding,

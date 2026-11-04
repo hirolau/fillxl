@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from openpyxl.formula.tokenizer import TokenizerError
@@ -44,17 +45,24 @@ from fillxl._normalize import (
 )
 from fillxl._ooxml import xmltext
 from fillxl._ooxml.cells import build_cell
-from fillxl._ooxml.pivots import pivot_worksheet_sources
+from fillxl._ooxml.pivots import pivot_worksheet_sources, resize_pivot_sources
 from fillxl._ooxml.styles import StylesPart
 from fillxl._ooxml.tables import TableColumnInfo, TablePart, find_table, tables_on_sheet
 from fillxl._ooxml.worksheet import (
+    DATA_VALIDATION,
     SheetPart,
     SheetStore,
     array_range,
     split_reference,
 )
 from fillxl._plan import BlockedRegion, blocked_area, plan_table_fill
-from fillxl._references import RangeSource, destination_references, warn_about_untracked_ranges
+from fillxl._references import (
+    BUILT_IN_NAME_PREFIX,
+    RangeSource,
+    destination_references,
+    resize_reference_text,
+    warn_about_untracked_ranges,
+)
 from fillxl._validation import validate_columns
 
 if TYPE_CHECKING:
@@ -68,7 +76,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DATA_VALIDATION = xmltext.element_re("dataValidation")
+_DATA_VALIDATION = DATA_VALIDATION
 
 
 # ── named cells ─────────────────────────────────────────────────────────────
@@ -316,6 +324,7 @@ def fill_table(
 
     if plan.new_body_last_row != geometry.body_last_row:
         _resize_adjacent_formulas(workbook, table, plan, sheets)
+        _resize_tracked_references(package, workbook, sheets, table, plan)
         warn_about_untracked_ranges(
             _untracked_range_sources(package, workbook, sheets),
             table_name=name,
@@ -699,6 +708,54 @@ def _write_body(
                 column_number,
                 column_number,
             )
+
+
+def _resize_tracked_references(
+    package: OoxmlPackage,
+    workbook: WorkbookPart,
+    sheets: SheetStore,
+    table: TablePart,
+    plan: TablePlan,
+) -> None:
+    """Rewrite the names, pivot sources and validation lists that track the table.
+
+    Excel does this itself when it resizes a ``ListObject``.  A built-in name
+    (``_xlnm.``) belongs to Excel, so it is left for the warning instead of
+    being guessed at.
+    """
+    geometry = plan.geometry
+    table_sheet = table.sheet.name
+    new_body_last_row = plan.new_body_last_row
+
+    def resized(text: str, default_sheet: str | None = None) -> str | None:
+        return resize_reference_text(
+            text,
+            table_sheet=table_sheet,
+            geometry=geometry,
+            new_body_last_row=new_body_last_row,
+            default_sheet=default_sheet,
+        )
+
+    for entry in workbook.defined_names():
+        if entry.name.startswith(BUILT_IN_NAME_PREFIX):
+            continue
+        updated = resized(entry.text)
+        if updated is not None:
+            logger.debug("Resized the defined name %r -> %s", entry.name, updated)
+            workbook.set_defined_name_text(entry.name, entry.local_sheet_id, updated)
+
+    resize_pivot_sources(
+        package,
+        table_sheet=table_sheet,
+        geometry=geometry,
+        new_body_last_row=new_body_last_row,
+    )
+
+    for sheet_entry in workbook.worksheet_parts():
+        # An unqualified list source belongs to the sheet the validation sits on.
+        sheets.get(sheet_entry.part).resize_validation_lists(
+            partial(resized, default_sheet=sheet_entry.name),
+        )
 
 
 def _resize_adjacent_formulas(

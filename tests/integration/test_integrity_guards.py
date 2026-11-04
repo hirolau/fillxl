@@ -281,11 +281,10 @@ def test_a_formula_that_tracks_the_table_grows_with_it(
     tmp_path: Path,
     engine: Engine,
 ) -> None:
-    """Excel rewrites the range on resize; the openpyxl engine has to match.
+    """Excel rewrites the range on resize, and every engine has to match.
 
-    A defined name over the body is rewritten by Excel too, and the engines
-    that write into empty cells cannot rewrite it: they warn instead, so the
-    stale name is never silent.
+    A defined name over the body is rewritten too, so no engine leaves a name
+    pointing at the template's rows.
     """
     template = tmp_path / "template.xlsx"
     _summary_template(template)
@@ -306,9 +305,9 @@ def test_a_formula_that_tracks_the_table_grows_with_it(
         "H3": "=SUM(Z1:Z1)",
         "I3": '=IF(A1>0,"B4:B4",SUM(B4:B7))',
         "Other!A1": "=SUM(Data!B4:B7)",
-        "name=BodyName": "Data!$A$4:$B$7" if engine == "win32com" else "Data!$A$4:$B$4",
+        "name=BodyName": "Data!$A$4:$B$7",
     }
-    assert _named_range_warnings(caught) == (engine != "win32com")
+    assert not _named_range_warnings(caught)
 
 
 @pytest.mark.parametrize("engine", ENGINES)

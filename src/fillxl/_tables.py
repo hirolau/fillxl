@@ -32,7 +32,14 @@ from ._plan import (
     blocked_area,
     plan_table_fill,
 )
-from ._references import openpyxl_range_sources, warn_about_untracked_ranges
+from ._references import (
+    BUILT_IN_NAME_PREFIX,
+    openpyxl_range_sources,
+    resize_reference_text,
+    resized_reference,
+    same_sheet,
+    warn_about_untracked_ranges,
+)
 from ._utils import find_worksheet_and_table, table_column_name, workbook_uses_1904
 
 if TYPE_CHECKING:
@@ -390,6 +397,7 @@ def populate_table(
 
     if plan.new_body_last_row != geometry.body_last_row:
         _resize_adjacent_formulas(workbook, worksheet, plan)
+        _resize_tracked_references(workbook, worksheet, plan)
         warn_about_untracked_ranges(
             openpyxl_range_sources(workbook, worksheet),
             table_name=table_name,
@@ -410,6 +418,69 @@ def populate_table(
         )
 
     return plan.change_spec(str(worksheet.title))
+
+
+def _resize_tracked_references(
+    workbook: Workbook,
+    worksheet: Worksheet,
+    plan: TablePlan,
+) -> None:
+    """Rewrite the names, pivot sources and validation lists that track the table.
+
+    Excel does this itself when it resizes a ``ListObject``; doing it here keeps
+    a pivot that refreshes on load, a name that is read back and a dropdown that
+    reads its list from the table on the filled rows.  Built-in names
+    (``_xlnm.``) are Excel's own and are left to the warning.
+    """
+    geometry = plan.geometry
+    new_body_last_row = plan.new_body_last_row
+    table_sheet = str(worksheet.title)
+
+    def resized(text: str, default_sheet: str | None = None) -> str | None:
+        return resize_reference_text(
+            text,
+            table_sheet=table_sheet,
+            geometry=geometry,
+            new_body_last_row=new_body_last_row,
+            default_sheet=default_sheet,
+        )
+
+    name_collections = [workbook.defined_names]
+    name_collections.extend(sheet.defined_names for sheet in workbook.worksheets)
+    for names in name_collections:
+        for defined in names.values():
+            if str(defined.name or "").startswith(BUILT_IN_NAME_PREFIX):
+                continue
+            updated = resized(str(defined.attr_text or ""))
+            if updated is not None:
+                defined.attr_text = updated
+
+    for sheet in workbook.worksheets:
+        for pivot in getattr(sheet, "_pivots", ()):
+            source = getattr(getattr(pivot.cache, "cacheSource", None), "worksheetSource", None)
+            if source is None:
+                continue
+            reference = getattr(source, "ref", None)
+            sheet_title = getattr(source, "sheet", None)
+            if not reference or not sheet_title:
+                continue
+            updated = resized_reference(
+                str(reference),
+                sheet_matches=same_sheet(str(sheet_title), table_sheet),
+                geometry=geometry,
+                new_body_last_row=new_body_last_row,
+            )
+            if updated is not None:
+                source.ref = updated
+
+        for validation in sheet.data_validations.dataValidation:
+            for attribute in ("formula1", "formula2"):
+                formula = getattr(validation, attribute)
+                if not isinstance(formula, str):
+                    continue
+                updated = resized(formula, str(sheet.title))
+                if updated is not None:
+                    setattr(validation, attribute, updated)
 
 
 def _resize_adjacent_formulas(

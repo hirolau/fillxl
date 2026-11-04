@@ -26,7 +26,7 @@ from fillxl._formulas import shift_relative
 from fillxl._ooxml import xmltext
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from fillxl._ooxml.package import OoxmlPackage
 
@@ -57,6 +57,9 @@ _HAS_FORMULA = re.compile(rf"<{_TAG}f\b")
 _HIDDEN_ATTRIBUTE = re.compile(r'\s+hidden\s*=\s*"[^"]*"')
 _SHEET_VIEWS = xmltext.element_re("sheetViews")
 _SHEET_VIEW = xmltext.element_re("sheetView")
+# ``\b`` keeps this from matching ``<dataValidations>``, whose container is not
+# a validation itself.
+DATA_VALIDATION = xmltext.element_re("dataValidation")
 
 # Where a missing <sheetViews> has to be inserted (ECMA-376 element order).
 WORKSHEET_VIEW_ANCHORS = ("sheetFormatPr", "cols", "sheetData")
@@ -505,6 +508,47 @@ class SheetPart:
         return shown
 
     # ── sheet features ─────────────────────────────────────────────────────
+
+    def resize_validation_lists(self, resize: Callable[[str], str | None]) -> int:
+        """Rewrite the list source of every data validation of the sheet.
+
+        Both spellings are handled: the classic ``<formula1>text</formula1>``
+        and the x14 ``<x14:formula1><xm:f>text</xm:f></x14:formula1>`` that
+        Excel writes inside ``extLst``.  *resize* returns the new text for a
+        source, or ``None`` to leave it alone.
+
+        Returns:
+            How many sources were rewritten.
+
+        """
+        changed = 0
+
+        def replace(match: re.Match[str]) -> str:
+            nonlocal changed
+            element = match.group(0)
+            for name in ("formula1", "formula2"):
+                block_match = xmltext.element_re(name).search(element)
+                if block_match is None:
+                    continue
+                block = block_match.group(0)
+                child = xmltext.element_re("f").search(block)
+                holder = "f" if child is not None else name
+                source = xmltext.element_text(block, holder)
+                if source is None:
+                    continue
+                resized = resize(source)
+                if resized is None:
+                    continue
+                block = xmltext.replace_element_text(block, holder, resized)
+                element = f"{element[: block_match.start()]}{block}{element[block_match.end() :]}"
+                changed += 1
+            return element
+
+        updated = DATA_VALIDATION.sub(replace, self._tail)
+        if updated != self._tail:
+            self._tail = updated
+            self._dirty()
+        return changed
 
     def set_tab_selected(self, selected: bool) -> None:
         """Set ``tabSelected`` on this sheet's ``<sheetView>``.

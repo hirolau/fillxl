@@ -132,10 +132,10 @@ differs.
 - Encrypted workbooks cannot be opened.
 - Pivot tables are only flagged for refresh on open; fillxl cannot pivot.
 - `chartEx` ranges are not updated.
-- Pivot sources, defined names and data validations that cover a table body do
-  not follow a resize — no engine can rewrite them. fillxl and `openpyxl` warn
-  with `UntrackedRangeWarning`; `win32com` inserts rows, so Excel adjusts them
-  itself.
+- Pivot sources, defined names and data validations that cover a table body
+  follow a resize, as they do in Excel. A built-in name (`_xlnm.Print_Area`, …)
+  belongs to Excel and is reported with `UntrackedRangeWarning` instead of being
+  rewritten.
 
 ### Speed
 

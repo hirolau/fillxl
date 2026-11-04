@@ -265,6 +265,35 @@ class WorkbookPart:
             )
         return entries
 
+    def set_defined_name_text(
+        self,
+        name: str,
+        local_sheet_id: int | None,
+        text: str,
+    ) -> None:
+        """Give the ``<definedName>`` *name*, in scope *local_sheet_id*, the text *text*.
+
+        A name can exist globally and again on a sheet, so the scope is part of
+        what identifies it.
+        """
+        document = self.text
+        block = _DEFINED_NAMES.search(document)
+        if block is None:  # pragma: no cover - callers read the name from it
+            return
+
+        def replace(match: re.Match[str]) -> str:
+            element = match.group(0)
+            if xmltext.attribute(element, "name") != name:
+                return element
+            scope = xmltext.attribute(element, "localSheetId")
+            found = int(scope) if scope is not None and scope.isdigit() else None
+            if found != local_sheet_id:
+                return element
+            return xmltext.replace_element_text(element, "definedName", text)
+
+        updated = _DEFINED_NAME.sub(replace, document[block.start() : block.end()])
+        self._set(document[: block.start()] + updated + document[block.end() :])
+
     def find_defined_name(self, name: str) -> DefinedNameEntry | None:
         """Find *name*, matching exactly first and then ignoring case.
 

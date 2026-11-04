@@ -68,9 +68,10 @@ copied, not rebuilt.
 - Modern charts (`chartEx`) are left untouched, so their ranges do not follow a
   table resize.
 - Pivot tables are flagged for refresh on open; fillxl never pivots.
-- Pivot sources, defined names and data validations that cover a table body do
-  not follow a resize; the fill warns with `UntrackedRangeWarning` instead of
-  letting the report miss rows.
+- Pivot sources, defined names and data validations that cover a table body
+  follow a resize, as they do in Excel. A built-in name (`_xlnm.Print_Area`,
+  …) is Excel's own and is reported with `UntrackedRangeWarning` instead of
+  being guessed at.
 
 ## Cached values
 

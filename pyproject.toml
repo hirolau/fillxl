@@ -36,11 +36,11 @@ Issues = "https://github.com/hirolau/fillxl/issues"
 pandas = ["pandas>=2.0"]
 polars = ["polars>=0.20"]
 # duckdb 2.x ships abi3 wheels, so it installs on every supported Python.
-duckdb = ["duckdb>=0.9"]
+duckdb = ["duckdb>=1.0"]
 all = [
 	"pandas>=2.0",
 	"polars>=0.20",
-	"duckdb>=0.9",
+	"duckdb>=1.0",
 ]
 dev = [
 	"nox>=2023.12",

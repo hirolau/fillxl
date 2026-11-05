@@ -99,8 +99,10 @@ Three engines are available. `engine="auto"` (the default) picks one; pass
   the output, previewers) see blank formula results.
 - When the saved file must contain calculated values, or for `.xlsb` or format
   conversion: use `engine="win32com"`.
-- What `"auto"` does, exactly: `openpyxl`, unless Excel is required and
-  available. It never picks `fillxl`.
+**`engine="auto"`** chooses `openpyxl` whenever openpyxl can read the template
+and write the output, and `win32com` only when Excel is required (`.xlsb`,
+format conversion) and available. This will not change in 1.x: a 1.x release
+never makes `"auto"` pick a different engine for the same template and output.
 
 ### How the `win32com` engine writes text
 
@@ -136,6 +138,10 @@ differs.
 > the template had it, and Excel grows and computes it when it opens the file.
 > Until then, anything that reads cached values — `pandas`, `openpyxl` with
 > `data_only=True`, previews, search indexers — sees the old numbers or nothing.
+>
+> Its name and the `fill()` arguments it takes are stable, but the bytes it
+> writes may change in a minor release as the engine matures. Pin the fillxl
+> version if you depend on exact output.
 
 **Its limits:**
 

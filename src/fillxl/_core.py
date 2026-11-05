@@ -65,7 +65,8 @@ def fill(
             the README).
 
             - ``"auto"`` (default): ``openpyxl``, unless Excel is required and
-              available.  It never picks ``fillxl``.
+              available.  It never picks ``fillxl``.  This choice is stable
+              across 1.x.
             - ``"openpyxl"``: runs on any OS without Excel; drops modern
               features (losses are reported via ``on_lossy``); writes no
               cached formula results, so Excel recalculates on open; pivot

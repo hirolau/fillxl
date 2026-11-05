@@ -51,10 +51,13 @@ Any mapping works — a `dict`, a `MappingProxyType`, …
 | `.xlsb` template, or a different output format | `win32com`, when Excel automation is available |
 | the same, without Excel | `openpyxl`, whose error explains what is missing |
 
+**`engine="auto"`** chooses `openpyxl` whenever openpyxl can read the template
+and write the output, and `win32com` only when Excel is required (`.xlsb`,
+format conversion) and available. This will not change in 1.x: a 1.x release
+never makes `"auto"` pick a different engine for the same template and output.
+
 Pass `engine="win32com"` explicitly to drive Microsoft Excel through COM — that
-is the engine to use for chart types openpyxl cannot write. Both engines write
-the same values for the same template and data; a parity test suite fills one
-template with both and compares the results.
+is the engine to use for chart types openpyxl cannot write.
 
 ---
 

@@ -22,6 +22,10 @@ Excel computes them when it opens the file (see [Cached
 values](#cached-values)). [Backends](backends.md) compares it with the other two
 engines and lists its limits.
 
+Its name and the `fill()` arguments it takes are stable, but the bytes it writes
+may change in a minor release as the engine matures. Pin the fillxl version if
+you depend on exact output.
+
 ## What it does
 
 An `.xlsx`/`.xlsm` file is a ZIP of XML parts. The engine:

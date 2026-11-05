@@ -148,11 +148,15 @@ def _win32com_available() -> bool:
         return False
     import winreg
 
+    # typeshed lists winreg's members for a win32 target only, so checkers that
+    # run on Linux reject the direct lookup; the alias keeps this file clean on
+    # both platforms.
+    registry: Any = winreg
     try:
-        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "Excel.Application"))
+        with registry.OpenKey(registry.HKEY_CLASSES_ROOT, "Excel.Application"):
+            return True
     except OSError:
         return False
-    return True
 
 
 _XLS_MESSAGE = (

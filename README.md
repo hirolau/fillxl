@@ -234,7 +234,7 @@ uv sync --all-extras
 uv run pytest
 ```
 
-The 0.x line leaves room for breaking changes; 1.0 signals stability. Supported:
+fillxl follows Semantic Versioning; `engine="fillxl"` is experimental. Supported:
 Python 3.11–3.15 on Windows and Linux (macOS best-effort), with the data
 libraries above on their minimum and newest major release (pandas 2 and 3,
 polars 0.20 and 2, duckdb 1 and 2). See

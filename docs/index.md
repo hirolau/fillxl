@@ -113,7 +113,10 @@ them with `scripts/benchmark.py` on your own machine, template and data.
 
 ## Project Status
 
-The project is currently at `0.x` to allow early adopters to evaluate the package. Once it has been stable in the wild for a while, the version will be bumped to `1.0` to signal production readiness.
+fillxl 1.0 follows [Semantic Versioning](https://semver.org/): the `fill()`
+signature, `FillXLConfig` options and their defaults, the exception and warning
+classes, and the engine `"auto"` chooses do not change incompatibly within 1.x.
+`engine="fillxl"` is experimental; see [The fillxl engine](fillxl-engine.md).
 
 !!! info "Community-driven"
     No new features are planned — the roadmap is purely driven by community feedback and contributions.

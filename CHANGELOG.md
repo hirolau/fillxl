@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - YYYY-MM-DD
+
+First stable release. The public API — `fill()`, `FillXLConfig`, the exception
+and warning classes — follows Semantic Versioning from here on.
+
+`engine="fillxl"` remains experimental: its output may change in a minor
+release.
+
+### Breaking changes
+- `column_validation_strategy="drop"`, deprecated in 0.9.0, is removed and now
+  raises `ValueError`. Use `"none"`.
+
+### Changed
+- `fill()` accepts any `Mapping` for `values=` and `tables=` in its type hints;
+  `dict[str, pd.DataFrame]` no longer fails type checking.
+- The `duckdb` extra requires duckdb 1.0 or newer, the oldest version tested.
+
+### Documentation
+- Documented the 1.x stability promise for `engine="auto"` and the
+  experimental status and output policy of `engine="fillxl"`.
+- Corrected engine-specific behavior, sheet-name matching, and the documented
+  `on_lossy` policy and `fillxl` capabilities.
+
 ## [0.9.0] - 2026-11-04
 
 The headline is `engine="fillxl"`, a third backend that fills a workbook by

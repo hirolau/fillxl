@@ -99,6 +99,8 @@ def fill(
             template features.
         PermissionError: If *output* cannot be replaced, usually because it is
             open in Excel.
+        RuntimeError: If ``engine="win32com"`` is used where Excel cannot be
+            started — a non-Windows platform, or Windows without Excel.
         ValueError: If *engine* is unknown, the engine cannot write the
             requested format, column validation fails, or the sheet settings
             would leave no visible sheet.

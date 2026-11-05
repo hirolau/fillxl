@@ -61,7 +61,7 @@ def _run_tests(
             if constraint:
                 session.run("uv", "pip", "install", f"{pkg}{constraint}", env=_ENV)
 
-    args = ["pytest", "tests/", "-m", "not xlwings"]
+    args = ["pytest", "tests/", "-m", "not win32com"]
     if pytest_args:
         args += pytest_args
     session.run(*args, env=_ENV)
@@ -78,7 +78,7 @@ def tests(session: nox.Session) -> None:
         "pytest",
         "tests/",
         "-m",
-        "not xlwings",
+        "not win32com",
         "--cov=fillxl",
         "--cov-report=term-missing",
         "--cov-report=xml",

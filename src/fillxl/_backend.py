@@ -135,7 +135,24 @@ _CONCRETE_ENGINES: frozenset[str] = frozenset(get_args(ConcreteEngine))
 
 
 def _win32com_available() -> bool:
-    return sys.platform == "win32" and importlib.util.find_spec("win32com") is not None
+    """Whether this machine can actually start Excel through COM.
+
+    pywin32 is installed on every Windows install of fillxl; Excel is not.
+    A build server or CI runner has the package and no ``Excel.Application``
+    ProgID, so checking only for the package makes ``engine="auto"`` pick
+    win32com for a fill that cannot open a workbook.  The ProgID lookup is
+    cheap enough to run on every ``"auto"`` decision that needs Excel, and it
+    does not start Excel just to ask.
+    """
+    if sys.platform != "win32" or importlib.util.find_spec("win32com") is None:
+        return False
+    import winreg
+
+    try:
+        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "Excel.Application"))
+    except OSError:
+        return False
+    return True
 
 
 _XLS_MESSAGE = (

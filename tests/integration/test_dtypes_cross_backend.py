@@ -3,22 +3,23 @@
 Verifies that fillxl handles common Python datatypes identically regardless
 of whether the ``openpyxl`` or ``win32com`` backend is used.  Every dtype case
 runs against both engines (``ENGINES``); the only Excel-only class holds
-rendered-value checks that need xlwings.
+rendered-value checks that need Excel.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import openpyxl
 import pytest
 
 from fillxl import Engine, FillXLConfig, fill
-from tests._engines import ENGINES, _fill_output
+from tests._engines import ENGINES, _fill_output, _win32com_available
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 _PERMISSIVE = FillXLConfig(column_validation_strategy="none")
@@ -504,27 +505,45 @@ def _assert_table_value(col_name: str, read_back: object, value: object) -> None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Excel-only: rendered values through xlwings
+# Excel-only: rendered values through real Excel
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.win32com
-class TestCrossBackendXlwingsReadBack:
-    """Rendered value verification via xlwings COM read-back (Excel required).
+@pytest.fixture(scope="module")
+def excel() -> Iterator[Any]:
+    """A hidden Excel instance that never asks the user anything."""
+    if not _win32com_available():  # pragma: no cover - depends on the machine
+        pytest.skip("needs Windows with Microsoft Excel")
 
-    These tests open the output in real Excel via xlwings to verify the
-    *rendered* values; no other test can observe Excel's display layer.
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    app = win32com.client.DispatchEx("Excel.Application")
+    app.Visible = False
+    app.DisplayAlerts = False
+    try:
+        yield app
+    finally:
+        app.Quit()
+        pythoncom.CoUninitialize()
+
+
+@pytest.mark.win32com
+class TestCrossBackendExcelReadBack:
+    """Rendered value verification via COM read-back (Excel required).
+
+    These tests open the output in real Excel to verify the *rendered* values;
+    no other test can observe Excel's display layer.
     """
 
-    def test_named_cell_values_match_via_xlwings(
+    def test_named_cell_values_match_via_excel(
         self,
         output_path: Path,
         cross_backend_dtype_template: Path,
-        xl_app: object,  # xw.App
+        excel: Any,  # noqa: ANN401
     ) -> None:
-        """Named cell values rendered by Excel match expected values (xlwings read-back)."""
-        import xlwings as xw
-
+        """Named cell values rendered by Excel match expected values."""
         fill(
             template=cross_backend_dtype_template,
             output=output_path,
@@ -539,27 +558,25 @@ class TestCrossBackendXlwingsReadBack:
             engine="win32com",
         )
 
-        wb = xw.Book(str(output_path))
+        wb = excel.Workbooks.Open(str(output_path))
         try:
-            ws = wb.sheets["CrossDtypeNamedCells"]
-            assert ws.range("A1").value == "Excel"
-            assert ws.range("B1").value == 99
-            assert abs(ws.range("C1").value - 2.71828) < 1e-5
-            assert ws.range("D1").value in (True, 1.0, 1)
-            assert ws.range("E1").value is None
-            assert ws.range("F1").value is not None
+            ws = wb.Worksheets("CrossDtypeNamedCells")
+            assert ws.Range("A1").Value == "Excel"
+            assert ws.Range("B1").Value == 99
+            assert abs(ws.Range("C1").Value - 2.71828) < 1e-5
+            assert ws.Range("D1").Value in (True, 1.0, 1)
+            assert ws.Range("E1").Value is None
+            assert ws.Range("F1").Value is not None
         finally:
-            wb.close()
+            wb.Close(SaveChanges=False)
 
-    def test_table_values_match_via_xlwings(
+    def test_table_values_match_via_excel(
         self,
         output_path: Path,
         cross_backend_dtype_template: Path,
-        xl_app: object,
+        excel: Any,  # noqa: ANN401
     ) -> None:
-        """Table values rendered by Excel match expected values (xlwings read-back)."""
-        import xlwings as xw
-
+        """Table values rendered by Excel match expected values."""
         fill(
             template=cross_backend_dtype_template,
             output=output_path,
@@ -578,11 +595,11 @@ class TestCrossBackendXlwingsReadBack:
             engine="win32com",
         )
 
-        wb = xw.Book(str(output_path))
+        wb = excel.Workbooks.Open(str(output_path))
         try:
-            ws = wb.sheets["CrossDtypeTable"]
-            assert ws.range("A2").value == "hello"
-            assert ws.range("B2").value == 42
-            assert abs(ws.range("C2").value - 3.14) < 1e-5
+            ws = wb.Worksheets("CrossDtypeTable")
+            assert ws.Range("A2").Value == "hello"
+            assert ws.Range("B2").Value == 42
+            assert abs(ws.Range("C2").Value - 3.14) < 1e-5
         finally:
-            wb.close()
+            wb.Close(SaveChanges=False)

@@ -6,7 +6,7 @@ DisplayFormat verification, and multi-column CF rule preservation.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import openpyxl
 import pytest
@@ -14,11 +14,31 @@ from openpyxl.worksheet.table import Table, TableColumn
 
 from fillxl import FillXLConfig, fill
 from tests._assets import TEMPLATE
+from tests._engines import _win32com_available
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
-    import xlwings as xw
+
+@pytest.fixture(scope="module")
+def excel() -> Iterator[Any]:
+    """A hidden Excel instance that never asks the user anything."""
+    if not _win32com_available():  # pragma: no cover - depends on the machine
+        pytest.skip("needs Windows with Microsoft Excel")
+
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    app = win32com.client.DispatchEx("Excel.Application")
+    app.Visible = False
+    app.DisplayAlerts = False
+    try:
+        yield app
+    finally:
+        app.Quit()
+        pythoncom.CoUninitialize()
 
 
 def _data_rows(count: int) -> list[dict[str, object]]:
@@ -61,10 +81,10 @@ def test_conditional_formatting_remains_unchanged_when_extend_flag_is_false(
     assert not any("E11" in s for s in sqrefs)
 
 
-@pytest.mark.xlwings
+@pytest.mark.win32com
 def test_conditional_formatting_applies_green_background_for_value_equal_to_seven(
     output_path: Path,
-    xl_app: xw.App,
+    excel: Any,  # noqa: ANN401
 ) -> None:
     """A cell with value 7 should have a green background via DisplayFormat."""
     data = [
@@ -84,13 +104,13 @@ def test_conditional_formatting_applies_green_background_for_value_equal_to_seve
         tables={"TableTest": data},
     )
 
-    wb = xl_app.books.open(str(output_path))
+    wb = excel.Workbooks.Open(str(output_path))
     try:
-        ws = wb.sheets["TestTable"]
-        cell_seven = ws.range("A3")
-        cell_normal = ws.range("B2")
-        green_color = cell_seven.api.DisplayFormat.Interior.Color
-        normal_color = cell_normal.api.DisplayFormat.Interior.Color
+        ws = wb.Worksheets("TestTable")
+        cell_seven = ws.Range("A3")
+        cell_normal = ws.Range("B2")
+        green_color = cell_seven.DisplayFormat.Interior.Color
+        normal_color = cell_normal.DisplayFormat.Interior.Color
         assert green_color != normal_color, (
             f"Expected green CF fill ({green_color}) to differ from normal fill ({normal_color})"
         )
@@ -98,13 +118,13 @@ def test_conditional_formatting_applies_green_background_for_value_equal_to_seve
             f"Expected 7-cell to have CF-applied green fill, got default {green_color}"
         )
     finally:
-        wb.close()
+        wb.Close(SaveChanges=False)
 
 
-@pytest.mark.xlwings
+@pytest.mark.win32com
 def test_conditional_formatting_applies_red_background_for_value_between_two_and_three(
     output_path: Path,
-    xl_app: xw.App,
+    excel: Any,  # noqa: ANN401
 ) -> None:
     """Col2 cell with value 2.5 should have a red background via DisplayFormat."""
     data = [
@@ -124,17 +144,17 @@ def test_conditional_formatting_applies_red_background_for_value_between_two_and
         tables={"TableTest": data},
     )
 
-    wb = xl_app.books.open(str(output_path))
+    wb = excel.Workbooks.Open(str(output_path))
     try:
-        ws = wb.sheets["TestTable"]
-        cell_red = ws.range("B3")
-        cell_normal = ws.range("B2")
-        red_color = cell_red.api.DisplayFormat.Interior.Color
-        normal_color = cell_normal.api.DisplayFormat.Interior.Color
+        ws = wb.Worksheets("TestTable")
+        cell_red = ws.Range("B3")
+        cell_normal = ws.Range("B2")
+        red_color = cell_red.DisplayFormat.Interior.Color
+        normal_color = cell_normal.DisplayFormat.Interior.Color
         assert red_color == 255, f"Expected red CF fill (255) for Col2=2.5, got {red_color}"
         assert normal_color != 255, f"Expected normal cell to not be red, got {normal_color}"
     finally:
-        wb.close()
+        wb.Close(SaveChanges=False)
 
 
 def test_conditional_formatting_preserves_multi_column_rules_during_extension(

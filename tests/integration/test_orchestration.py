@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 import logging
+import sys
 import warnings
 from pathlib import Path
 from typing import Any
@@ -69,6 +71,27 @@ def test_win32com_rejects_an_output_format_excel_cannot_save_before_any_work_is_
     """The backend must reject impossible output formats before it launches Excel."""
     with pytest.raises(ValueError, match=r"\.csv"):
         resolve_engine("win32com", Path("t.xlsx"), Path("o.csv"))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the Excel ProgID is a Windows registry key")
+def test_excel_is_not_available_when_its_progid_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pywin32 installs on any Windows machine; Excel does not, so the probe checks Excel."""
+    import winreg
+
+    from fillxl._backend import _win32com_available
+
+    def missing(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError(2, "The system cannot find the file specified")
+
+    def found(*_args: object, **_kwargs: object) -> object:
+        return object()
+
+    monkeypatch.setattr(winreg, "OpenKey", missing)
+    monkeypatch.setattr(importlib.util, "find_spec", found)
+
+    assert _win32com_available() is False
 
 
 def test_fillxl_is_selected_by_name_and_needs_no_excel() -> None:

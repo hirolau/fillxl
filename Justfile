@@ -8,7 +8,7 @@ set windows-shell := ["powershell.exe", "-c"]
 
 # Run CI test subset (no Excel required)
 test:
-    uv run pytest tests/ -m "not xlwings and not win32com" --cov=fillxl --cov-report=term-missing
+    uv run pytest tests/ -m "not win32com" --cov=fillxl --cov-report=term-missing
 
 # Run win32com-only tests (requires Excel + pywin32)
 test-win32com:

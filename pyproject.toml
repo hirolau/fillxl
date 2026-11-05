@@ -48,7 +48,6 @@ dev = [
 	"pytest-cov>=4",
 	"pytest-spec>=6.1.0",
 	"pytest-gremlins>=1.9.0",
-	"xlwings>=0.30",
 	"mypy>=2.4.0",
 	"pyrefly>=1.0",
 	"coverage>=7",
@@ -151,7 +150,7 @@ extra-paths = ["typings", "src", "tests"]
 #unused-ignore-comment = "ignore"
 
 [[tool.mypy.overrides]]
-module = ["xlwings.*", "duckdb", "polars", "win32com.*", "win32clipboard", "pythoncom", "pywintypes"]
+module = ["duckdb", "polars", "win32com.*", "win32clipboard", "pythoncom", "pywintypes"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -165,14 +164,13 @@ project-excludes = ["**/__pycache__", "**/.nox", "**/.venv", "**/.git", "**/typi
 preset = "strict"
 search-path = [".", "typings", "src", "tests"]
 # Prefer local typings/ for openpyxl; still use site-packages for other deps.
-ignore-missing-imports = ["xlwings.*", "win32com.*", "pythoncom", "pywintypes", "duckdb", "polars"]
+ignore-missing-imports = ["win32com.*", "pythoncom", "pywintypes", "duckdb", "polars"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
 pythonpath = ["tests"]
 markers = [
-	"xlwings: tests that require xlwings / Excel COM (skipped on CI without Excel)",
 	"win32com: tests that require pywin32 / Excel COM (skipped on CI without Excel)",
 	"excel: needs Windows with Microsoft Excel",
 	"slow: tests that are intentionally slow (large data, stress tests)",

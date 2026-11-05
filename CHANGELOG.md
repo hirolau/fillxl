@@ -21,6 +21,17 @@ release.
 - `fill()` accepts any `Mapping` for `values=` and `tables=` in its type hints;
   `dict[str, pd.DataFrame]` no longer fails type checking.
 - The `duckdb` extra requires duckdb 1.0 or newer, the oldest version tested.
+- Tests drive Excel through `pywin32` directly, so `xlwings` is no longer a
+  development dependency; the `xlwings` pytest marker is gone, and Excel-backed
+  tests carry `win32com` and skip themselves when Excel is unavailable.
+
+### Fixed
+- `engine="auto"` no longer picks `win32com` just because `pywin32` is
+  installed: it checks that Excel itself is registered, so a Windows machine
+  without Excel gets openpyxl's explanatory error instead of a raw
+  `pywintypes.com_error`.
+- `engine="win32com"` reports a `RuntimeError` that names Excel when Excel
+  cannot be started, instead of a bare `com_error`.
 
 ### Documentation
 - Documented the 1.x stability promise for `engine="auto"` and the

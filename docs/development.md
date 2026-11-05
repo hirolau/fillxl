@@ -12,7 +12,7 @@ uv sync --all-extras
 
 ```bash
 # All tests except Excel-COM-dependent ones
-uv run pytest -m "not win32com and not xlwings"
+uv run pytest -m "not win32com"
 
 # All tests (Windows with Excel only)
 uv run pytest

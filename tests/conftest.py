@@ -11,7 +11,6 @@ from pathlib import Path
 
 import openpyxl
 import pytest
-import xlwings as xw
 from freezegun import freeze_time
 from openpyxl.chart import (
     AreaChart,
@@ -126,14 +125,6 @@ def frozen_clock(monkeypatch: pytest.MonkeyPatch) -> Generator[datetime, None, N
 
         monkeypatch.setattr(zipfile.ZipInfo, "from_file", frozen_from_file)
         yield moment
-
-
-@pytest.fixture
-def xl_app() -> Generator[xw.App, None, None]:
-    """Launch a hidden Excel instance for COM-based verification, quit after test."""
-    app = xw.App(visible=False)
-    yield app
-    app.quit()
 
 
 # ── Programmatic workbook fixtures ──────────────────────────────────────────

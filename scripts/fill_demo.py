@@ -45,10 +45,10 @@ def fill_template_1(outdir: Path, engine: Engine = "auto") -> Path:
         {"Col1": "Delta", "Col2": 40, "ColNotFilled": "w", "TestFormattedPct": 0.78},
         {"Col1": "Epsilon", "Col2": 50, "ColNotFilled": "v", "TestFormattedPct": 0.90},
     ]
-    # win32com can't detect calculated columns before resize, so use "drop"
+    # win32com can't detect calculated columns before resize, so use "none"
     # strategy to skip missing columns instead of raising.
     strategy: ColumnValidationStrategy = (
-        "drop" if engine == "win32com" else "all_but_formulas"
+        "none" if engine == "win32com" else "all_but_formulas"
     )
     return fill(
         template=ASSETS / "test_template_1.xlsx",

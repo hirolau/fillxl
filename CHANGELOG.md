@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-11-05
+
+First stable release. The public API — `fill()`, `FillXLConfig`, the exception
+and warning classes — follows Semantic Versioning from here on.
+
+`engine="fillxl"` remains experimental: its output may change in a minor
+release.
+
+### Breaking changes
+- `column_validation_strategy="drop"`, deprecated in 0.9.0, is removed and now
+  raises `ValueError`. Use `"none"`.
+
+### Changed
+- `fill()` accepts any `Mapping` for `values=` and `tables=` in its type hints;
+  `dict[str, pd.DataFrame]` no longer fails type checking.
+- The `duckdb` extra requires duckdb 1.0 or newer, the oldest version tested.
+- Tests drive Excel through `pywin32` directly, so `xlwings` is no longer a
+  development dependency; the `xlwings` pytest marker is gone, and Excel-backed
+  tests carry `win32com` and skip themselves when Excel is unavailable.
+
+### Fixed
+- `engine="auto"` no longer picks `win32com` just because `pywin32` is
+  installed: it checks that Excel itself is registered, so a Windows machine
+  without Excel gets openpyxl's explanatory error instead of a raw
+  `pywintypes.com_error`.
+- `engine="win32com"` reports a `RuntimeError` that names Excel when Excel
+  cannot be started, instead of a bare `com_error`.
+
+### Documentation
+- Documented the 1.x stability promise for `engine="auto"` and the
+  experimental status and output policy of `engine="fillxl"`.
+- Corrected engine-specific behavior, sheet-name matching, and the documented
+  `on_lossy` policy and `fillxl` capabilities.
+
 ## [0.9.0] - 2026-11-04
 
 The headline is `engine="fillxl"`, a third backend that fills a workbook by
@@ -46,9 +80,6 @@ so the changes it went through while it was being built are not listed here —
   template's ranges exactly as they are.
 - `UntrackedRangeWarning` is new: it reports a pivot cache source, defined name
   or data-validation list that still covers a table's old rows after a resize.
-- `names_deleted_sheet` (formerly the private `_names_deleted_sheet`) and
-  `cf_range_tracks_table` are public, so the fillxl engine shares the same
-  sheet-reference matching and conditional-formatting rule as the openpyxl one.
 - `on_lossy` now reports `xl/metadata.xml`, the part that carries spilling and
   data-type information. Without it a template's dynamic arrays become ordinary
   formulas, which used to happen silently.
@@ -57,10 +88,6 @@ so the changes it went through while it was being built are not listed here —
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Changed
-- `cf_range_tracks_table` is now `range_tracks_table`: the same rule also
-  extends data-validation ranges with the table, so the name no longer claims
-  to be about conditional formatting. `cf_range_tracks_table` remains as an
-  alias.
 - `get_backend` now takes a concrete engine name only. `engine="auto"` is
   resolved by `resolve_engine` before a backend is built, so the factory no
   longer carries a second, unreachable `"auto"` branch; the `Backend` protocol
@@ -71,8 +98,7 @@ so the changes it went through while it was being built are not listed here —
   the chart code as a private helper.
 - `engine="fillxl"` is documented as experimental and opt-in: `engine="auto"`
   never selects it, and the README lists its limits (no `.xlsb` or
-  format conversion, no encrypted files, pivot tables only flagged for refresh,
-  `chartEx` ranges untouched, pivot sources and data validations unaffected)
+  format conversion, no encrypted files, pivot tables only flagged for refresh)
   and a "Cached values" section: the engine does not calculate, so the file
   stays stale until Excel recalculates.
 

@@ -47,7 +47,7 @@ jobs:
         run: uv run ruff check src/fillxl/ tests/
 
       - name: Run tests
-        run: uv run pytest tests/ -m "not xlwings and not win32com" -q
+        run: uv run pytest tests/ -m "not win32com" -q
 
   release:
     needs: check

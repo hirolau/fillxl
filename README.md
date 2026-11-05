@@ -99,8 +99,10 @@ Three engines are available. `engine="auto"` (the default) picks one; pass
   the output, previewers) see blank formula results.
 - When the saved file must contain calculated values, or for `.xlsb` or format
   conversion: use `engine="win32com"`.
-- What `"auto"` does, exactly: `openpyxl`, unless Excel is required and
-  available. It never picks `fillxl`.
+**`engine="auto"`** chooses `openpyxl` whenever openpyxl can read the template
+and write the output, and `win32com` only when Excel is required (`.xlsb`,
+format conversion) and available. This will not change in 1.x: a 1.x release
+never makes `"auto"` pick a different engine for the same template and output.
 
 ### How the `win32com` engine writes text
 
@@ -136,6 +138,10 @@ differs.
 > the template had it, and Excel grows and computes it when it opens the file.
 > Until then, anything that reads cached values — `pandas`, `openpyxl` with
 > `data_only=True`, previews, search indexers — sees the old numbers or nothing.
+>
+> Its name and the `fill()` arguments it takes are stable, but the bytes it
+> writes may change in a minor release as the engine matures. Pin the fillxl
+> version if you depend on exact output.
 
 **Its limits:**
 
@@ -143,12 +149,12 @@ differs.
   `.xlsb` and converting between formats).
 - Encrypted workbooks cannot be opened.
 - Pivot tables are only flagged for refresh on open; fillxl cannot pivot.
-- `chartEx` charts and sparklines that read a table's rows are updated with
-  the table, like their classic counterparts.
-- Pivot sources, defined names and data validations that cover a table body
-  follow a resize, as they do in Excel. A built-in name (`_xlnm.Print_Area`, …)
-  belongs to Excel and is reported with `UntrackedRangeWarning` instead of being
-  rewritten.
+
+It also updates, like Excel does: `chartEx` charts and sparklines that read a
+table's rows, plus pivot sources, defined names and data validations that cover
+a table body when the table resizes. A built-in name (`_xlnm.Print_Area`, …)
+belongs to Excel and is reported with `UntrackedRangeWarning` instead of being
+rewritten.
 
 ### Speed
 
@@ -228,7 +234,7 @@ uv sync --all-extras
 uv run pytest
 ```
 
-The 0.x line leaves room for breaking changes; 1.0 signals stability. Supported:
+fillxl follows Semantic Versioning; `engine="fillxl"` is experimental. Supported:
 Python 3.11–3.15 on Windows and Linux (macOS best-effort), with the data
 libraries above on their minimum and newest major release (pandas 2 and 3,
 polars 0.20 and 2, duckdb 1 and 2). See

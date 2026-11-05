@@ -144,7 +144,15 @@ class Win32ComBackend:
             self._com_thread = threading.get_ident()
 
         # DispatchEx always creates a new, isolated Excel instance.
-        self._app = win32com.client.DispatchEx("Excel.Application")
+        try:
+            self._app = win32com.client.DispatchEx("Excel.Application")
+        except pythoncom.com_error as exc:
+            msg = (
+                "The win32com backend could not start Microsoft Excel. Install Excel "
+                "to fill this workbook, or use engine='openpyxl' or engine='fillxl' "
+                "for .xlsx and .xlsm files."
+            )
+            raise RuntimeError(msg) from exc
         # Security settings must hold before any workbook opens; failures propagate.
         self._app.AutomationSecurity = _MSO_AUTOMATION_SECURITY_FORCE_DISABLE
         self._app.EnableEvents = False

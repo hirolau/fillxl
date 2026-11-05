@@ -801,7 +801,3 @@ def range_tracks_table(
     if not (starts_with_table or cell_range.max_row == old_body_last_row):
         return False
     return not (cell_range.max_row > old_body_last_row and cell_range.max_row > table_last_row)
-
-
-cf_range_tracks_table = range_tracks_table
-"""Alias kept so the name the public API documented keeps working."""

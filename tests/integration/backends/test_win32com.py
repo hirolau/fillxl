@@ -111,6 +111,31 @@ class TestWin32ComPlatformGuard:
         with pytest.raises(RuntimeError, match="win32com"):
             backend.load(tmp_path / "fake.xlsx")
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="needs pywin32 installed")
+    def test_a_com_failure_to_start_excel_is_reported_as_a_fillxl_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A machine with pywin32 but no Excel gets an explanation, not a com_error."""
+        import pythoncom
+        import win32com.client
+
+        from fillxl._backends import _win32com
+
+        def no_excel(*_args: object, **_kwargs: object) -> None:
+            raise pythoncom.com_error(-2147221005, "Invalid class string", None, None)
+
+        monkeypatch.setattr(win32com.client, "DispatchEx", no_excel)
+        monkeypatch.setattr(_win32com, "_is_windows", True)
+
+        backend = _win32com.Win32ComBackend()
+        try:
+            with pytest.raises(RuntimeError, match="could not start Microsoft Excel"):
+                backend.load(tmp_path / "template.xlsx")
+        finally:
+            backend.close()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Overflow guard (CI-safe, fake COM)

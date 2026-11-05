@@ -12,17 +12,16 @@ uv sync --all-extras
 
 ```bash
 # All tests except Excel-COM-dependent ones
-uv run pytest -m "not win32com and not xlwings"
+uv run pytest -m "not win32com"
 
 # All tests (Windows with Excel only)
 uv run pytest
 ```
 
-Behaviour tests are parametrised over both engines (`tests/_engines.py`): the
-`win32com` case skips itself when Excel is not installed, so the same suite
-protects Linux CI and a developer machine. Tests that genuinely need Excel —
-opening a file, repairing, recalculating — carry the `excel` marker and are
-skipped elsewhere:
+Behaviour tests are parametrised over all three engines (`tests/_engines.py`).
+The `win32com` case skips itself when Excel is not installed; `openpyxl` and
+`fillxl` run everywhere. Tests that genuinely need Excel — opening a file,
+repairing, recalculating — carry the `excel` marker and are skipped elsewhere:
 
 ```bash
 pytest -m excel        # Windows with Microsoft Excel

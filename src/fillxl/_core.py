@@ -42,8 +42,8 @@ def fill(
     template: PathLike,
     output: PathLike,
     *,
-    values: dict[str, Any] | None = None,
-    tables: dict[str, TabularData] | None = None,
+    values: Mapping[str, Any] | None = None,
+    tables: Mapping[str, TabularData] | None = None,
     engine: Engine = "auto",
     config: FillXLConfig | None = None,
 ) -> Path:
@@ -65,7 +65,8 @@ def fill(
             the README).
 
             - ``"auto"`` (default): ``openpyxl``, unless Excel is required and
-              available.  It never picks ``fillxl``.
+              available.  It never picks ``fillxl``.  This choice is stable
+              across 1.x.
             - ``"openpyxl"``: runs on any OS without Excel; drops modern
               features (losses are reported via ``on_lossy``); writes no
               cached formula results, so Excel recalculates on open; pivot
@@ -94,10 +95,12 @@ def fill(
             a :class:`FillXLConfig`.
         KeyError: If a name in *values* or *tables* is not found in the workbook.
         CellValueError: If a value cannot be stored in an Excel cell.
-        LossyTemplateError: If ``on_lossy="raise"`` and the openpyxl engine
-            dropped template features.
+        LossyTemplateError: If ``on_lossy="raise"`` and the fill lost
+            template features.
         PermissionError: If *output* cannot be replaced, usually because it is
             open in Excel.
+        RuntimeError: If ``engine="win32com"`` is used where Excel cannot be
+            started — a non-Windows platform, or Windows without Excel.
         ValueError: If *engine* is unknown, the engine cannot write the
             requested format, column validation fails, or the sheet settings
             would leave no visible sheet.

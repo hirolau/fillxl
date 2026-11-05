@@ -46,9 +46,6 @@ so the changes it went through while it was being built are not listed here —
   template's ranges exactly as they are.
 - `UntrackedRangeWarning` is new: it reports a pivot cache source, defined name
   or data-validation list that still covers a table's old rows after a resize.
-- `names_deleted_sheet` (formerly the private `_names_deleted_sheet`) and
-  `cf_range_tracks_table` are public, so the fillxl engine shares the same
-  sheet-reference matching and conditional-formatting rule as the openpyxl one.
 - `on_lossy` now reports `xl/metadata.xml`, the part that carries spilling and
   data-type information. Without it a template's dynamic arrays become ordinary
   formulas, which used to happen silently.
@@ -57,10 +54,6 @@ so the changes it went through while it was being built are not listed here —
   measuring `engine="fillxl"` alongside `openpyxl` and `win32com`.
 
 ### Changed
-- `cf_range_tracks_table` is now `range_tracks_table`: the same rule also
-  extends data-validation ranges with the table, so the name no longer claims
-  to be about conditional formatting. `cf_range_tracks_table` remains as an
-  alias.
 - `get_backend` now takes a concrete engine name only. `engine="auto"` is
   resolved by `resolve_engine` before a backend is built, so the factory no
   longer carries a second, unreachable `"auto"` branch; the `Backend` protocol
@@ -71,8 +64,7 @@ so the changes it went through while it was being built are not listed here —
   the chart code as a private helper.
 - `engine="fillxl"` is documented as experimental and opt-in: `engine="auto"`
   never selects it, and the README lists its limits (no `.xlsb` or
-  format conversion, no encrypted files, pivot tables only flagged for refresh,
-  `chartEx` ranges untouched, pivot sources and data validations unaffected)
+  format conversion, no encrypted files, pivot tables only flagged for refresh)
   and a "Cached values" section: the engine does not calculate, so the file
   stays stale until Excel recalculates.
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from typing import cast, get_args
 
 from attrs import define, field
@@ -11,22 +10,17 @@ from attrs.validators import in_, instance_of
 from fillxl._lossy import OnLossy
 from fillxl._validation import ColumnValidationStrategy
 
-# ``"drop"`` was removed from the type but is still accepted for one release,
-# so a template or a script that names it keeps working and hears why not.
-_KNOWN_STRATEGIES: frozenset[str] = frozenset(get_args(ColumnValidationStrategy)) | {"drop"}
+_KNOWN_STRATEGIES: frozenset[str] = frozenset(get_args(ColumnValidationStrategy))
 
 
 def _column_strategy(value: str) -> ColumnValidationStrategy:
-    """Validate the column validation strategy name, mapping deprecated names.
-
-    ``"drop"`` and ``"none"`` produce the same fill, so ``"drop"`` is accepted
-    for one release, warns, and is stored as ``"none"``.
+    """Validate the column validation strategy name.
 
     Args:
         value: Strategy name to validate
 
     Returns:
-        The strategy to store.
+        The validated strategy.
 
     Raises:
         ValueError: If *value* is not a known strategy name
@@ -36,11 +30,10 @@ def _column_strategy(value: str) -> ColumnValidationStrategy:
         'strict'
         >>> _column_strategy("all_but_formulas")
         'all_but_formulas'
-        >>> import warnings
-        >>> with warnings.catch_warnings():
-        ...     warnings.simplefilter("ignore", DeprecationWarning)
-        ...     _column_strategy("drop")
-        'none'
+        >>> _column_strategy("drop")
+        Traceback (most recent call last):
+            ...
+        ValueError: column_validation_strategy must be one of ...got 'drop'
         >>> _column_strategy("bogus")
         Traceback (most recent call last):
             ...
@@ -52,14 +45,6 @@ def _column_strategy(value: str) -> ColumnValidationStrategy:
             f"column_validation_strategy must be one of {sorted(_KNOWN_STRATEGIES)}, got {value!r}"
         )
         raise ValueError(msg)
-    if value == "drop":
-        warnings.warn(
-            "column_validation_strategy='drop' is deprecated and will be removed in a "
-            "future release; use 'none' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return "none"
     return cast("ColumnValidationStrategy", value)
 
 

@@ -46,9 +46,7 @@ def validate_columns(
               Formula columns are ignored.
             - ``"all_but_formulas_strict"``: Like ``"all_but_formulas"``, but
               NO extra data columns are allowed.
-            - ``"none"``: Skip validation entirely.  The deprecated name
-              ``"drop"`` is still accepted by ``FillXLConfig``, which warns and
-              stores ``"none"``.
+            - ``"none"``: Skip validation entirely.
             - ``"strict"``: 1-to-1 match between table and data columns.
             - ``"warn"``: Emit one :class:`~fillxl.FillXLWarning` naming the
               missing and extra columns, then proceed with a best-effort fill.

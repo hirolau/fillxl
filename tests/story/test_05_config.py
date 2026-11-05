@@ -199,12 +199,10 @@ class TestColumnValidationStrategyOption:
         cfg = FillXLConfig(column_validation_strategy=strategy)
         assert cfg.column_validation_strategy == strategy
 
-    def test_the_drop_strategy_is_accepted_as_a_deprecated_alias_of_none(self) -> None:
-        """'drop' still works for one release, says so, and behaves like 'none'."""
-        with pytest.warns(DeprecationWarning, match="use 'none'"):
-            cfg = FillXLConfig(column_validation_strategy="drop")
-
-        assert cfg.column_validation_strategy == "none"
+    def test_the_removed_drop_strategy_is_refused(self) -> None:
+        """'drop' was removed in 1.0; use 'none'."""
+        with pytest.raises(ValueError, match="column_validation_strategy"):
+            FillXLConfig(column_validation_strategy=cast(Any, "drop"))
 
     def test_an_invalid_strategy_name_raises_valueerror(self) -> None:
         """'bogus' or any unknown strategy is rejected."""

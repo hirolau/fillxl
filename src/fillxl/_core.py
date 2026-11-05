@@ -95,8 +95,8 @@ def fill(
             a :class:`FillXLConfig`.
         KeyError: If a name in *values* or *tables* is not found in the workbook.
         CellValueError: If a value cannot be stored in an Excel cell.
-        LossyTemplateError: If ``on_lossy="raise"`` and the openpyxl engine
-            dropped template features.
+        LossyTemplateError: If ``on_lossy="raise"`` and the fill lost
+            template features.
         PermissionError: If *output* cannot be replaced, usually because it is
             open in Excel.
         ValueError: If *engine* is unknown, the engine cannot write the

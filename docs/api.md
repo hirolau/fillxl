@@ -57,7 +57,9 @@ format conversion) and available. This will not change in 1.x: a 1.x release
 never makes `"auto"` pick a different engine for the same template and output.
 
 Pass `engine="win32com"` explicitly to drive Microsoft Excel through COM — that
-is the engine to use for chart types openpyxl cannot write.
+is the engine to use for chart types openpyxl cannot write. All three engines
+write the same values for the same template and data; the parity suite fills
+templates with them and compares the results.
 
 ---
 
@@ -89,7 +91,7 @@ config = FillXLConfig(
 | `hide_underscore_sheets` | `bool` | `True` | Hide sheets whose names start with `_`. On by default, so opt out explicitly to keep such a sheet visible. |
 | `delete_sheets` | `Sequence[str] \| None` | `None` | Sheet names to delete (stored as a tuple). References to the deleted sheets are **not** rewritten; see below. |
 | `active_sheet` | `str \| None` | `None` | Name of the sheet to make active after filling. |
-| `on_lossy` | `"ignore" \| "warn" \| "raise"` | `"warn"` | What to do when the openpyxl engine drops template features. |
+| `on_lossy` | `"ignore" \| "warn" \| "raise"` | `"warn"` | What to do when a fill loses template features: the openpyxl engine's dropped parts, the fillxl engine's self-check, or a win32com format conversion that cannot hold everything (e.g. .xlsm saved as .xlsx). |
 
 ---
 
@@ -113,19 +115,20 @@ into the output.
 
 Excel re-parses strings that look like typed input: `"00123"` becomes the
 number `123` and `"1/2"` becomes a date. Both backends store such strings as
-**text**, so the two engines agree and no cell gets Excel's "number stored as
-text" marker. Error-like strings (`"#N/A"`, `"#DIV/0!"`, …) are stored as
-text as well, not as Excel errors.
+**text** in every engine, so no cell gets Excel's "number stored as text"
+marker. Error-like strings (`"#N/A"`, `"#DIV/0!"`, …) are stored as text as
+well, not as Excel errors.
 
 Strings that start with `=` are kept as literal text by default, so untrusted
 data cannot inject formulas. Set `escape_formulas=False` when the data is
 trusted and is meant to create formulas.
 
-Empty strings (`""`) become empty cells in both engines, because openpyxl
-cannot represent an empty text cell distinctly (it reads back as `None`).
+Empty strings (`""`) become empty cells in the openpyxl and win32com engines,
+because openpyxl cannot represent an empty text cell distinctly (it reads back
+as `None`).
 
-Datetimes lose their timezone (Excel has no timezone support), and both
-engines store the same wall-clock time.
+Datetimes lose their timezone (Excel has no timezone support), and the
+openpyxl and win32com engines store the same wall-clock time.
 
 `datetime.time` values are written as a **fraction of a day** (`0.385763…` for
 09:15:30), which is Excel's own time representation. Arithmetic such as
@@ -157,12 +160,13 @@ warnings.simplefilter("error", FillXLWarning)
 ### Dates
 
 A `date` gets the number format `yyyy-mm-dd` and a `datetime` gets
-`yyyy-mm-dd h:mm:ss`, in both engines, matching what openpyxl does on its own.
+`yyyy-mm-dd h:mm:ss` in the openpyxl and win32com engines, matching what
+openpyxl does on its own.
 A cell that already has a date format keeps it — format the cell in Excel and
 fillxl leaves it alone.
 
 Dates before **1900-03-01** raise `CellValueError`. Excel counts a 29 February
-1900 that never existed, and the two engines cannot agree on what a serial
+1900 that never existed, and the engines cannot agree on what a serial
 number before that day means.
 
 ### Sheets
@@ -177,10 +181,10 @@ FillXLConfig(
 )
 ```
 
-Sheet names are matched exactly, in both engines: `delete_sheets=["report"]`
-does not delete `Report`, and `active_sheet="report"` leaves the workbook's
-active sheet alone. Both cases warn instead of acting on a near-miss, so a
-typo cannot delete the wrong sheet.
+Sheet names are matched the way Excel matches them, ignoring case, by every
+engine: `delete_sheets=["rawdata"]` deletes `RawData`, and
+`active_sheet="report"` activates `Report`. A name that matches nothing, or
+matches two sheets that differ only by case, warns instead of acting.
 
 - Hiding or deleting every visible sheet raises `ValueError`; Excel requires at
   least one visible sheet. A workbook whose only sheet is `_report` therefore
@@ -202,14 +206,14 @@ typo cannot delete the wrong sheet.
 
 ### Defined names
 
-A name in `values=` is matched exactly first, then ignoring case, because
+A name in `values=` uses an exact match first, then ignores case, because
 Excel does the same: `values={"reporttitle": "Q4"}` fills the name
 `ReportTitle`. An exact match always wins, so a `Title` and a `title` that live
 in different scopes keep their own destinations.
 
 A name may not point at a **table header cell**: renaming a header would leave
 the table's column name out of step with the cell (openpyxl) or silently break
-the data-to-column mapping the same fill is using (Excel), so both engines
+the data-to-column mapping the same fill is using (Excel), so every engine
 raise `ValueError`. Point the name at another cell, or rename the column in
 Excel.
 
@@ -241,7 +245,7 @@ data row and column, or the named cell — and for a named cell it points at
 | Exception | Meaning |
 |-----------|---------|
 | `CellValueError` | A value Excel cannot store: text longer than 32,767 characters, an illegal control character, a lone surrogate, a character XML 1.0 forbids such as U+FFFE or U+FFFF, a date before 1900-03-01, an integer at or beyond 1e308, or a container where one value belongs. It is a `ValueError` and carries the table, data row and column (or the named cell). |
-| `LossyTemplateError` | The openpyxl engine dropped template features and `FillXLConfig(on_lossy="raise")` was set. Raise it before swapping in the output, so the previous output file is left untouched. |
+| `LossyTemplateError` | A fill lost template features (see `on_lossy`) and `FillXLConfig(on_lossy="raise")` was set. It is raised before the output is swapped in, so an existing output file is left untouched. |
 | `TypeError` | `values=` or `tables=` is not a mapping, `config=` is not a `FillXLConfig`, or the tabular data is not one of the supported shapes. |
 | `IsADirectoryError` | `output=` is an existing directory. |
 | `PermissionError` | The finished file could not replace `output=`, usually because it is open in Excel. |
@@ -273,8 +277,9 @@ exactly as it was and the staging file is removed. This is a guarantee against
 *operation* failures, not against power loss: the swap itself is a rename in
 the destination directory, which a crash can interrupt.
 
-The openpyxl engine runs a lossy-feature check against the staging file before
-the atomic swap. It compares part and element **counts** (modern charts,
+Every engine applies `on_lossy`. The openpyxl engine runs a lossy-feature check
+against the staging file before the atomic swap. It compares part and element
+**counts** (modern charts,
 slicers, shapes, pictures, embedded objects, VBA, …), so it catches dropped
 parts but cannot prove that a preserved part is unchanged. The check reports a
 `LossyTemplateWarning`:

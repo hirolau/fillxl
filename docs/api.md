@@ -15,8 +15,8 @@ fill(
     template: str | Path,
     output: str | Path,
     *,
-    values: dict[str, Any] | None = None,
-    tables: dict[str, TabularData] | None = None,
+    values: Mapping[str, Any] | None = None,
+    tables: Mapping[str, TabularData] | None = None,
     engine: Engine = "auto",
     config: FillXLConfig | None = None,
 ) -> Path
@@ -32,10 +32,12 @@ lists what else changed.
 |-----------|------|-------------|
 | `template` | `str \| Path` | Path to the Excel template file. |
 | `output` | `str \| Path` | Path where the filled workbook will be saved. |
-| `values` | `dict[str, Any] \| None` | Map of named cell → value to fill. |
-| `tables` | `dict[str, TabularData] \| None` | Map of table name → data to fill. |
+| `values` | `Mapping[str, Any] \| None` | Map of named cell → value to fill. |
+| `tables` | `Mapping[str, TabularData] \| None` | Map of table name → data to fill. |
 | `engine` | `Engine` | Backend engine: `"auto"`, `"openpyxl"`, `"fillxl"`, or `"win32com"`. Default: `"auto"` (see below). |
 | `config` | `FillXLConfig \| None` | Advanced configuration (see below). |
+
+Any mapping works — a `dict`, a `MappingProxyType`, …
 
 ### Returns
 

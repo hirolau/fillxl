@@ -42,8 +42,8 @@ def fill(
     template: PathLike,
     output: PathLike,
     *,
-    values: dict[str, Any] | None = None,
-    tables: dict[str, TabularData] | None = None,
+    values: Mapping[str, Any] | None = None,
+    tables: Mapping[str, TabularData] | None = None,
     engine: Engine = "auto",
     config: FillXLConfig | None = None,
 ) -> Path:

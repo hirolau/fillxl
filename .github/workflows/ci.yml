@@ -60,10 +60,17 @@ jobs:
         run: uv run pyrefly check
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+        include:
+          - os: windows-latest
+            python-version: "3.11"
+          - os: windows-latest
+            python-version: "3.15"
 
     steps:
       - uses: actions/checkout@v4
@@ -82,9 +89,10 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run tests
-        run: uv run pytest tests/ -m "not xlwings and not win32com" --cov=fillxl --cov-report=xml --cov-report=term-missing
+        run: uv run pytest tests/ -m "not xlwings and not win32com and not excel" --cov=fillxl --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -105,6 +113,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - label: pandas-2
+            pin: pandas>=2.0,<3
+            select: pandas
           - label: polars-min
             pin: polars>=0.20,<1
             select: polars
@@ -147,4 +158,3 @@ jobs:
           -k "${{ matrix.select }} or validation"
           -m "not win32com and not xlwings"
           -q
-

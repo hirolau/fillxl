@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import openpyxl
@@ -25,8 +26,9 @@ from fillxl._tables import populate_table
 from fillxl._types import OPENPYXL_SUFFIXES
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Generator, Sequence
     from pathlib import Path
+    from xml.etree.ElementTree import Element
 
     from fillxl._config import FillXLConfig
     from fillxl._lossy import OnLossy
@@ -239,7 +241,8 @@ class OpenpyxlBackend:
             workbook.calculation = calculation
         calculation.fullCalcOnLoad = True
         logger.debug("Saving workbook to %s", path)
-        workbook.save(path)
+        with _preserve_whitespace_only_text():
+            workbook.save(path)
 
     def close(self) -> None:
         """Close the workbook and release resources."""
@@ -250,6 +253,30 @@ class OpenpyxlBackend:
     def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
         """Report template features openpyxl did not write back."""
         check_lossy(template, output, policy, deleted_sheets=self._deleted_sheets)
+
+
+@contextmanager
+def _preserve_whitespace_only_text() -> Generator[None]:
+    """Make openpyxl mark whitespace-only ``<t>`` text with ``xml:space="preserve"``.
+
+    openpyxl only sets it when the text also has non-space characters, and Excel
+    refuses a workbook holding a bare whitespace-only ``<t>`` (such as the spacer
+    runs Excel itself writes into rich text).
+    """
+    from openpyxl.cell import _writer, rich_text
+    from openpyxl.xml.constants import XML_NS
+
+    def whitespace(node: Element) -> None:
+        if node.text and node.text != node.text.strip():
+            node.set(f"{{{XML_NS}}}space", "preserve")
+
+    originals = (rich_text.whitespace, _writer.whitespace)
+    rich_text.whitespace = whitespace  # ty: ignore[invalid-assignment]
+    _writer.whitespace = whitespace  # ty: ignore[invalid-assignment]
+    try:
+        yield
+    finally:
+        rich_text.whitespace, _writer.whitespace = originals
 
 
 def _active_title(workbook: openpyxl.Workbook) -> str | None:

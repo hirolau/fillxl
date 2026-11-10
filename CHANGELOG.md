@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-11-10
+
+### Fixed
+- `engine="openpyxl"` writes workbooks Excel opens again when the template holds
+  rich text with a whitespace-only run — the spacer runs Excel itself writes into
+  header cells, for example. openpyxl set `xml:space="preserve"` only on text
+  that also had a visible character, so those runs were written as a bare `<t>`
+  and Excel refused the file ("We found a problem with some content…"). The
+  attribute is now set for the duration of the save.
+
 ## [1.0.0] - 2026-11-05
 
 First stable release. The public API — `fill()`, `FillXLConfig`, the exception

@@ -12,9 +12,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import openpyxl
 import pytest
 
 from fillxl import fill
+from tests._assets import SPACER_RICH_TEXT_TEMPLATE
 from tests._engines import _win32com_available
 from tests.ooxml._build import body_rows
 from tests.ooxml.test_hostile import _HOSTILE
@@ -96,6 +98,40 @@ def test_a_parity_output_opens_in_excel_without_repair(
     output = fill(template, tmp_path / "out.xlsx", engine="fillxl", **kwargs)
 
     _opens_without_repair(excel, output, expected)
+
+
+def test_an_openpyxl_output_with_whitespace_only_rich_text_opens_in_excel(
+    tmp_path: Path,
+    excel: Any,  # noqa: ANN401
+) -> None:
+    """Excel's own spacer runs (" \\n" in a tiny font) must not corrupt the file."""
+    from tests.integration.test_rich_text import spacer_rich_text
+    from tests.parity.builders import table_template
+
+    template = table_template(tmp_path / "template.xlsx", top_row=3)
+    workbook = openpyxl.load_workbook(template, rich_text=True)
+    workbook["Data"]["A1"] = spacer_rich_text()
+    workbook.save(template)
+    workbook.close()
+
+    output = fill(
+        template,
+        tmp_path / "out.xlsx",
+        engine="openpyxl",
+        tables={"Sales": [{"fund": "F", "nav": 1}]},
+    )
+
+    _opens_without_repair(excel, output, ["Data"])
+
+
+def test_an_excel_written_template_still_opens_in_excel_after_a_fill(
+    tmp_path: Path,
+    excel: Any,  # noqa: ANN401
+) -> None:
+    """A workbook from Excel, spacer runs and all, survives an openpyxl fill."""
+    output = fill(SPACER_RICH_TEXT_TEMPLATE, tmp_path / "out.xlsx", engine="openpyxl")
+
+    _opens_without_repair(excel, output, ["Portfolio Holding", "Disclaimer"])
 
 
 _EXCEL_FIXTURES = [

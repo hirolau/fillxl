@@ -792,8 +792,11 @@ def _resize_adjacent_formulas(
     geometry = plan.geometry
     table_sheet = table.sheet.name
     parts = [entry.part for entry in workbook.worksheet_parts()]
+    # Resolved once: the title of a sheet part does not depend on the cell.
+    titles = {entry.part: entry.name for entry in workbook.sheets()}
     for sheet in sheets.formula_parts(parts):
         own_sheet = sheet.part == table.sheet.part
+        formula_sheet = titles.get(sheet.part, "")
         for row, column, formula in list(sheet.formula_cells()):
             xml = sheet.cell(row, column)
             if xml is not None and array_range(xml) is not None:
@@ -807,7 +810,6 @@ def _resize_adjacent_formulas(
             )
             if in_body:
                 continue
-            formula_sheet = _sheet_title(workbook, sheet.part)
             if not may_track_table(
                 formula,
                 table_sheet=table_sheet,
@@ -836,14 +838,6 @@ def _resize_adjacent_formulas(
             if updated is not None:
                 logger.debug("Resized formula %s -> %s", formula, updated)
                 sheet.set_formula(row, column, updated)
-
-
-def _sheet_title(workbook: WorkbookPart, part: str) -> str:
-    """The tab name of a sheet part."""
-    for entry in workbook.sheets():
-        if entry.part == part:
-            return entry.name
-    return ""  # pragma: no cover - every part comes from the workbook's sheets
 
 
 def _untracked_range_sources(

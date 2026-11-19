@@ -48,7 +48,7 @@ class TestBackendCleanup:
         monkeypatch.setattr(
             fillxl._core,
             "get_backend",
-            lambda _engine: ExplodingBackend(),  # pyrefly: ignore[implicit-any-lambda]
+            lambda _engine, _config=None: ExplodingBackend(),  # pyrefly: ignore[implicit-any-lambda]
         )
 
         template = tmp_path / "template.xlsx"

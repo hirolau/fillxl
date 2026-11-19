@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import openpyxl
 import pytest
 
 from fillxl import FillXLConfig
+
+if TYPE_CHECKING:
+    from fillxl._backends._win32com import Win32ComBackend
 
 
 def assets_dir() -> Path:
@@ -49,7 +53,7 @@ class TestWin32ComBackendNoWorkbook:
 
         backend = Win32ComBackend()
         with pytest.raises(RuntimeError, match="No workbook loaded"):
-            method_call(backend)  # type: ignore[operator]  # ty:ignore[call-non-callable]
+            method_call(backend)  # type: ignore[operator]  # ty:ignore[not-callable]
 
     def test_win32com_backend_close_without_load_does_not_raise(self) -> None:
         """Calling close() without loading should not raise."""
@@ -289,6 +293,218 @@ def test_a_working_pivot_cache_is_refreshed_quietly() -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Busy Excel handling (CI-safe, fake COM errors)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class _RejectedError(Exception):
+    """A COM failure carrying only the HRESULT, as ``pythoncom.com_error`` does."""
+
+    def __init__(self, hresult: int) -> None:
+        super().__init__(f"COM error {hresult:#x}")
+        self.hresult = hresult
+
+
+def _busy_backend(timeout: float = 5.0) -> Win32ComBackend:
+    from fillxl._backends._win32com import Win32ComBackend
+
+    backend = Win32ComBackend(com_busy_timeout=timeout)
+    backend._load_path = Path("template.xlsx")
+    return backend
+
+
+class TestRetryMessageFilter:
+    """Excel's message filter asks for a retry while the call is still fresh."""
+
+    def test_a_rejected_call_is_retried_below_the_timeout_and_dropped_above(self) -> None:
+        """The filter retries for the configured window, then gives up."""
+        from fillxl._backends._win32com import _RetryMessageFilter
+
+        message_filter = _RetryMessageFilter(timeout_ms=1000)
+
+        assert message_filter.RetryRejectedCall(None, 0, 0) == 100
+        assert message_filter.RetryRejectedCall(None, 999, 0) == 100
+        assert message_filter.RetryRejectedCall(None, 1000, 0) == -1
+        assert message_filter.HandleInComingCall(0, None, 0, None) == 0
+        assert message_filter.MessagePending(None, 0, 0) == 2
+
+
+class TestBusyCallFallback:
+    """The fallback helper retries what an MTA thread's filter cannot."""
+
+    @pytest.mark.parametrize(
+        "hresult",
+        [-2147418111, -2147417846, 0x80010001, 0x8001010A],
+        ids=["call_rejected", "retry_later", "call_rejected_unsigned", "retry_later_unsigned"],
+    )
+    def test_a_rejected_call_is_retried_until_excel_answers(self, hresult: int) -> None:
+        """Both "server busy" HRESULTs are retried, signed or unsigned."""
+        backend = _busy_backend()
+        attempts: list[int] = []
+
+        def flaky() -> str:
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise _RejectedError(hresult)
+            return "ok"
+
+        assert backend._call_excel(flaky, "read the calculation mode") == "ok"
+        assert len(attempts) == 3
+
+    def test_a_dynamic_dispatch_attribute_error_is_retried(self) -> None:
+        """A busy Excel reports a rejected ``GetIDsOfNames`` as ``AttributeError``."""
+        backend = _busy_backend()
+        attempts: list[int] = []
+
+        def flaky() -> int:
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise AttributeError("Excel.Application.Calculation")
+            return -4135
+
+        assert backend._call_excel(flaky, "read the calculation mode") == -4135
+        assert len(attempts) == 3
+
+    def test_a_call_rejected_until_the_timeout_raises_a_clear_error(self) -> None:
+        """The caller never sees ``AttributeError: Excel.Application.Calculation``."""
+        backend = _busy_backend(timeout=0.05)
+
+        def always_busy() -> None:
+            raise AttributeError("Excel.Application.Calculation")
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"Excel stayed busy for 0\.05 s after opening .*template\.xlsx "
+            r"\(RPC_E_CALL_REJECTED\)",
+        ) as raised:
+            backend._call_excel(always_busy, "read the calculation mode")
+        assert isinstance(raised.value.__cause__, AttributeError)
+
+    def test_an_unrelated_error_is_not_retried(self) -> None:
+        """Only a busy Excel is worth another attempt."""
+        backend = _busy_backend()
+        attempts: list[int] = []
+
+        def broken() -> None:
+            attempts.append(1)
+            raise OSError("the workbook is corrupt")
+
+        with pytest.raises(OSError, match="corrupt"):
+            backend._call_excel(broken, "open the template")
+        assert len(attempts) == 1
+
+
+class TestTemplateCalculationMode:
+    """The template's own calculation mode is known before it is opened."""
+
+    def test_an_automatic_template_is_read_from_the_package(self, tmp_path: Path) -> None:
+        """Excel's default is automatic, including when ``calcMode`` is absent."""
+        from fillxl._backends._win32com import _template_calculation_mode
+
+        path = tmp_path / "auto.xlsx"
+        workbook = openpyxl.Workbook()
+        workbook.save(path)
+        workbook.close()
+
+        assert _template_calculation_mode(path) == -4105
+
+    def test_a_manual_template_is_read_from_the_package(self, tmp_path: Path) -> None:
+        """A template saved in manual mode must not be recalculated on open."""
+        from fillxl._backends._win32com import _template_calculation_mode
+
+        path = tmp_path / "manual.xlsx"
+        workbook = openpyxl.Workbook()
+        assert workbook.calculation is not None
+        workbook.calculation.calcMode = "manual"
+        workbook.save(path)
+        workbook.close()
+
+        assert _template_calculation_mode(path) == -4135
+
+    def test_an_unreadable_package_has_no_answer(self, tmp_path: Path) -> None:
+        """A binary or corrupt template is opened the plain way."""
+        from fillxl._backends._win32com import _template_calculation_mode
+
+        binary = tmp_path / "book.xlsb"
+        binary.write_bytes(b"not a workbook")
+        corrupt = tmp_path / "book.xlsx"
+        corrupt.write_bytes(b"not a workbook")
+
+        assert _template_calculation_mode(binary) is None
+        assert _template_calculation_mode(corrupt) is None
+
+
+class TestComMessageFilter:
+    """The ctypes ``IMessageFilter`` OLE calls while a call is rejected."""
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="builds a COM object")
+    def test_ole_reaches_the_policy_through_the_vtable(self) -> None:
+        """QueryInterface answers for the filter, and RetryRejectedCall forwards."""
+        import ctypes
+        import ctypes.wintypes as wintypes
+        import uuid
+
+        from fillxl._backends._win32com import (
+            _IMESSAGE_FILTER_IID,
+            _ComMessageFilter,
+            _RetryMessageFilter,
+        )
+
+        message_filter = _ComMessageFilter(_RetryMessageFilter(timeout_ms=1000))
+        vtable = ctypes.cast(
+            ctypes.c_void_p(message_filter.pointer),
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)),
+        ).contents
+
+        # typeshed declares WINFUNCTYPE for a win32 target only, and the type
+        # checkers also run on Linux; the alias keeps this clean on both.
+        windows: Any = ctypes
+        query_interface = windows.WINFUNCTYPE(
+            ctypes.c_long,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        )(vtable[0])
+        retry_rejected = windows.WINFUNCTYPE(
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+        )(vtable[4])
+
+        iid = ctypes.create_string_buffer(uuid.UUID(_IMESSAGE_FILTER_IID).bytes_le, 16)
+        found = ctypes.c_void_p()
+        status = query_interface(
+            ctypes.c_void_p(message_filter.pointer),
+            ctypes.cast(iid, ctypes.c_void_p),
+            ctypes.byref(found),
+        )
+        assert status == 0
+        assert found.value == message_filter.pointer
+
+        assert retry_rejected(ctypes.c_void_p(message_filter.pointer), None, 10, 0) == 100
+        assert (
+            retry_rejected(ctypes.c_void_p(message_filter.pointer), None, 10_000, 0) == 0xFFFFFFFF
+        )
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="needs OLE")
+    def test_the_filter_is_registered_and_restored_on_this_thread(self) -> None:
+        """Registration is what puts the filter in front of every COM call."""
+        import pythoncom
+
+        from fillxl._backends._win32com import _ComMessageFilter, _RetryMessageFilter
+
+        pythoncom.CoInitialize()
+        try:
+            message_filter = _ComMessageFilter(_RetryMessageFilter(timeout_ms=1000))
+            previous = message_filter.register()
+            message_filter.restore(previous)
+        finally:
+            pythoncom.CoUninitialize()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Excel-backed behaviours (skipped without Excel)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -309,6 +525,23 @@ def _skip_without_excel() -> None:
         pytest.skip(f"Excel COM is not available: {exc}")
     else:
         app.Quit()
+
+
+class TestWin32ComBusyHandling:
+    """A busy Excel is waited for, not treated as a failure."""
+
+    def test_the_retrying_filter_is_active_for_the_session(self) -> None:
+        """The filter that retries rejected calls is installed while Excel runs."""
+        from fillxl._backends._win32com import Win32ComBackend
+
+        _skip_without_excel()
+        backend = Win32ComBackend()
+        try:
+            backend.load(assets_dir() / "test_template_1.xlsx")
+            assert backend._message_filter is not None
+        finally:
+            backend.close()
+        assert backend._message_filter is None
 
 
 class TestWin32ComSaveFormats:

@@ -1151,3 +1151,80 @@ class TestWin32ComFormatPreservation:
                 wb.close()
         finally:
             backend.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# A busy Excel must not fail the fill
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_VOLATILE_FORMULAS = 50_000
+
+
+def _excel_pids() -> set[int]:
+    """The PIDs of every EXCEL.EXE running on this machine."""
+    import csv
+    import io
+    import subprocess
+
+    listing = subprocess.run(
+        ["tasklist", "/FI", "IMAGENAME eq EXCEL.EXE", "/FO", "CSV", "/NH"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    pids: set[int] = set()
+    for row in csv.reader(io.StringIO(listing.stdout)):
+        if len(row) >= 2 and row[0].upper() == "EXCEL.EXE" and row[1].isdigit():
+            pids.add(int(row[1]))
+    return pids
+
+
+def _slow_recalculation_template(path: Path, *, formulas: int = _VOLATILE_FORMULAS) -> Path:
+    """A small table plus a sheet Excel has to recalculate for a while."""
+    workbook = openpyxl.Workbook()
+    slow = workbook.active
+    slow.title = "Slow"
+    for row in range(1, formulas + 1):
+        slow.cell(row=row, column=1, value="=RAND()*ROW()")
+    data = workbook.create_sheet("Data")
+    data.append(["Region", "Amount"])
+    data.append(["North", 1])
+    data.add_table(Table(displayName="Data", ref="A1:B2"))
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+@pytest.mark.win32com
+class TestWin32ComBusyExcel:
+    """Excel rejects COM calls while it is busy; the fill waits instead."""
+
+    def test_a_slow_template_fills_and_closes_without_errors(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A template full of volatile formulas fills and leaves no Excel behind."""
+        import logging
+
+        template = _slow_recalculation_template(tmp_path / "slow.xlsx")
+        output = tmp_path / "slow_filled.xlsx"
+        running_before = _excel_pids()
+
+        with caplog.at_level(logging.ERROR, logger="fillxl"):
+            fill(
+                template=template,
+                output=output,
+                tables={
+                    "Data": [
+                        {"Region": "South", "Amount": 7},
+                        {"Region": "East", "Amount": 9},
+                        {"Region": "West", "Amount": 11},
+                    ],
+                },
+                engine="win32com",
+            )
+
+        assert output.exists()
+        assert caplog.records == [], [record.getMessage() for record in caplog.records]
+        assert _excel_pids() - running_before == set()

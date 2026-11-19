@@ -143,7 +143,7 @@ def fill(
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             temp_template_path = Path(temp_dir) / template_path.name
             shutil.copy2(template_path, temp_template_path)
-            backend = get_backend(resolved_engine)
+            backend = get_backend(resolved_engine, cfg)
             try:
                 # load() runs inside try so a failed open still closes Excel.
                 backend.load(temp_template_path)

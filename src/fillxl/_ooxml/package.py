@@ -115,6 +115,10 @@ class OoxmlPackage:
         self._dropped: set[str] = set()
         self._dirty: set[str] = set()
         self._shared_strings: list[str] | None = None
+        # Parsed relationships per ``.rels`` part, keyed by the identity of the
+        # text they were parsed from.  ``set_text()`` and ``drop()`` replace or
+        # remove that text, so an edit invalidates the entry by itself.
+        self._relationships: dict[str, tuple[str, tuple[Relationship, ...]]] = {}
 
     # ── parts ───────────────────────────────────────────────────────────────
 
@@ -223,8 +227,11 @@ class OoxmlPackage:
         part = rels_part(owner)
         if not self.has(part):
             return []
-        found: list[Relationship] = []
         text = self.text(part)
+        cached = self._relationships.get(part)
+        if cached is not None and cached[0] is text:
+            return list(cached[1])
+        found: list[Relationship] = []
         for match in _RELATIONSHIP.finditer(text):
             element = match.group(0)
             rel_id = xmltext.attribute(element, "Id")
@@ -240,6 +247,7 @@ class OoxmlPackage:
                     external=xmltext.attribute(element, "TargetMode") == "External",
                 ),
             )
+        self._relationships[part] = (text, tuple(found))
         return found
 
     def target_part(self, owner: str, rel_id: str) -> str | None:

@@ -702,3 +702,65 @@ def test_a_real_macro_template_keeps_its_spill_metadata_and_vba(tmp_path: Path) 
         )
     finally:
         workbook.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Cost of a fill, not of the workbook's formula count
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_FORMULA_CELLS = 20_000
+_FORMULA_HEAVY_TABLES = 10
+
+
+def _formula_heavy_template(path: Path) -> Path:
+    """Ten small tables plus a sheet holding thousands of range formulas."""
+    workbook = openpyxl.Workbook()
+    formulas = workbook.active
+    formulas.title = "Formulas"
+    for row in range(1, _FORMULA_CELLS + 1):
+        formulas.cell(row=row, column=1, value=f"=SUM(B{row}:B{row + 2})")
+    for index in range(_FORMULA_HEAVY_TABLES):
+        sheet = workbook.create_sheet(f"Table{index}")
+        sheet.append(["Region", "Amount"])
+        sheet.append(["North", 1])
+        sheet.add_table(Table(displayName=f"Table{index}", ref="A1:B2"))
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def test_the_workbook_is_not_reparsed_for_every_formula_cell(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fill costs one sheet lookup per table, not one per formula cell.
+
+    Resolving a sheet title re-parses ``workbook.xml`` and its relationships, so
+    doing it inside the loop over formula cells made a 9-table template take
+    1105 s instead of 10 s.
+    """
+    from fillxl._ooxml.workbook import SheetEntry, WorkbookPart
+
+    template = _formula_heavy_template(tmp_path / "formulas.xlsx")
+    calls = 0
+    original = WorkbookPart.sheets
+
+    def counted(self: WorkbookPart) -> list[SheetEntry]:
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(WorkbookPart, "sheets", counted)
+
+    fill(
+        template,
+        tmp_path / "out.xlsx",
+        engine="fillxl",
+        tables={
+            f"Table{index}": [{"Region": f"R{row}", "Amount": row} for row in range(3)]
+            for index in range(_FORMULA_HEAVY_TABLES)
+        },
+    )
+
+    # A handful of lookups per table is fine; one per formula cell is the bug.
+    assert 0 < calls <= 20 * _FORMULA_HEAVY_TABLES

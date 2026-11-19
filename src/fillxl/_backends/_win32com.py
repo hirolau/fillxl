@@ -11,12 +11,13 @@ Only works on **Windows** with Microsoft Excel installed.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import threading
 import time
 import zipfile
-from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.cell_range import CellRange
@@ -69,7 +70,21 @@ _XL_FILL_FORMATS = 3
 
 _MSO_AUTOMATION_SECURITY_FORCE_DISABLE = 3
 _RPC_E_CHANGED_MODE = -2147417850
+# Excel rejects calls with these while it is loading or recalculating.
+_RPC_E_CALL_REJECTED = -2147418111  # 0x80010001
+_RPC_E_SERVERCALL_RETRYLATER = -2147417846  # 0x8001010A
+_BUSY_HRESULTS = frozenset(
+    {
+        _RPC_E_CALL_REJECTED,
+        _RPC_E_SERVERCALL_RETRYLATER,
+        # The same HRESULTs as pywin32 reports them unsigned.
+        _RPC_E_CALL_REJECTED + 0x1_0000_0000,
+        _RPC_E_SERVERCALL_RETRYLATER + 0x1_0000_0000,
+    },
+)
 _XL_CALCULATION_MANUAL = -4135
+_XL_CALCULATION_AUTOMATIC = -4105
+_XL_CALCULATION_SEMIAUTOMATIC = 2
 _XL_CELL_TYPE_FORMULAS = -4123
 
 _OOXML_SUFFIXES = frozenset({".xlsx", ".xlsm", ".xltx", ".xltm"})
@@ -82,6 +97,221 @@ _FILE_FORMATS: dict[str, int] = {
     ".xlsm": 52,  # xlOpenXMLWorkbookMacroEnabled
     ".xlsb": 50,  # xlExcel12
 }
+
+_CALCULATION_MODE = re.compile(r'\bcalcMode="([^"]*)"')
+_CALC_PR = re.compile(r"<(?:\w+:)?calcPr\b[^>]*>")
+_CALCULATION_MODES: dict[str, int] = {
+    "manual": _XL_CALCULATION_MANUAL,
+    "auto": _XL_CALCULATION_AUTOMATIC,
+    "autoNoTable": _XL_CALCULATION_SEMIAUTOMATIC,
+}
+
+# COM message filter return values (objidl.h)
+_SERVERCALL_ISHANDLED = 0
+_PENDINGMSG_WAITDEFPROCESS = 2
+# pywin32 does not export these IIDs, and it wraps neither
+# CoRegisterMessageFilter nor IMessageFilter.
+_IID_IUNKNOWN = "00000000-0000-0000-C000-000000000046"
+_IMESSAGE_FILTER_IID = "00000016-0000-0000-C000-000000000046"
+_E_NOINTERFACE = -2147467262  # 0x80004002
+_E_POINTER = -2147467261  # 0x80004003
+
+# Retry pacing for a rejected call: quick at first (Excel is usually back within
+# seconds), then slow enough not to spin while a big template recalculates.
+_BUSY_RETRY_INITIAL_S = 0.05
+_BUSY_RETRY_MAX_S = 2.0
+
+_T = TypeVar("_T")
+
+
+class _RetryMessageFilter:
+    """Retry calls Excel rejects while busy (loading, recalculating)."""
+
+    def __init__(self, timeout_ms: float) -> None:
+        self._timeout_ms = timeout_ms
+
+    def HandleInComingCall(  # noqa: N802
+        self,
+        call_type: int,  # noqa: ARG002
+        caller: Any,  # noqa: ANN401, ARG002
+        tick_count: int,  # noqa: ARG002
+        interface_info: Any,  # noqa: ANN401, ARG002
+    ) -> int:
+        return _SERVERCALL_ISHANDLED
+
+    def RetryRejectedCall(  # noqa: N802
+        self,
+        callee: Any,  # noqa: ANN401, ARG002
+        tick_count: int,
+        reject_type: int,  # noqa: ARG002
+    ) -> int:
+        # Return value >= 0: retry after that many ms; -1: give up.
+        return 100 if tick_count < self._timeout_ms else -1
+
+    def MessagePending(  # noqa: N802
+        self,
+        callee: Any,  # noqa: ANN401, ARG002
+        tick_count: int,  # noqa: ARG002
+        pending_type: int,  # noqa: ARG002
+    ) -> int:
+        return _PENDINGMSG_WAITDEFPROCESS
+
+
+class _ComMessageFilter:
+    """A COM ``IMessageFilter`` whose answers come from :class:`_RetryMessageFilter`.
+
+    pywin32 does not wrap ``CoRegisterMessageFilter``, so the object is built
+    here with ctypes: a vtable whose entries forward to the policy object.
+    OLE calls it from the apartment that registered it, so the structure has to
+    stay alive until the previous filter is restored.
+    """
+
+    def __init__(self, policy: _RetryMessageFilter) -> None:
+        import ctypes
+        import ctypes.wintypes as wintypes
+        import uuid
+
+        dword = wintypes.DWORD
+        pointer = ctypes.c_void_p
+        # typeshed declares WINFUNCTYPE for a win32 target only, and the type
+        # checkers also run on Linux; the alias keeps this clean on both.
+        windows: Any = ctypes
+        query_type = windows.WINFUNCTYPE(ctypes.c_long, pointer, pointer, pointer)
+        count_type = windows.WINFUNCTYPE(dword, pointer)
+        incoming_type = windows.WINFUNCTYPE(dword, pointer, pointer, dword, pointer)
+        retry_type = windows.WINFUNCTYPE(dword, pointer, pointer, dword, dword)
+        pending_type = windows.WINFUNCTYPE(dword, pointer, pointer, dword, dword)
+
+        self._refs = ctypes.c_ulong(1)
+        known = {
+            uuid.UUID(_IID_IUNKNOWN).bytes_le,
+            uuid.UUID(_IMESSAGE_FILTER_IID).bytes_le,
+        }
+
+        def query_interface(this: int, riid: int, result: int) -> int:
+            if not result:
+                return _E_POINTER
+            target = ctypes.cast(result, ctypes.POINTER(ctypes.c_void_p))
+            if not riid or ctypes.string_at(riid, 16) not in known:
+                target[0] = None
+                return _E_NOINTERFACE
+            self._refs.value += 1
+            target[0] = this
+            return 0
+
+        def add_ref(this: int) -> int:  # noqa: ARG001
+            self._refs.value += 1
+            return self._refs.value
+
+        def release(this: int) -> int:  # noqa: ARG001
+            self._refs.value = max(self._refs.value - 1, 0)
+            return self._refs.value
+
+        def handle_incoming(
+            this: int,  # noqa: ARG001
+            call_type: int,
+            caller: int,
+            tick: int,
+            info: int,
+        ) -> int:
+            try:
+                return policy.HandleInComingCall(call_type, caller, tick, info)
+            except Exception:
+                logger.debug("The message filter failed; handling the call", exc_info=True)
+                return _SERVERCALL_ISHANDLED
+
+        def retry_rejected(this: int, callee: int, tick: int, reject_type: int) -> int:  # noqa: ARG001
+            try:
+                delay = policy.RetryRejectedCall(callee, tick, reject_type)
+            except Exception:
+                # Returning 0 would retry at once, forever; -1 gives the call up.
+                logger.debug("The message filter failed; giving the call up", exc_info=True)
+                return 0xFFFF_FFFF
+            return delay & 0xFFFF_FFFF
+
+        def message_pending(
+            this: int,  # noqa: ARG001
+            callee: int,
+            tick: int,
+            pending_type: int,
+        ) -> int:
+            try:
+                return policy.MessagePending(callee, tick, pending_type)
+            except Exception:
+                logger.debug("The message filter failed; waiting", exc_info=True)
+                return _PENDINGMSG_WAITDEFPROCESS
+
+        class Vtable(ctypes.Structure):
+            _fields_ = [
+                ("QueryInterface", query_type),
+                ("AddRef", count_type),
+                ("Release", count_type),
+                ("HandleInComingCall", incoming_type),
+                ("RetryRejectedCall", retry_type),
+                ("MessagePending", pending_type),
+            ]
+
+        class ComObject(ctypes.Structure):
+            _fields_ = [("vtable", ctypes.POINTER(Vtable)), ("policy", ctypes.py_object)]
+
+        # The callbacks and the vtable have to outlive the registration.
+        self._callbacks = (
+            query_type(query_interface),
+            count_type(add_ref),
+            count_type(release),
+            incoming_type(handle_incoming),
+            retry_type(retry_rejected),
+            pending_type(message_pending),
+        )
+        self._vtable = Vtable(*self._callbacks)
+        self._object = ComObject(ctypes.pointer(self._vtable), policy)
+        self.pointer: int = ctypes.cast(ctypes.pointer(self._object), ctypes.c_void_p).value or 0
+
+    def register(self) -> int | None:
+        """Register with OLE; returns the pointer of the filter it replaces."""
+        import ctypes
+
+        previous = ctypes.c_void_p()
+        if _co_register_message_filter(ctypes.c_void_p(self.pointer), ctypes.byref(previous)):
+            msg = "Could not register a COM message filter"
+            raise OSError(msg)
+        return previous.value
+
+    def restore(self, previous: int | None) -> None:
+        """Put the *previous* filter (``None`` means the default) back."""
+        import ctypes
+
+        _co_register_message_filter(ctypes.c_void_p(previous), None)
+
+
+def _co_register_message_filter(
+    message_filter: Any,  # noqa: ANN401
+    previous: Any,  # noqa: ANN401
+) -> int:
+    """``ole32.CoRegisterMessageFilter``, whose HRESULT is returned rather than raised."""
+    import ctypes
+
+    # WinDLL exists on Windows only and typeshed knows it on a win32 target only.
+    windows: Any = ctypes
+    ole32 = windows.WinDLL("ole32")
+    register = ole32.CoRegisterMessageFilter
+    register.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    register.restype = ctypes.c_long
+    return int(register(message_filter, previous))
+
+
+def _com_call_rejected(exc: BaseException) -> bool:
+    """Whether *exc* is Excel refusing a call because it is still busy.
+
+    ``pythoncom.com_error`` carries the HRESULT.  A dynamic dispatch object
+    raises ``AttributeError`` instead: ``CDispatch.__getattr__`` turns the COM
+    failure of ``GetIDsOfNames`` into one, which is why a busy Excel shows up
+    as ``AttributeError: Excel.Application.Calculation``.
+    """
+    hresult = getattr(exc, "hresult", None)
+    if hresult is not None:
+        return hresult in _BUSY_HRESULTS
+    return isinstance(exc, AttributeError)
 
 
 class Win32ComBackend:
@@ -98,7 +328,14 @@ class Win32ComBackend:
 
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, com_busy_timeout: float = 120.0) -> None:
+        """Create a backend; Excel starts on the first :meth:`load`.
+
+        Args:
+            com_busy_timeout: How long, in seconds, to keep retrying a COM call
+                Excel rejects because it is still loading or recalculating.
+
+        """
         self._app: Any = None
         self._workbook: Any = None
         self._load_path: Path | None = None
@@ -107,10 +344,15 @@ class Win32ComBackend:
         self._definitions_loaded = False
         self._com_initialized = False
         self._com_thread: int | None = None
+        self._com_busy_timeout = com_busy_timeout
+        # COM message filter that retries calls Excel rejects while busy, and
+        # the pointer of the filter it replaced.
+        self._message_filter: _ComMessageFilter | None = None
+        self._previous_filter: int | None = None
         # Whether the workbook being saved had a VBA project, read before SaveAs
         # because check_output() runs after the workbook is closed.
         self._saved_with_vba: bool | None = None
-        # Excel's calculation mode before this fill; restored before SaveAs.
+        # The calculation mode the template was saved with; restored before SaveAs.
         self._previous_calculation: int | None = None
 
     # ── Internal helpers ───────────────────────────────────────────────────
@@ -142,6 +384,9 @@ class Win32ComBackend:
         else:
             self._com_initialized = True
             self._com_thread = threading.get_ident()
+            # A message filter only runs in a single-threaded apartment; on an
+            # MTA thread _call_excel() does the retrying instead.
+            self._register_message_filter()
 
         # DispatchEx always creates a new, isolated Excel instance.
         try:
@@ -163,6 +408,137 @@ class Win32ComBackend:
             except AttributeError:
                 logger.warning("Could not set Excel.Application.%s", attr)
         logger.debug("Excel Application started (hidden, macros disabled)")
+
+    def _register_message_filter(self) -> None:
+        """Make Excel's "busy, try again later" rejections wait instead of fail."""
+        try:
+            message_filter = _ComMessageFilter(
+                _RetryMessageFilter(self._com_busy_timeout * 1000),
+            )
+            self._previous_filter = message_filter.register()
+        except Exception:
+            # A filter that cannot be registered must not fail the fill: the
+            # fallback in _call_excel() retries the same calls.
+            logger.debug(
+                "Could not register a COM message filter; rejected calls are retried instead",
+                exc_info=True,
+            )
+            return
+        # The filter has to stay referenced while OLE uses it.
+        self._message_filter = message_filter
+        logger.debug("Registered a retrying COM message filter (%gs)", self._com_busy_timeout)
+
+    def _restore_message_filter(self) -> None:
+        """Put the message filter that was registered before this session back."""
+        message_filter = self._message_filter
+        if message_filter is None:
+            return
+        self._message_filter = None
+        previous = self._previous_filter
+        self._previous_filter = None
+        try:
+            message_filter.restore(previous)
+        except Exception:
+            logger.warning("Could not restore the previous COM message filter", exc_info=True)
+
+    def _call_excel(self, operation: Callable[[], _T], what: str) -> _T:
+        """Run *operation*, retrying while Excel rejects calls because it is busy.
+
+        Right after ``Workbooks.Open()`` Excel is still loading and recalculating
+        the template and refuses incoming COM calls with ``RPC_E_CALL_REJECTED``.
+        The message filter handles that in an STA thread; this is the fallback
+        for an MTA thread (where message filters do not run) and a second line
+        of defence for the first calls after the template was opened.
+
+        Args:
+            operation: The COM call to run.
+            what: What the call does, for the error message.
+
+        Returns:
+            Whatever *operation* returns.
+
+        Raises:
+            RuntimeError: If Excel is still busy when the timeout runs out.
+
+        """
+        deadline = time.monotonic() + self._com_busy_timeout
+        delay = _BUSY_RETRY_INITIAL_S
+        while True:
+            try:
+                return operation()
+            except Exception as exc:
+                if not _com_call_rejected(exc):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    msg = (
+                        f"Excel stayed busy for {self._com_busy_timeout:g} s after opening "
+                        f"{self._load_path or 'the workbook'} (RPC_E_CALL_REJECTED), so it "
+                        f"could not {what}. Close other workbooks, or raise "
+                        "FillXLConfig.com_busy_timeout, and try again."
+                    )
+                    raise RuntimeError(msg) from exc
+                logger.debug("Excel is busy; retrying in %.2fs (%s)", delay, what)
+                time.sleep(min(delay, remaining))
+                delay = min(delay * 2, _BUSY_RETRY_MAX_S)
+
+    def _current_calculation(self) -> int:
+        """Excel's current calculation mode."""
+        return int(self._app.Calculation)
+
+    def _use_manual_calculation(self) -> None:
+        """Switch Excel to manual calculation, so a fill is not recalculated per write."""
+        self._app.Calculation = _XL_CALCULATION_MANUAL
+
+    def _restore_calculation(self) -> None:
+        """Put back the calculation mode the template was saved with."""
+        self._app.Calculation = self._previous_calculation
+
+    def _open_workbook(self, path: Path, *, manual_first: bool) -> Any:  # noqa: ANN401
+        """Open *path*, optionally switching to manual calculation beforehand.
+
+        Excel recalculates a template while opening it when the application is in
+        automatic mode, which can take minutes for a big template and is wasted
+        work: ``save()`` recalculates everything once.  The calculation mode can
+        only be set while a workbook is open, so a blank one is opened and closed
+        around it.
+        """
+
+        def open_template() -> Any:  # noqa: ANN401
+            return self._app.Workbooks.Open(
+                str(path),
+                UpdateLinks=0,
+                ReadOnly=False,
+                IgnoreReadOnlyRecommended=True,
+                AddToMru=False,
+            )
+
+        blank: Any = None
+        try:
+            if manual_first:
+                try:
+                    blank = self._app.Workbooks.Add()
+                    self._app.Calculation = _XL_CALCULATION_MANUAL
+                except Exception:
+                    logger.debug(
+                        "Could not switch to manual calculation before opening %s; "
+                        "Excel recalculates it while loading",
+                        path,
+                        exc_info=True,
+                    )
+            return self._call_excel(open_template, f"open {path.name}")
+        finally:
+            if blank is not None:
+                try:
+                    blank.Close(SaveChanges=False)
+                except Exception:
+                    logger.warning("Could not close the blank workbook Excel opened first")
+
+    def _close_workbook(self) -> None:
+        self._workbook.Close(SaveChanges=False)
+
+    def _quit_excel(self) -> None:
+        self._app.Quit()
 
     def _ensure_workbook(self) -> None:
         """Raise :class:`RuntimeError` if no workbook has been loaded."""
@@ -195,17 +571,23 @@ class Win32ComBackend:
         self._load_path = abs_path
         self._definitions = None
         self._definitions_loaded = False
-        self._workbook = self._app.Workbooks.Open(
-            str(abs_path),
-            UpdateLinks=0,
-            ReadOnly=False,
-            IgnoreReadOnlyRecommended=True,
-            AddToMru=False,
-        )
         # Filling recalculates constantly in automatic mode; save() restores this.
-        if self._previous_calculation is None:
-            self._previous_calculation = self._app.Calculation
-        self._app.Calculation = _XL_CALCULATION_MANUAL
+        # Knowing the template's mode up front lets Excel skip the recalc it does
+        # while opening a workbook saved in automatic mode.
+        known_mode = _template_calculation_mode(abs_path)
+        self._workbook = self._open_workbook(abs_path, manual_first=known_mode is not None)
+        if known_mode is not None:
+            self._previous_calculation = known_mode
+        else:
+            # .xlsb, or a package that cannot be read: ask Excel once it is open.
+            self._previous_calculation = self._call_excel(
+                self._current_calculation,
+                "read the calculation mode",
+            )
+        self._call_excel(
+            self._use_manual_calculation,
+            "switch to manual calculation",
+        )
         logger.debug("[win32com] load took %.3fs", time.perf_counter() - t0)
 
     def fill_named_cell(self, name: str, value: Any, config: FillXLConfig) -> None:  # noqa: ANN401
@@ -610,9 +992,9 @@ class Win32ComBackend:
         abs_path = path.resolve()
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         # Never save stale results, even if the workbook's own mode is manual.
-        self._app.Calculate()
+        self._call_excel(lambda: self._app.Calculate(), "recalculate the workbook")
         if self._previous_calculation is not None:
-            self._app.Calculation = self._previous_calculation
+            self._call_excel(self._restore_calculation, "restore the calculation mode")
             self._previous_calculation = None
         # Read before SaveAs: check_output() runs after close(), when the
         # workbook can no longer be asked.
@@ -626,7 +1008,7 @@ class Win32ComBackend:
         try:
             if self._workbook is not None:
                 try:
-                    self._workbook.Close(SaveChanges=False)
+                    self._call_excel(self._close_workbook, "close the workbook")
                 except Exception:
                     logger.exception("Error closing workbook")
                 finally:
@@ -635,13 +1017,14 @@ class Win32ComBackend:
             try:
                 if self._app is not None:
                     try:
-                        self._app.Quit()
+                        self._call_excel(self._quit_excel, "quit Excel")
                     except Exception:
                         logger.exception("Error during Excel quit")
                     finally:
                         self._app = None
                         logger.debug("Excel Application quit")
             finally:
+                self._restore_message_filter()
                 self._release_com()
 
     def check_output(self, template: Path, output: Path, policy: OnLossy) -> None:
@@ -951,6 +1334,32 @@ def _check_overflow_com(
                     "Move or remove the content below the table first."
                 )
                 raise ValueError(msg)
+
+
+def _template_calculation_mode(path: Path) -> int | None:
+    """The calculation mode *path* was saved with, or ``None`` when unreadable.
+
+    Excel recalculates a workbook in automatic mode while opening it.  Knowing
+    the mode before the workbook is open lets :meth:`Win32ComBackend.load`
+    switch to manual calculation first and skip that work.  A template whose
+    ``calcPr`` is missing or unreadable has no answer here and is opened the
+    plain way.
+    """
+    if path.suffix.lower() not in _OOXML_SUFFIXES:
+        return None
+    try:
+        with zipfile.ZipFile(path) as archive:
+            text = archive.read("xl/workbook.xml").decode("utf-8")
+    except (KeyError, OSError, ValueError, zipfile.BadZipFile):
+        logger.debug("Could not read the calculation mode of %s", path, exc_info=True)
+        return None
+    element = _CALC_PR.search(text)
+    if element is None:
+        return _XL_CALCULATION_AUTOMATIC
+    mode = _CALCULATION_MODE.search(element.group(0))
+    if mode is None:
+        return _XL_CALCULATION_AUTOMATIC
+    return _CALCULATION_MODES.get(mode.group(1))
 
 
 def _read_table_formula_definitions(

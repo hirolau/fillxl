@@ -169,6 +169,16 @@ fill(template="tpl.xlsm", output="out.xlsm", ..., engine="win32com")
 - Handles `.xlsm` and `.xlsb` formats
 - Recalculates before refreshing pivot caches and before saving, so pivots on
   calculated columns and formulas reading named cells show the new data
+- Waits for a busy Excel instead of failing: right after a workbook is opened
+  Excel is still loading and recalculating, and rejects incoming COM calls with
+  `RPC_E_CALL_REJECTED`. A retrying COM message filter (and, on a
+  multithreaded apartment, a retry loop around each call) waits for Excel to
+  answer. `FillXLConfig.com_busy_timeout` sets how long, 120 s by default; a
+  fill that outlasts it raises a `RuntimeError` naming Excel's rejection.
+- Opens a template saved in automatic calculation mode with recalculation
+  switched off, so opening a big template does not recalculate it once for
+  nothing; the fill recalculates once, before saving, and restores the
+  template's own calculation mode
 
 ### Limitations
 

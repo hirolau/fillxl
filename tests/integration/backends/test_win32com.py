@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import openpyxl
 import pytest
@@ -456,13 +456,16 @@ class TestComMessageFilter:
             ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)),
         ).contents
 
-        query_interface = ctypes.WINFUNCTYPE(
+        # typeshed declares WINFUNCTYPE for a win32 target only, and the type
+        # checkers also run on Linux; the alias keeps this clean on both.
+        windows: Any = ctypes
+        query_interface = windows.WINFUNCTYPE(
             ctypes.c_long,
             ctypes.c_void_p,
             ctypes.c_void_p,
             ctypes.POINTER(ctypes.c_void_p),
         )(vtable[0])
-        retry_rejected = ctypes.WINFUNCTYPE(
+        retry_rejected = windows.WINFUNCTYPE(
             wintypes.DWORD,
             ctypes.c_void_p,
             ctypes.c_void_p,

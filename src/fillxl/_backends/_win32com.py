@@ -173,11 +173,14 @@ class _ComMessageFilter:
 
         dword = wintypes.DWORD
         pointer = ctypes.c_void_p
-        query_type = ctypes.WINFUNCTYPE(ctypes.c_long, pointer, pointer, pointer)
-        count_type = ctypes.WINFUNCTYPE(dword, pointer)
-        incoming_type = ctypes.WINFUNCTYPE(dword, pointer, pointer, dword, pointer)
-        retry_type = ctypes.WINFUNCTYPE(dword, pointer, pointer, dword, dword)
-        pending_type = ctypes.WINFUNCTYPE(dword, pointer, pointer, dword, dword)
+        # typeshed declares WINFUNCTYPE for a win32 target only, and the type
+        # checkers also run on Linux; the alias keeps this clean on both.
+        windows: Any = ctypes
+        query_type = windows.WINFUNCTYPE(ctypes.c_long, pointer, pointer, pointer)
+        count_type = windows.WINFUNCTYPE(dword, pointer)
+        incoming_type = windows.WINFUNCTYPE(dword, pointer, pointer, dword, pointer)
+        retry_type = windows.WINFUNCTYPE(dword, pointer, pointer, dword, dword)
+        pending_type = windows.WINFUNCTYPE(dword, pointer, pointer, dword, dword)
 
         self._refs = ctypes.c_ulong(1)
         known = {
@@ -288,7 +291,9 @@ def _co_register_message_filter(
     """``ole32.CoRegisterMessageFilter``, whose HRESULT is returned rather than raised."""
     import ctypes
 
-    ole32 = ctypes.WinDLL("ole32")
+    # WinDLL exists on Windows only and typeshed knows it on a win32 target only.
+    windows: Any = ctypes
+    ole32 = windows.WinDLL("ole32")
     register = ole32.CoRegisterMessageFilter
     register.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
     register.restype = ctypes.c_long

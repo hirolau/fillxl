@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import cast, get_args
 
 from attrs import define, field
-from attrs.validators import in_, instance_of
+from attrs.validators import gt, in_, instance_of
 
 from fillxl._lossy import OnLossy
 from fillxl._validation import ColumnValidationStrategy
@@ -115,6 +115,11 @@ class FillXLConfig:
             openpyxl engine's dropped features, the fillxl engine's self-check,
             and win32com format conversions that cannot hold everything the
             template had (for example ``.xlsm`` saved as ``.xlsx``).
+        com_busy_timeout: How long, in seconds, the win32com engine keeps
+            retrying a COM call Excel rejects because it is busy loading or
+            recalculating a template.  Big templates can recalculate for a long
+            time; the fill fails with a clear error once this runs out.
+            Defaults to 120 seconds.
 
     """
 
@@ -131,6 +136,7 @@ class FillXLConfig:
     delete_sheets: tuple[str, ...] | None = field(default=None, converter=_to_sheet_tuple)
     active_sheet: str | None = field(default=None)
     on_lossy: OnLossy = field(default="warn", validator=in_(get_args(OnLossy)))
+    com_busy_timeout: float = field(default=120.0, validator=[instance_of((int, float)), gt(0)])
 
     def __attrs_post_init__(self) -> None:
         """Reject combinations that can only fail at the end of a fill.

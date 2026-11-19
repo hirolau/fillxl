@@ -92,6 +92,7 @@ config = FillXLConfig(
 | `delete_sheets` | `Sequence[str] \| None` | `None` | Sheet names to delete (stored as a tuple). References to the deleted sheets are **not** rewritten; see below. |
 | `active_sheet` | `str \| None` | `None` | Name of the sheet to make active after filling. |
 | `on_lossy` | `"ignore" \| "warn" \| "raise"` | `"warn"` | What to do when a fill loses template features: the openpyxl engine's dropped parts, the fillxl engine's self-check, or a win32com format conversion that cannot hold everything (e.g. .xlsm saved as .xlsx). |
+| `com_busy_timeout` | `float` | `120.0` | Seconds the win32com engine keeps retrying a COM call Excel rejects because it is busy loading or recalculating the template. Raise it for templates that take longer than two minutes to open. |
 
 ---
 

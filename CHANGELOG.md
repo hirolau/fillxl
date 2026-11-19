@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-11-19
+
+### Fixed
+- `engine="win32com"` no longer fails when Excel is busy. Right after a
+  workbook is opened, Excel is still loading and recalculating it and rejects
+  incoming COM calls with `RPC_E_CALL_REJECTED`; the default COM message filter
+  does not retry those. The symptom was
+  `AttributeError: Excel.Application.Calculation` during `load()` and
+  `AttributeError: Open.Close` when the workbook was closed, because dynamic
+  dispatch turns the rejected call into an `AttributeError`. A retrying COM
+  message filter is now registered for the Excel session and restored on close,
+  and every call `load()`, `save()` and `close()` make is retried through the
+  same policy, so a multithreaded apartment (where message filters do not run)
+  is covered too. If Excel is still busy when the timeout runs out, the fill
+  raises a `RuntimeError` naming `RPC_E_CALL_REJECTED` instead of an
+  `AttributeError`.
+- `engine="win32com"` opens a template saved in automatic calculation mode
+  with recalculation switched off, instead of recalculating the whole workbook
+  while loading it. The fill recalculates once, before saving, as before. A
+  template's own calculation mode is still restored before `SaveAs`.
+- `engine="fillxl"` no longer slows down with every formula in the workbook.
+  Resizing the formulas around a table looked up the table's sheet title once
+  per formula cell, and each lookup re-parsed `xl/workbook.xml` and its
+  relationships; the cost was (resized tables) × (formula cells) × (sheets) ×
+  (relationships). The lookup is now done once per fill, and parsed
+  relationships and sheet lists are cached per text — a 9-table, 10k-row
+  template that took about 1105 s now fills in about the same time as
+  `engine="openpyxl"`.
+
+### Added
+- `FillXLConfig.com_busy_timeout` sets how long, in seconds, the win32com
+  engine keeps retrying a COM call Excel rejects because it is busy (120 by
+  default).
+
 ## [1.0.1] - 2026-11-10
 
 ### Fixed

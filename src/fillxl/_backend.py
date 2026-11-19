@@ -346,13 +346,16 @@ def _reject_impossible_output(template: Path, output: Path) -> None:
     raise ValueError(msg)
 
 
-def get_backend(engine: ConcreteEngine) -> Backend:
+def get_backend(engine: ConcreteEngine, config: FillXLConfig | None = None) -> Backend:
     """Return the :class:`Backend` implementation for *engine*.
 
     Args:
         engine: A concrete engine name: ``"openpyxl"``, ``"fillxl"`` or
             ``"win32com"``.  ``"auto"`` is turned into one of these by
             :func:`resolve_engine` before a fill builds a backend.
+        config: The fill's configuration, for the settings an engine has to
+            know before it opens a workbook.  Defaults to :class:`FillXLConfig`
+            defaults.
 
     Returns:
         A backend instance ready to load workbooks.
@@ -377,7 +380,9 @@ def get_backend(engine: ConcreteEngine) -> Backend:
     if engine == "win32com":
         from fillxl._backends._win32com import Win32ComBackend
 
-        return Win32ComBackend()
+        if config is None:
+            return Win32ComBackend()
+        return Win32ComBackend(com_busy_timeout=config.com_busy_timeout)
 
     if engine == "fillxl":
         from fillxl._backends._fillxl import FillxlBackend

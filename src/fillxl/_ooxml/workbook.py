@@ -166,6 +166,9 @@ class WorkbookPart:
             msg = f"{package.path}: the officeDocument part is missing from the package."
             raise ValueError(msg)
         self.part = target
+        # Parsed ``<sheet>`` entries keyed by the identity of the text they were
+        # parsed from.  ``_set()`` replaces that text, which invalidates it.
+        self._sheet_cache: tuple[str, tuple[SheetEntry, ...]] | None = None
 
     # ── raw text ───────────────────────────────────────────────────────────
 
@@ -181,7 +184,16 @@ class WorkbookPart:
 
     def sheets(self) -> list[SheetEntry]:
         """Every sheet of the workbook, in tab order."""
-        block = _SHEETS.search(self.text)
+        text = self.text
+        cached = self._sheet_cache
+        if cached is not None and cached[0] is text:
+            return list(cached[1])
+        entries = self._parse_sheets(text)
+        self._sheet_cache = (text, tuple(entries))
+        return entries
+
+    def _parse_sheets(self, text: str) -> list[SheetEntry]:
+        block = _SHEETS.search(text)
         if block is None:
             return []
         entries: list[SheetEntry] = []
